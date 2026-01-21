@@ -2,16 +2,16 @@ from ollama import Client
 from dotenv import load_dotenv
 import os
 
-class OllamaConnector:
+class OllamaConnector:  
+  load_dotenv()
+  ollama_host = os.getenv('OLLAMA_URL', 'http://localhost:11434')
 
-  def __init__(self,current_model: str):
-    load_dotenv()
-    ollama_host = os.getenv('OLLAMA_URL', 'http://localhost:11434')
-    self.model = current_model
-    self.ollama = Client(
-        host=ollama_host  
-    )
-
-  def embed_text(self, text):
-    response = self.ollama.embed(model=self.model, input=text)
+  model = os.getenv('MODEL_NAME')
+  ollama = Client(
+      host=ollama_host  
+  )
+  
+  @classmethod
+  def embed_text(cls, text):
+    response = cls.ollama.embed(model=cls.model, input=text)
     return response.embeddings[0]

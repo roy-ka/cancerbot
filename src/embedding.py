@@ -3,8 +3,12 @@ import pandas as pd
 from classes.db_connector import dbConnector
 from uuid import uuid7
 from classes.ollama_connector import OllamaConnector
+from dotenv import load_dotenv
+import os
+load_dotenv()
 
-current_model = 'nomic-embed-text'
+current_model = os.getenv('MODEL_NAME')
+
 type = 'claim' # 'source' or 'claim'
 
 input_file= './data/enriched_sources_20260113_1520_cleaned.jsonl' if type == 'source' else './data/claims_canonical.jsonl'
@@ -14,8 +18,7 @@ MODELS = dbConnector.MODELS
 
 index_name = 'claims_index' if type == 'claim' else 'source_index'
 
-ollama = OllamaConnector(current_model)
-db = dbConnector(current_model)
+db = dbConnector()
 
 source_file = Path(input_file)
 data = pd.read_json(source_file, lines=True)
@@ -35,7 +38,8 @@ def convert_row(row):
 def build_claim_document(row):
 		record = row.copy()
 		record['index'] = index_name
-		record['embedding'] = ollama.embed_text(record['protocol_claim_en'])
+		record['embedding'] = OllamaConnector.embed_text(record['protocol_claim_en'])
+		record['content_for_embedding'] = record['protocol_claim_en']
 		record['created_at'] = pd.Timestamp.now().isoformat()
 		record['id'] = str(uuid7())
 		return record
@@ -57,7 +61,7 @@ def build_source_document(row):
 			'tags': row['tags'],
 			'abstract_source': row['abstract_source'],
 			'url': row['url'],
-			'embedding': ollama.embed_text(row['content_for_embedding'])
+			'embedding': OllamaConnector.embed_text(row['content_for_embedding'])
 		}
 		return record
 
