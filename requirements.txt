@@ -1,0 +1,7 @@
+opensearch-py
+pandas
+requests
+ollama
+python-dotenv
+fastapi
+uvicorn

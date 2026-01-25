@@ -1,22 +1,22 @@
 from pathlib import Path
 import pandas as pd
-from classes.db_connector import dbConnector
+from src.retrieval.db_connector import dbConnector
 from uuid import uuid7
-from classes.ollama_connector import OllamaConnector
+from src.classes.ollama_connector import OllamaConnector
 from dotenv import load_dotenv
 import os
 load_dotenv()
 
 current_model = os.getenv('MODEL_NAME')
 
-type = 'claim' # 'source' or 'claim'
+type = 'source' # 'source' or 'claim'
 
 input_file= './data/enriched_sources_20260113_1520_cleaned.jsonl' if type == 'source' else './data/claims_canonical.jsonl'
 
 
 MODELS = dbConnector.MODELS
 
-index_name = 'claims_index' if type == 'claim' else 'source_index'
+index_name = 'claims_index' if type == 'claim' else 'sources_index'
 
 db = dbConnector()
 

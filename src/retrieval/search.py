@@ -57,11 +57,10 @@ def search_claims(db,text=None ,vector=None):
       }
     }
   }
-  logger.info(f"Search body: {body}")
   return db.search(
     index_type = 'claims_index',
     body = body
-  )
+  )['hits']['hits']
   
   
 
@@ -104,8 +103,7 @@ def search_sources(db, text=None ,vector=None):
       }
     }
   }
-  logger.info(f"Search body: {body}")
   return db.search(
     index_type = 'sources_index',
     body = body
-  )
+  )['hits']['hits']

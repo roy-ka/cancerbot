@@ -91,7 +91,6 @@ class dbConnector:
   
   @classmethod
   def search(cls, index_type, body):
-    cls.logger.info(f"Search body: {body}")
     res = cls.db_client.search(
       index = cls.model[index_type],
       body = body
