@@ -5,7 +5,7 @@ import logging
 from dotenv import load_dotenv
 load_dotenv()
 
-model_name = os.getenv('MODEL_NAME')
+model_name = os.getenv('EMBED_MODEL_NAME')
 class dbConnector:
   __name__ = 'dbConnector'
 

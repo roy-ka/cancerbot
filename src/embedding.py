@@ -1,15 +1,15 @@
 from pathlib import Path
 import pandas as pd
-from src.retrieval.db_connector import dbConnector
+from .retrieval.db_connector import dbConnector
 from uuid import uuid7
-from src.classes.ollama_connector import OllamaConnector
+from .classes.ollama_connector import OllamaConnector
 from dotenv import load_dotenv
 import os
 load_dotenv()
 
-current_model = os.getenv('MODEL_NAME')
+current_model = os.getenv('EMBED_MODEL_NAME')
 
-type = 'source' # 'source' or 'claim'
+type = 'claim' # 'source' or 'claim'
 
 input_file= './data/enriched_sources_20260113_1520_cleaned.jsonl' if type == 'source' else './data/claims_canonical.jsonl'
 

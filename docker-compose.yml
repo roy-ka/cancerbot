@@ -62,11 +62,28 @@ services:
     volumes:
       - ollama:/root/.ollama
     networks: [osnet]
+  postgres:
+    image: postgres:16
+    container_name: cancerbot-postgres
+    environment:
+      POSTGRES_DB: cancerbot
+      POSTGRES_USER: cancerbot
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - '5432:5432'
+    volumes:
+      - cancerbot_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U cancerbot -d cancerbot']
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
 volumes:
   os-data1:
   os-data2:
   ollama:
+  cancerbot_pgdata:
 
 networks:
   osnet:

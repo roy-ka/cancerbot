@@ -3,5 +3,6 @@ pandas
 requests
 ollama
 python-dotenv
-fastapi
+fastapi[standard]
 uvicorn
+psycopg[binary]

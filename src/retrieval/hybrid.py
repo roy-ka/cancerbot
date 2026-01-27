@@ -26,18 +26,24 @@ def hybrid_results(intent, claims, sources, k_primary: int = 5, k_secondary: int
     if len(sources + claims) > 5 and len(claims) > 1:
       sources = sources[:k_primary]
       claims = claims[:k_secondary]
+    primary = get_text_from_results(sources, 'content_for_embedding')
+    secondary = get_text_from_results(claims, 'protocol_claim_en')
     return {
-      'primary': get_text_from_results(sources, 'content_for_embedding'),
-      'secondary': get_text_from_results(claims, 'protocol_claim_en'),
+      'primary': primary,
+      'secondary': secondary,
+      'generation_context': primary + secondary,
       'intent': 'concept'
     }
   elif intent == intervention:
     if len(claims) > 2: 
       claims = claims[:k_primary]
       sources = sources[:k_secondary]
+    primary = get_text_from_results(claims, 'protocol_claim_en')
+    secondary = get_text_from_results(sources, 'content_for_embedding')
     return {
-      'primary': get_text_from_results(claims, 'protocol_claim_en'),
-      'secondary': get_text_from_results(sources, 'content_for_embedding'),
+      'primary': primary,
+      'secondary': secondary,
+      'generation_context': primary + secondary,
       'intent': 'intervention'
     }
   else:
