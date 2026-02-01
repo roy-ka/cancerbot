@@ -6,3 +6,10 @@ python-dotenv
 fastapi[standard]
 uvicorn
 psycopg[binary]
+sqlalchemy
+alembic
+passlib[bcrypt]
+python-jose[cryptography]
+beautifulsoup4
+wikipedia-api
+lxml

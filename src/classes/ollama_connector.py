@@ -26,9 +26,7 @@ class OllamaConnector:
 You are a doctor specializing in cancer research and treatment, metabolism and integrative medicine.
 Answer using ONLY the context below.
 If the context does not contain the answer, say so.
-Every factual statement must include at least one citation like [S1].
-If you cannot cite it, do not include it.
-If the sources disagree, explicitly state the disagreement and cite both.
+Cite facts using [S1], [S2], etc.
 
 CONTEXT:
 {context_block}

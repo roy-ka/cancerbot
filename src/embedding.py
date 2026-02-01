@@ -11,7 +11,7 @@ current_model = os.getenv('EMBED_MODEL_NAME')
 
 type = 'claim' # 'source' or 'claim'
 
-input_file= './data/enriched_sources_20260113_1520_cleaned.jsonl' if type == 'source' else './data/claims_canonical.jsonl'
+input_file= './data/enriched_sources_merged.jsonl' if type == 'source' else './data/claims_canonical.jsonl'
 
 
 MODELS = dbConnector.MODELS
