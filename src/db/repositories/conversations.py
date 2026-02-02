@@ -10,8 +10,8 @@ def create_conversation(db, user_id, title = None):
   db.commit()
   return new_conversation
   
-def get_conversation_by_id(db, conversation_id):
-  return db.query(Conversation).filter(Conversation.id == conversation_id).first()
+def get_conversation_by_id(db, current_user, conversation_id):
+  return db.query(Conversation).filter(Conversation.user_id == current_user.id, Conversation.id == conversation_id).first()
 
 def get_conversations_list_by_user_id(db, user_id, limit=10):
   return db.query(Conversation).filter(Conversation.user_id == user_id).order_by(Conversation.updated_at.desc()).limit(limit).all()

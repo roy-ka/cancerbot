@@ -1,5 +1,5 @@
 from src.utils.utils import send_request, pubmed_api_base_url, write_to_file, crossref_api_url, isExsit
-from src.utils.xml_to_source import pubmed_article_xml_to_source
+from src.xml_to_source import pubmed_article_xml_to_source
 import pandas as pd
 from pathlib import Path
 import json
