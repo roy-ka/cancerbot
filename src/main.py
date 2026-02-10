@@ -1,7 +1,7 @@
 import logging
 from uuid import UUID
-
-from fastapi import Depends, FastAPI, HTTPException, status
+from datetime import timedelta
+from fastapi import Depends, FastAPI, HTTPException, status,APIRouter, Response
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -29,7 +29,7 @@ class RetrieveRequest(BaseModel):
 
 
 class CreateUserRequest(BaseModel):
-    user_name: str
+    name: str
     email: str
     password: str
 
@@ -37,6 +37,7 @@ class CreateUserRequest(BaseModel):
 class LoginRequest(BaseModel):
     email: str
     password: str
+    rememberMe: bool = False
 
 
 logging.basicConfig(
@@ -211,21 +212,33 @@ async def register_user(req: CreateUserRequest, db: Session = Depends(get_db)):
     password_hash = SecurityUtils.hash_password(req.password)
     user = create_user(
         db=db,
-        user_name=req.user_name,
+        name=req.name,
         email=req.email,
         password_hash=password_hash ,
     )
-
-    return {"user_id": str(user.id), "user_name": user.name, "email": user.email}
+    return {status.HTTP_201_CREATED: "User created", "user_id": str(user.id)}
 
 
 @app.post("/auth/login/")
-async def generate_token(req: LoginRequest, db: Session = Depends(get_db)):
+async def generate_token(req: LoginRequest, response: Response, db: Session = Depends(get_db)):
     user = get_user_by_email(db=db, email=req.email)
     logging.info(f"Attempting login for user: {user.id if user else 'unknown'} with email: {req.email}")
     if not user or not SecurityUtils.verify_password(req.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    # Standard JWT: subject in 'sub'
-    token = SecurityUtils.create_jwt_token({"sub": str(user.id), "email": user.email})
-    return {"access_token": token, "token_type": "bearer"}
+    access_token = SecurityUtils.create_jwt_token({"sub": str(user.id), "email": user.email})
+    if req.rememberMe:
+        max_age = 60 * 60 * 24 * 30  # 30 days
+    else:
+        max_age = None  # session cookie
+
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        secure=False,          # True in production (HTTPS). False on localhost.
+        samesite="lax",        # good default for same-site usage
+        max_age=max_age,
+        path="/",
+    )
+    return {"ok": True}

@@ -1,0 +1,192 @@
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  viewBox="0 0 96 96"
+  role="img"
+  aria-label="Cancerbot glass crab icon animated"
+>
+  <defs>
+    <linearGradient id="glassGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ff7a7a" stop-opacity="0.55" />
+      <stop offset="100%" stop-color="#ff3d6e" stop-opacity="0.25" />
+    </linearGradient>
+
+    <radialGradient id="highlight" cx="30%" cy="25%" r="60%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.6" />
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0" />
+    </radialGradient>
+
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="6" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Whole icon bob -->
+  <g>
+    <animateTransform
+      attributeName="transform"
+      type="translate"
+      values="0 0; 0 -1.6; 0 0"
+      dur="2.6s"
+      repeatCount="indefinite"
+      keyTimes="0;0.5;1"
+      calcMode="spline"
+      keySplines=".42 0 .58 1; .42 0 .58 1"
+    />
+
+    <!-- Glow breath -->
+    <g filter="url(#glow)" opacity="0.33">
+      <animate
+        attributeName="opacity"
+        values="0.22;0.42;0.22"
+        dur="2.6s"
+        repeatCount="indefinite"
+      />
+      <ellipse cx="48" cy="50" rx="26" ry="20" fill="#ff4d6d" />
+    </g>
+
+    <!-- Body -->
+    <ellipse
+      cx="48"
+      cy="50"
+      rx="26"
+      ry="20"
+      fill="url(#glassGrad)"
+      stroke="rgba(255,255,255,0.35)"
+      stroke-width="1.5"
+    />
+
+    <!-- Highlight -->
+    <ellipse cx="40" cy="42" rx="18" ry="12" fill="url(#highlight)" opacity="0.9">
+      <animate
+        attributeName="opacity"
+        values="0.75;0.95;0.75"
+        dur="2.6s"
+        repeatCount="indefinite"
+      />
+    </ellipse>
+
+    <!-- Eyes (with blink) -->
+    <g>
+      <!-- Left eye -->
+      <circle id="eyeL" cx="40" cy="46" r="3" fill="rgba(10,15,30,0.85)" />
+      <!-- Blink: scale Y to 0 briefly -->
+      <animateTransform
+        xlink:href="#eyeL"
+        attributeName="transform"
+        type="translate"
+        values="0 0; 40 46; 40 46; 0 0"
+        dur="5.5s"
+        repeatCount="indefinite"
+        keyTimes="0;0.7;0.72;1"
+      />
+      <animateTransform
+        xlink:href="#eyeL"
+        attributeName="transform"
+        additive="sum"
+        type="scale"
+        values="1 1; 1 0.12; 1 1"
+        dur="5.5s"
+        repeatCount="indefinite"
+        keyTimes="0;0.7;0.72"
+      />
+      <animateTransform
+        xlink:href="#eyeL"
+        attributeName="transform"
+        additive="sum"
+        type="translate"
+        values="0 0; -40 -46; -40 -46; 0 0"
+        dur="5.5s"
+        repeatCount="indefinite"
+        keyTimes="0;0.7;0.72;1"
+      />
+
+      <!-- Right eye -->
+      <circle id="eyeR" cx="56" cy="46" r="3" fill="rgba(10,15,30,0.85)" />
+      <animateTransform
+        xlink:href="#eyeR"
+        attributeName="transform"
+        type="translate"
+        values="0 0; 56 46; 56 46; 0 0"
+        dur="5.5s"
+        repeatCount="indefinite"
+        keyTimes="0;0.7;0.72;1"
+      />
+      <animateTransform
+        xlink:href="#eyeR"
+        attributeName="transform"
+        additive="sum"
+        type="scale"
+        values="1 1; 1 0.12; 1 1"
+        dur="5.5s"
+        repeatCount="indefinite"
+        keyTimes="0;0.7;0.72"
+      />
+      <animateTransform
+        xlink:href="#eyeR"
+        attributeName="transform"
+        additive="sum"
+        type="translate"
+        values="0 0; -56 -46; -56 -46; 0 0"
+        dur="5.5s"
+        repeatCount="indefinite"
+        keyTimes="0;0.7;0.72;1"
+      />
+    </g>
+
+    <!-- Smile -->
+    <path
+      d="M42 56c3 3 9 3 12 0"
+      fill="none"
+      stroke="rgba(10,15,30,0.55)"
+      stroke-width="2"
+      stroke-linecap="round"
+    />
+
+    <!-- Claws (tiny wiggle) -->
+    <g>
+      <path
+        id="clawL"
+        d="M20 44c-6-6-2-14 6-14 5 0 8 3 10 6"
+        fill="none"
+        stroke="rgba(255,120,140,0.75)"
+        stroke-width="3"
+        stroke-linecap="round"
+      />
+      <animateTransform
+        xlink:href="#clawL"
+        attributeName="transform"
+        type="rotate"
+        values="-2 28 40; 2 28 40; -2 28 40"
+        dur="3.2s"
+        repeatCount="indefinite"
+      />
+
+      <path
+        id="clawR"
+        d="M76 44c6-6 2-14-6-14-5 0-8 3-10 6"
+        fill="none"
+        stroke="rgba(255,120,140,0.75)"
+        stroke-width="3"
+        stroke-linecap="round"
+      />
+      <animateTransform
+        xlink:href="#clawR"
+        attributeName="transform"
+        type="rotate"
+        values="2 68 40; -2 68 40; 2 68 40"
+        dur="3.2s"
+        repeatCount="indefinite"
+      />
+    </g>
+
+    <!-- Legs -->
+    <path d="M30 64l-10 6" stroke="rgba(255,120,140,0.65)" stroke-width="3" stroke-linecap="round"/>
+    <path d="M38 68l-8 10" stroke="rgba(255,120,140,0.65)" stroke-width="3" stroke-linecap="round"/>
+    <path d="M66 64l10 6" stroke="rgba(255,120,140,0.65)" stroke-width="3" stroke-linecap="round"/>
+    <path d="M58 68l8 10" stroke="rgba(255,120,140,0.65)" stroke-width="3" stroke-linecap="round"/>
+  </g>
+</svg>

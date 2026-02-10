@@ -1,13 +1,13 @@
 from src.db.models import User
 import logging
 
-def create_user(db, user_name, email, password_hash):
+def create_user(db, name, email, password_hash):
   new_user = User(
-    name=user_name,
+    name=name,
     email=email,
     password_hash=password_hash
   )
-  logging.info(f"Creating user {user_name} with email {email}")
+  logging.info(f"Creating user {name} with email {email}")
   db.add(new_user)
   db.commit()
   return new_user
