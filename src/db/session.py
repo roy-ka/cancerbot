@@ -9,15 +9,9 @@ DB_URL = os.getenv('POSTGRES_URL', 'postgresql+psycopg://user:password@localhost
 engine = sql.create_engine(DB_URL, echo=True)
 
 SessionLocal = sessionmaker(
-  autocommit=False, 
-  autoflush=False, 
-  expire_on_commit=False,
-  bind=engine
+    autocommit=False, 
+    autoflush=False, 
+    expire_on_commit=False,
+    bind=engine
 )
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()

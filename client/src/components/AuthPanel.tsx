@@ -1,49 +1,17 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Box, Button, Typography } from '@mui/material'
 import LoginForm from './LoginForm'
 import RegistrationForm from './RegistrationForm'
-
-type AuthButtonsProps = {
-  isLogin: boolean
-  setIsLogin: (val: boolean) => void
-}
+import { useNavigate } from 'react-router'
+import type { AuthButtonsProps } from '../types'
 
 function AuthButtons({ isLogin, setIsLogin }: AuthButtonsProps) {
   return (
-    <Box
-      sx={{
-        display: 'grid',
-        gridTemplateColumns: '1fr 1fr',
-        gap: 0,
-        p: 0.75,
-        borderRadius: 999,
-        backgroundColor: 'rgba(255,255,255,0.06)',
-        border: '1px solid rgba(255,255,255,0.10)',
-        backdropFilter: 'blur(10px)',
-      }}
-    >
+    <Box className="auth-buttons">
       <Button
         type="button"
         onClick={() => setIsLogin(true)}
-        sx={{
-          borderRadius: 999,
-          py: 1.1,
-          fontWeight: 800,
-          textTransform: 'none',
-          color: isLogin ? 'rgba(255,255,255,0.92)' : 'rgba(255,255,255,0.65)',
-          background: isLogin
-            ? 'linear-gradient(135deg, rgba(124,92,255,0.70), rgba(47,227,198,0.28))'
-            : 'transparent',
-          border: isLogin
-            ? '1px solid rgba(255,255,255,0.10)'
-            : '1px solid transparent',
-          boxShadow: isLogin ? '0 10px 22px rgba(0,0,0,0.25)' : 'none',
-          '&:hover': {
-            background: isLogin
-              ? 'linear-gradient(135deg, rgba(124,92,255,0.75), rgba(47,227,198,0.32))'
-              : 'rgba(255,255,255,0.06)',
-          },
-        }}
+        className={`auth-button ${isLogin ? 'active' : ''}`}
       >
         Login
       </Button>
@@ -51,25 +19,7 @@ function AuthButtons({ isLogin, setIsLogin }: AuthButtonsProps) {
       <Button
         type="button"
         onClick={() => setIsLogin(false)}
-        sx={{
-          borderRadius: 999,
-          py: 1.1,
-          fontWeight: 800,
-          textTransform: 'none',
-          color: !isLogin ? 'rgba(255,255,255,0.92)' : 'rgba(255,255,255,0.65)',
-          background: !isLogin
-            ? 'linear-gradient(135deg, rgba(124,92,255,0.70), rgba(47,227,198,0.28))'
-            : 'transparent',
-          border: !isLogin
-            ? '1px solid rgba(255,255,255,0.10)'
-            : '1px solid transparent',
-          boxShadow: !isLogin ? '0 10px 22px rgba(0,0,0,0.25)' : 'none',
-          '&:hover': {
-            background: !isLogin
-              ? 'linear-gradient(135deg, rgba(124,92,255,0.75), rgba(47,227,198,0.32))'
-              : 'rgba(255,255,255,0.06)',
-          },
-        }}
+        className={`auth-button ${!isLogin ? 'active' : ''}`}
       >
         Register
       </Button>
@@ -80,37 +30,33 @@ function AuthButtons({ isLogin, setIsLogin }: AuthButtonsProps) {
 export default function AuthPanel() {
   const [isLogin, setIsLogin] = useState(true)
   const changeToLogin = () => setIsLogin(true)
+  const navigate = useNavigate()
+  const BASE_URL = import.meta.env.VITE_BASE_URL
+
+  useEffect(() => {
+    fetch(`${BASE_URL}/auth/check`, {
+      method: 'GET',
+      credentials: 'include',
+    })
+      .then((res) => {
+        if (res.ok) {
+          console.log('Already logged in, redirecting to dashboard...')
+          navigate('/chat', { replace: true })
+        }
+      })
+      .catch(() => {
+        console.log('Not logged in, staying on auth panel')
+        // Not logged in, stay on auth panel
+      })
+  }, [navigate, BASE_URL])
 
   return (
-    <Box
-      sx={{
-        width: '100%',
-        maxWidth: 460,
-        height: '100%',
-        mx: 'auto',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 2.5,
-        border: '1px solid rgba(255,255,255,0.10)',
-        borderRadius: 1,
-        p: { xs: 3, sm: 4 },
-        backgroundColor: 'rgba(255,255,255,0.06)',
-        boxShadow: '0 18px 50px rgba(0,0,0,0.35)',
-        backdropFilter: 'blur(12px)',
-      }}
-    >
-      <Box>
-        <Typography
-          variant="h5"
-          fontWeight={900}
-          sx={{ color: 'rgba(255,255,255,0.92)' }}
-        >
+    <Box className="auth-panel">
+      <Box className="auth-panel-header">
+        <Typography variant="h5" fontWeight={900} className="auth-panel-title">
           {isLogin ? 'Welcome back' : 'Create your account'}
         </Typography>
-        <Typography
-          variant="body2"
-          sx={{ color: 'rgba(255,255,255,0.66)', mt: 0.5 }}
-        >
+        <Typography variant="body2" className="auth-panel-subtitle">
           {isLogin
             ? 'Log in to continue to cancerbot.'
             : 'Register to start saving sources and building claims.'}
@@ -119,36 +65,7 @@ export default function AuthPanel() {
 
       <AuthButtons isLogin={isLogin} setIsLogin={setIsLogin} />
 
-      <Box
-        sx={{
-          p: { xs: 3, sm: 3.5 },
-          borderRadius: 1,
-          backgroundColor: 'rgba(255,255,255,0.06)',
-          border: '1px solid rgba(255,255,255,0.10)',
-          boxShadow: '0 18px 50px rgba(0,0,0,0.35)',
-          backdropFilter: 'blur(12px)',
-          // Form look (labels + underline like the design)
-          '& .MuiFormLabel-root': {
-            color: 'rgba(255,255,255,0.70)',
-            fontWeight: 650,
-          },
-          '& .MuiInputBase-root': {
-            color: 'rgba(255,255,255,0.92)',
-          },
-          '& .MuiInput-underline:before': {
-            borderBottomColor: 'rgba(255,255,255,0.16)',
-          },
-          '& .MuiInput-underline:hover:not(.Mui-disabled):before': {
-            borderBottomColor: 'rgba(255,255,255,0.28)',
-          },
-          '& .MuiInput-underline:after': {
-            borderBottomColor: 'rgba(124,92,255,0.70)',
-          },
-          '& .MuiFormHelperText-root': {
-            color: 'rgba(255,255,255,0.60)',
-          },
-        }}
-      >
+      <Box className="auth-form-container">
         {isLogin ? (
           <LoginForm />
         ) : (

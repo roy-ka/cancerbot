@@ -1,11 +1,6 @@
 import React, { useState } from 'react'
 import { Stack, TextField, FormControl, Button } from '@mui/material'
-
-type RegistrationPayload = {
-  email: string
-  password: string
-  name: string
-}
+import type { RegistrationPayload } from '../types'
 
 export default function RegistrationForm({
   changeToLogin,
@@ -17,6 +12,7 @@ export default function RegistrationForm({
   const [emailError, setEmailError] = useState(false)
   const [passwordError, setPasswordError] = useState(false)
   const [name, setName] = useState('')
+  const BASE_URL = import.meta.env.VITE_BASE_URL
 
   const verifyEmail = (email: string) => {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email === ''
@@ -27,18 +23,20 @@ export default function RegistrationForm({
   }
 
   const register = async (payload: RegistrationPayload) => {
-    const res = await fetch('http://localhost:8000/auth/register', {
+    const res = await fetch(`${BASE_URL}/auth/register`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
+      credentials: 'include',
       body: JSON.stringify(payload),
     })
-
     if (!res.ok) {
       const err = await res.json().catch(() => null)
       throw new Error(err?.message ?? 'Login failed')
     }
+    console.log('Registration successful, redirecting to login...')
+    changeToLogin()
   }
 
   const onSubmit = (e: React.SubmitEvent<HTMLFormElement>) => {
@@ -110,7 +108,7 @@ export default function RegistrationForm({
             autoComplete="current-password"
             variant="outlined"
             onChange={changePassword}
-            error={emailError}
+            error={passwordError}
           />
           <Button type="submit" variant="contained" fullWidth>
             Submit

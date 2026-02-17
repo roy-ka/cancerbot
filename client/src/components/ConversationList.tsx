@@ -1,49 +1,47 @@
 import { Box, Typography } from '@mui/material'
+import type { Conversation } from '../types'
+import ConversationItem from './ConversationItem'
 
-export default function ConversationList() {
+const newConversation: Conversation = {
+  id: 'new',
+  title: 'New Conversation',
+  lastMessage: '',
+  lastMessageTime: '',
+}
+
+export default function ConversationList({
+  conversations,
+  selectedConversationId,
+  setSelectedConversationId,
+}: {
+  conversations?: Conversation[]
+  selectedConversationId?: string
+  setSelectedConversationId: React.Dispatch<React.SetStateAction<string>>
+}) {
+  const onclick = (id: string) => {
+    setSelectedConversationId(id)
+  }
+
   return (
-    <Box
-      sx={{
-        flex: 1,
-        overflowY: 'auto',
-        px: 2,
-        py: 2,
-      }}
-    >
-      <Typography
-        sx={{
-          fontWeight: 800,
-          fontSize: 14,
-          color: 'rgba(255,255,255,0.75)',
-          mb: 2,
-        }}
-      >
+    <Box className="conversation-list-root" sx={{ px: 2, py: 3 }}>
+      <Typography className="conversation-title" pb={2}>
         Conversations
       </Typography>
-
-      {/* Conversation item */}
-      <Box
-        sx={{
-          p: 1.5,
-          borderRadius: 2,
-          mb: 1,
-          cursor: 'pointer',
-          background:
-            'linear-gradient(135deg, rgba(124,92,255,0.18), rgba(47,227,198,0.08))',
-          border: '1px solid rgba(255,255,255,0.08)',
-          '&:hover': {
-            background:
-              'linear-gradient(135deg, rgba(124,92,255,0.28), rgba(47,227,198,0.12))',
-          },
-        }}
-      >
-        <Typography fontWeight={700} fontSize={14}>
-          Ketogenic diet & IGF-1
-        </Typography>
-        <Typography fontSize={12} sx={{ color: 'rgba(255,255,255,0.6)' }}>
-          Last message · 2h ago
-        </Typography>
-      </Box>
+      <ConversationItem
+        conversation={newConversation}
+        selected={selectedConversationId === 'new'}
+        onClick={() => onclick('new')}
+      />
+      {conversations &&
+        conversations.length > 0 &&
+        conversations.map((conv) => (
+          <ConversationItem
+            key={conv.id}
+            conversation={conv}
+            selected={selectedConversationId === conv.id}
+            onClick={() => onclick(conv.id)}
+          />
+        ))}
     </Box>
   )
 }

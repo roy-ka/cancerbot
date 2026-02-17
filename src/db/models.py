@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Set
+from typing import Set, List, Optional, Any
 from uuid import uuid4
 
-from sqlalchemy import Column, DateTime, ForeignKey, String, Text
+from sqlalchemy import Column, DateTime, ForeignKey, String, Text, JSON
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, relationship
 
@@ -54,6 +54,7 @@ class Conversation(Base):
 
 class Message(Base):
     __tablename__ = "messages"
+    __allow_unmapped__ = True 
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     conversation_id = Column(
@@ -65,6 +66,91 @@ class Message(Base):
     role = Column(String(20), nullable=False)
     content = Column(Text, nullable=False)
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
+    sources_ids = Column(JSON, nullable=True) 
+    claim_ids = Column(JSON, nullable=True)
+    intent = Column(String(20), nullable=True)
+
+    # --- Virtual fields (not stored as separate DB columns) ---
+    # Stored in DB: sources_ids / claim_ids (JSON)
+    # Exposed to client: sources / claims (list[dict])
+    #
+    # The API layer (routers/services) should attach resolved objects by setting
+    # `message.sources = [...]` / `message.claims = [...]` where each item is a dict
+    # with whatever fields the UI needs (id, title, url, snippet, score, etc.).
+
+    _sources: Optional[List[dict]] = None
+    _claims: Optional[List[dict]] = None
+
+    @property
+    def source_ids(self) -> List[str]:
+        """Always return source IDs as a list of strings (from sources_ids JSON)."""
+        val = self.sources_ids
+        if val is None:
+            return []
+        if isinstance(val, list):
+            return [str(x) for x in val]
+        if isinstance(val, str):
+            return [s.strip() for s in val.split(",") if s.strip()]
+        return [str(val)]
+
+    @property
+    def claim_id_list(self) -> List[str]:
+        """Always return claim IDs as a list of strings (from claim_ids JSON)."""
+        val = self.claim_ids
+        if val is None:
+            return []
+        if isinstance(val, list):
+            return [str(x) for x in val]
+        if isinstance(val, str):
+            return [s.strip() for s in val.split(",") if s.strip()]
+        return [str(val)]
+
+    @property
+    def sources(self) -> List[dict]:
+        """Client-facing resolved sources.
+
+        If the API layer didn't attach resolved objects, returns minimal dicts
+        containing only the stable `id` so the UI can lazy-load details.
+        """
+        if isinstance(self._sources, list):
+            return self._sources
+        return [{"id": sid} for sid in self.source_ids]
+
+    @sources.setter
+    def sources(self, value: Optional[List[dict]]) -> None:
+        # Accept resolved source objects (dicts). Also keep sources_ids in sync.
+        if value is None:
+            self._sources = None
+            return
+        self._sources = value
+        try:
+            self.sources_ids = [str(item.get("id")) for item in value if item.get("id")]
+        except Exception:
+            # If value isn't a list of dicts, don't crash model usage
+            pass
+
+    @property
+    def claims(self) -> List[dict]:
+        """Client-facing resolved claims.
+
+        If the API layer didn't attach resolved objects, returns minimal dicts
+        containing only the stable `id` so the UI can lazy-load details.
+        """
+        if isinstance(self._claims, list):
+            return self._claims
+        return [{"id": cid} for cid in self.claim_id_list]
+
+    @claims.setter
+    def claims(self, value: Optional[List[dict]]) -> None:
+        # Accept resolved claim objects (dicts). Also keep claim_ids in sync.
+        if value is None:
+            self._claims = None
+            return
+        self._claims = value
+        try:
+            self.claim_ids = [str(item.get("id")) for item in value if item.get("id")]
+        except Exception:
+            pass
 
     conversation = relationship(
         "Conversation",

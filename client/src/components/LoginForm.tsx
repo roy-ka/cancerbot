@@ -7,34 +7,34 @@ import {
   Checkbox,
 } from '@mui/material'
 import React, { useState } from 'react'
+import { useNavigate } from 'react-router'
+import type { LoginPayload } from '../types'
 
 export default function LoginForm() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [rememberMe, setRememberMe] = useState(false)
-
-  type LoginPayload = {
-    email: string
-    password: string
-    rememberMe: boolean
-  }
+  const navigate = useNavigate()
 
   const login = async (payload: LoginPayload) => {
-    const res = await fetch('http://localhost:8000/auth/login', {
+    const BASE_URL = import.meta.env.VITE_BASE_URL
+
+    const res = await fetch(`${BASE_URL}/auth/login`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(payload),
-      credentials: 'include', // only if you use cookies
+      credentials: 'include',
     })
-
-    if (!res.ok) {
-      const err = await res.json().catch(() => null)
-      throw new Error(err?.message ?? 'Login failed')
+    if (res.ok) {
+      console.log('Login successful, redirecting to dashboard...')
+      navigate('/chat')
+    } else {
+      res.json().then((err) => {
+        throw new Error(err?.message ?? 'Login failed')
+      })
     }
-
-    return res.json()
   }
 
   const onSubmit = (e: React.SubmitEvent<HTMLFormElement>) => {

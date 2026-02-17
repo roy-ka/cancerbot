@@ -1,7 +1,7 @@
 from pathlib import Path
+import hashlib
 import pandas as pd
 from .retrieval.db_connector import dbConnector
-from uuid import uuid7
 from .classes.ollama_connector import OllamaConnector
 from dotenv import load_dotenv
 import os
@@ -9,9 +9,9 @@ load_dotenv()
 
 current_model = os.getenv('EMBED_MODEL_NAME')
 
-type = 'claim' # 'source' or 'claim'
+type = 'source' # 'source' or 'claim'
 
-input_file= './data/enriched_sources_merged.jsonl' if type == 'source' else './data/claims_canonical.jsonl'
+input_file= './data/enriched_sources_merges.jsonl' if type == 'source' else './data/claims_canonical.jsonl'
 
 
 MODELS = dbConnector.MODELS
@@ -35,13 +35,41 @@ def convert_row(row):
     return out
 
 
+def stable_id_for_claim(record: dict) -> str:
+	# Prefer an existing canonical claim id if present (e.g., "C81" or "AUTO_CLAIM_93")
+	for key in ("claim_id", "id", "claimId"):
+		val = record.get(key)
+		if isinstance(val, str) and val.strip():
+			return val.strip()
+	# Fallback: hash the English protocol claim
+	text = (record.get("protocol_claim_en") or "").strip()
+	return "claim:" + hashlib.sha1(text.encode("utf-8")).hexdigest()
+
+
+def stable_id_for_source(row: dict) -> str:
+	pmid = row.get("pmid")
+	doi = row.get("doi")	
+	url = row.get("url")
+	# Prefer stable natural keys when available
+	if pmid:
+		return f"pmid:{str(pmid).strip()}"
+	if doi:
+		return f"doi:{str(doi).strip().lower()}"
+	if url:
+		return "url:" + hashlib.sha1(str(url).strip().encode("utf-8")).hexdigest()
+	# Last resort: hash title + content
+	title = (row.get("title") or "").strip()
+	content = (row.get("content_for_embedding") or "").strip()
+	return "src:" + hashlib.sha1((title + "\n" + content).encode("utf-8")).hexdigest()
+
+
 def build_claim_document(row):
 		record = row.copy()
 		record['index'] = index_name
 		record['embedding'] = OllamaConnector.embed_text(record['protocol_claim_en'])
 		record['content_for_embedding'] = record['protocol_claim_en']
 		record['created_at'] = pd.Timestamp.now().isoformat()
-		record['id'] = str(uuid7())
+		record['id'] = stable_id_for_claim(record)
 		return record
 
 
@@ -50,7 +78,7 @@ def build_source_document(row):
 			print (f"Skipping record with insufficient content for embedding: PMID {row['pmid']}, DOI {row['doi']}")
 			return False
 		record = {
-			'id': str(uuid7()),
+			'id': stable_id_for_source(row),
 			'index': index_name,
 			'source_type': row['source_type'],
 			'pmid': row['pmid'],
@@ -88,5 +116,3 @@ for index, row in data.iterrows():
 
 print(f"Completed embedding and indexing. Total records: {len(data)}, Skipped: {skipped}, Errors: {len(errors)}")
 print(errors)		
-
-

@@ -4,7 +4,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def get_text_from_results(results: list, field: str) -> list:
+def get_field_from_results(results: list, field: str) -> list:
   extracted = []
   for x in results:
     if not isinstance(x, dict):
@@ -17,7 +17,7 @@ def get_text_from_results(results: list, field: str) -> list:
       val = x.get(field)
     if isinstance(val, str) and val.strip():
       extracted.append(val)
-  logger.info(f"get_text_from_results: extracted {len(extracted)} results for field={field}")
+  logger.info(f"get_field_from_results: extracted {len(extracted)} results for field={field}")
   return extracted
 
 
@@ -26,23 +26,29 @@ def hybrid_results(intent, claims, sources, k_primary: int = 5, k_secondary: int
     if len(sources + claims) > 5 and len(claims) > 1:
       sources = sources[:k_primary]
       claims = claims[:k_secondary]
-    primary = get_text_from_results(sources, 'content_for_embedding')
-    secondary = get_text_from_results(claims, 'protocol_claim_en')
+    primary = sources
+    secondary = claims
+    claims_ids = get_field_from_results(claims, 'id')
+    sources_ids = get_field_from_results(sources, 'id')
     return {
       'primary': primary,
       'secondary': secondary,
       'generation_context': primary + secondary,
-      'intent': 'concept'
+      'intent': 'concept',
+      'claims_ids': claims_ids ,
+      'sources_ids': sources_ids,
     }
   elif intent == intervention:
     if len(claims) > 2: 
       claims = claims[:k_primary]
       sources = sources[:k_secondary]
-    primary = get_text_from_results(claims, 'protocol_claim_en')
-    secondary = get_text_from_results(sources, 'content_for_embedding')
+    primary = claims
+    secondary = sources
+    claims_ids = get_field_from_results(claims, 'id')
+    sources_ids = get_field_from_results(sources, 'id')
     return {
-      'primary': primary,
-      'secondary': secondary,
+      'claims_ids':claims_ids ,
+      'sources_ids': sources_ids,
       'generation_context': primary + secondary,
       'intent': 'intervention'
     }

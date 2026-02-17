@@ -1,12 +1,8 @@
 import { Box } from '@mui/material'
+import type { Message } from '../types'
+import MessageItem from './MessageItem'
 
-export default function messageList({
-  messages,
-  input,
-}: {
-  messages: React.ReactNode
-  input: React.ReactNode
-}) {
+export default function messageList({ messages }: { messages: Message[] }) {
   return (
     <Box
       sx={{
@@ -14,32 +10,26 @@ export default function messageList({
         display: 'flex',
         flexDirection: 'column',
         position: 'relative',
+
+        overflowY: 'auto',
+        px: { xs: 2, md: 4 },
+        py: 3,
       }}
     >
-      {/* Messages */}
-      <Box
-        sx={{
-          flex: 1,
-          overflowY: 'auto',
-          px: { xs: 2, md: 4 },
-          py: 3,
-        }}
-      >
-        {messages}
-      </Box>
-
-      {/* Input */}
-      <Box
-        sx={{
-          borderTop: '1px solid rgba(255,255,255,0.08)',
-          backdropFilter: 'blur(12px)',
-          backgroundColor: 'rgba(20,25,40,0.85)',
-          px: { xs: 2, md: 4 },
-          py: 2,
-        }}
-      >
-        {input}
-      </Box>
+      {messages.length === 0 && (
+        <Box
+          sx={{
+            mt: 4,
+            textAlign: 'center',
+            color: 'rgba(255,255,255,0.6)',
+          }}
+        >
+          No messages yet. Start the conversation!
+        </Box>
+      )}
+      {messages.map((message) => (
+        <MessageItem message={message} key={message.id || 'new'} />
+      ))}
     </Box>
   )
 }

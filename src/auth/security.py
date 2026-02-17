@@ -2,6 +2,7 @@ from dotenv import load_dotenv
 from passlib.context import CryptContext
 from datetime import datetime, timedelta, timezone
 from jose import jwt, exceptions
+from fastapi import HTTPException, status
 import os
 
 load_dotenv()
@@ -27,8 +28,6 @@ class SecurityUtils:
   @classmethod
   def create_jwt_token(cls, data: dict) -> str:
     to_encode = data.copy()
-    expire = datetime.now(timezone.utc) + timedelta(minutes=cls.ACCESS_TOKEN_EXPIRE_MINUTES)
-    to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, cls.JWT_SECRET, algorithm=cls.JWT_ALGORITHM)
     return encoded_jwt
 
@@ -38,6 +37,14 @@ class SecurityUtils:
       payload = jwt.decode(token, cls.JWT_SECRET, algorithms=[cls.JWT_ALGORITHM])
       return payload
     except exceptions.ExpiredSignatureError:
-      raise ValueError("JWT token has expired")
+      raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid or expired token",
+        headers={"WWW-Authenticate": "Bearer"},
+      )
     except exceptions.JWTError:
-      raise ValueError("Invalid JWT token")
+      raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid or expired token",
+        headers={"WWW-Authenticate": "Bearer"},
+      )
