@@ -13,3 +13,4 @@ python-jose[cryptography]
 beautifulsoup4
 wikipedia-api
 lxml
+tldextract

@@ -1,8 +1,24 @@
 from src.db.models import Message
 from src.retrieval.db_connector import dbConnector
 import logging
+from typing import Optional, Tuple
+from datetime import datetime
+import uuid
+import tldextract
 
-__name__='repositories_messeges'
+__name__ = 'repositories_messeges'
+
+
+def _decode_cursor(cursor: str) -> Tuple[datetime, uuid.UUID]:
+  """Cursor format: <iso8601>|<uuid>"""
+  try:
+    ts_str, id_str = cursor.split('|', 1)
+    ts = datetime.fromisoformat(ts_str)
+    return ts, uuid.UUID(id_str)
+  except Exception as e:
+    raise ValueError('Invalid cursor format') from e
+
+
 def add_claims_and_sources(message: Message):
   src = message.sources_ids or []
   clm = message.claim_ids or []
@@ -15,46 +31,82 @@ def add_claims_and_sources(message: Message):
   ids = [*src, *clm]
   if not ids:
     return
+
+  def _extract_source_name(url: Optional[str]) -> str:
+    if not url:
+      return 'unknown'
+    try:
+      ext = tldextract.extract(str(url))
+      return (ext.domain or 'unknown').lower()
+    except Exception:
+      return 'unknown'
+
   response = dbConnector.get_claims_and_sources_by_id(ids)
   results = response['hits']['hits']
+
   claims = []
   sources = []
-  for res in results: 
+  for res in results:
     data = res['_source']
-    entry={
+    url = data.get('url') or data.get('pmid') or data.get('doi')
+
+    entry = {
       'evidence_score_0_5': data.get('evidence_score_0_5'),
       'text': data.get('content_for_embedding'),
       'id': data.get('id'),
-      'url': data.get('url') or data.get('pmid') or data.get('doi')
+      'url': url,
+      'name': _extract_source_name(url),
     }
-    logging.info(entry)
     if data.get('index') == 'claims_index':
       claims.append(entry)
-      
     elif data.get('index') == 'sources_index':
       sources.append(entry)
-    message.claims = claims
-    message.sources = sources
 
-def add_message(db, conversation_id, role, content, sources_ids='',claim_ids='', intent=None):
+  # Set once after processing
+  message.claims = claims
+  message.sources = sources
+
+
+def add_message(db, conversation_id, role, content, sources_ids='', claim_ids='', intent=None):
   new_message = Message(
-    conversation_id=conversation_id, 
-    role=role, 
-    content=content, 
-    sources_ids= sources_ids,
+    conversation_id=conversation_id,
+    role=role,
+    content=content,
+    sources_ids=sources_ids,
     claim_ids=claim_ids,
-    intent=intent
+    intent=intent,
   )
   logging.info(f"Adding message to conversation {conversation_id} with role {role}")
   db.add(new_message)
   db.commit()
-  if role == 'assistant': 
+
+  if role == 'assistant':
     add_claims_and_sources(new_message)
+
   return new_message
 
-def get_messages_by_conversation_id(db, conversation_id, limit=50):
-  messages = db.query(Message).filter(Message.conversation_id == conversation_id).order_by(Message.created_at).limit(limit).all()  
+
+def get_messages_by_conversation_id(db, conversation_id, limit=50, before: Optional[str] = None):
+  q = db.query(Message).filter(Message.conversation_id == conversation_id)
+
+  # Keyset pagination on (created_at, id): fetch messages strictly older than the cursor
+  if before:
+    before_ts, before_id = _decode_cursor(before)
+    q = q.filter(
+      (Message.created_at < before_ts)
+      | ((Message.created_at == before_ts) & (Message.id < before_id))
+    )
+
+  # Fetch newest -> oldest for stable pagination, then reverse for UI order
+  page_desc = (
+    q.order_by(Message.created_at.desc(), Message.id.desc())
+     .limit(limit)
+     .all()
+  )
+  messages = list(reversed(page_desc))  # oldest -> newest
+
   for msg in messages:
     if msg.role == 'assistant':
       add_claims_and_sources(msg)
+
   return messages

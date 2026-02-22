@@ -1,9 +1,9 @@
 from ollama import Client
 from dotenv import load_dotenv
 import os
+import json
 from typing import Any, Mapping, Sequence
-import logging
-
+from src.db.models import Conversation, Message
 
 class OllamaConnector:  
   __name__='Ollama_connector'
@@ -22,46 +22,125 @@ class OllamaConnector:
     return response.embeddings[0]
 
   @classmethod
-  def generate_text(cls, context: Sequence[Any], question: str) -> str:
+  def generate_text(cls, context: Sequence[Any], question: str, conversation: Conversation) -> str:
+    
     """Generate an answer grounded in the provided context.
 
     Context must be a list of dict / Mapping items with explicit IDs, e.g.
          {
-           "id": "SRC_193" or "pmid:12345678" or "C81",
+           "id": "SRC_193" or "pmid:12345678" or "C81" or "url:<sha1>",
            "content_for_embedding": "...text chunk used for grounding..."
          }
-    Only `id` and `content_for_embedding` are used.
+
+    To avoid LLM typos on long opaque IDs (especially url:<sha1>), the prompt uses
+    short alias IDs like [R1], [R2] for citations, and the returned answer is
+    post-processed to replace [R#] back to the original stable IDs.
     """
+
+    alias_to_id: dict[str, str] = {}
+
+    def _truncate(s: str, n: int = 320) -> str:
+      s = ' '.join(str(s or '').split())
+      return (s[:n] + '…') if len(s) > n else s
+
+    def _ids_only(items, max_items: int = 6):
+      """Extract compact ids (and optional names) from msg.sources/msg.claims."""
+      if not items:
+        return []
+      out = []
+      try:
+        for it in items:
+          if isinstance(it, dict):
+            _id = it.get('id')
+            name = it.get('name')
+            if _id is None:
+              continue
+            out.append({'id': str(_id), **({'name': str(name)} if name else {})})
+          else:
+            # If it's already an id-like primitive
+            out.append({'id': str(it)})
+          if len(out) >= max_items:
+            break
+      except Exception:
+        return []
+      return out
+
+    # Keep only the most recent messages to avoid token bloat
+    max_history = int(os.getenv('PROMPT_MAX_HISTORY', '8'))
+    recent_msgs = list(conversation.messages)[-max_history:]
+
+    # Drop assistant messages that are purely tool output (e.g., raw JSON blobs)
+    def _is_tool_output(msg: Message) -> bool:
+      if msg.role != 'assistant':
+        return False
+
+      content = str(getattr(msg, 'content', '') or '').strip()
+
+      # Explicit tool intent flag
+      if getattr(msg, 'intent', None) == 'tool':
+        return True
+
+      # Heuristic: large JSON-like payloads
+      if content.startswith('{') and content.endswith('}') and len(content) > 200:
+        return True
+
+      return False
+
+    recent_msgs = [m for m in recent_msgs if not _is_tool_output(m)]
+
+    message_context_compact = [
+      {
+        'role': msg.role,
+        'content': _truncate(msg.content, 360 if msg.role == 'user' else 520),
+        # Keep only small id lists (enriched content already appears in Scientific Evidence)
+        'source_ids': _ids_only(getattr(msg, 'sources', None)),
+        'claim_ids': _ids_only(getattr(msg, 'claims', None)),
+      }
+      for msg in recent_msgs
+    ]
+
+    # Compact JSON string for the prompt (stable and token-efficient)
+    message_context = json.dumps(message_context_compact, ensure_ascii=False, separators=(',', ':'))
 
     def render_item(item: Any, i: int) -> str:
       if not isinstance(item, Mapping):
         raise ValueError(
           "Context items must be dict-like objects containing 'id' and 'content_for_embedding'."
         )
-      logging.info(item)
+
       # Support OpenSearch hit shape: {"_id": "...", "_source": {...}}
       src = item.get("_source") if isinstance(item.get("_source"), Mapping) else None
 
-      # Extract a stable id from common locations
-      raw_id = src.get('id')
+      # Extract original stable id (prefer explicit fields; fall back to _source.id; then _id)
+      raw_id = (
+        item.get('id')
+        or item.get('source_id')
+        or item.get('claim_id')
+        or (src.get('id') if src else None)
+        or item.get('_id')
+      )
 
       if not raw_id:
         raise ValueError(
-          "Context item missing 'id'. Provide item['id'] (recommended) or an OpenSearch hit with '_id'/'_source.id'."
+          "Context item missing 'id'. Provide item['id'] or an OpenSearch hit with '_source.id' or '_id'."
         )
 
-      label = str(raw_id).strip()
+      original_id = str(raw_id).strip()
 
-      # Extract content_for_embedding from common locations
+      # Use a short deterministic alias for citations to prevent LLM typos
+      alias = f"R{i+1}"
+      alias_to_id[alias] = original_id
+
+      # Extract content_for_embedding
       text = (
-        item.get("content_for_embedding")
-        or (src.get("content_for_embedding") if src else None)
-        or ""
+        item.get('content_for_embedding')
+        or (src.get('content_for_embedding') if src else None)
+        or ''
       )
-      text = " ".join(str(text).split())
+      text = ' '.join(str(text).split())
 
-      # Render ONLY id + content_for_embedding
-      return f"[{label}] {text}" if text else f"[{label}]"
+      # Render ONLY alias + content_for_embedding
+      return f"[{alias}] {text}" if text else f"[{alias}]"
 
     rendered = [render_item(item, i).strip() for i, item in enumerate(context)]
     context_block = "\n".join(rendered)
@@ -70,16 +149,25 @@ class OllamaConnector:
       context_block = "(no context provided)"
 
     full_prompt = f"""
-You are a doctor specializing in cancer research and treatment, metabolism and integrative medicine.
-Answer using ONLY the context below.
-If the context does not contain the answer, say so.
+You are a doctor specializing in cancer research and treatment, metabolism, and integrative medicine.
+
+Use ONLY the Scientific Evidence below as factual grounding.
+Conversation History is for user intent and context only; it is NOT evidence unless explicitly cited from Scientific Evidence.
+
+If fewer than 2 citations support the answer, write: "Insufficient evidence in provided context."
 
 CITATION RULES:
-- When you use a fact, cite it using the bracket IDs exactly as provided in the context, e.g. [SRC_193] or [pmid:12345678] or [C81].
-- Do NOT invent new citation IDs.
+- Cite each factual, mechanistic, outcome, or statistical claim using ONLY the bracket aliases shown in Scientific Evidence: [R1], [R2], [R3], ...
+- Place citations immediately after the sentence they support.
+- Multiple citations are allowed, e.g. [R1][R3].
+- Do NOT invent new citation IDs and do NOT output any other bracket IDs.
+- If the evidence conflicts, summarize both sides and cite both.
 
-CONTEXT:
+Scientific Evidence:
 {context_block}
+
+Conversation History:
+{message_context}
 
 QUESTION:
 {question}
@@ -97,5 +185,11 @@ ANSWER:
         stream=False
     )
 
-    return response["response"]
-  
+    answer = response["response"]
+
+    # Replace alias citations with the original stable IDs.
+    # Example: [R8] -> [url:86cc...]
+    for alias, original_id in alias_to_id.items():
+      answer = answer.replace(f"[{alias}]", f"[{original_id}]")
+
+    return answer

@@ -48,7 +48,7 @@ export default function LoginDetails() {
         {/* Feature card */}
         <Box
           className="login-details-feature-card"
-          style={{ backgroundImage: `url(${chatBg})` }}
+          style={{ backgroundImage: `url(${chatBg})`, alignItems: 'stretch' }}
         >
           <Grid container spacing={2.5} alignItems="stretch">
             {/* Left content */}

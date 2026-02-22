@@ -21,7 +21,7 @@ export default function InputField({
       onSubmit={handleSubmit}
       sx={{ width: '100%' }}
     >
-      <Grid container spacing={2} alignItems="center">
+      <Grid container spacing={2} sx={{ width: '100%' }}>
         <Grid size={11}>
           <TextField
             fullWidth

@@ -1,4 +1,4 @@
-import { Box, Typography } from '@mui/material'
+import { Grid, Typography } from '@mui/material'
 import type { Conversation } from '../types'
 
 export default function ConversationItem({
@@ -11,16 +11,34 @@ export default function ConversationItem({
   onClick: () => void
 }) {
   return (
-    <Box
+    <Grid
       className={`conversation-item ${selected ? 'selected' : ''}`}
       onClick={onClick}
     >
-      <Typography className="conversation-item-title">
-        {conversation.title}
-      </Typography>
-      <Typography className="conversation-item-subtitle">
-        {conversation.lastMessage} · {conversation.lastMessageTime}
-      </Typography>
-    </Box>
+      <Grid size={12}>
+        <Typography className="conversation-item-title">
+          {conversation.title}
+        </Typography>
+      </Grid>
+      {(conversation.id !== 'new') && (
+        <Grid container>
+          <Grid size={7}>
+            <Typography className="conversation-item-subtitle">
+              {conversation.lastMessage.length > 17
+                ? conversation.lastMessage.substring(0, 17) + '...'
+                : conversation.lastMessage.length}
+            </Typography>
+          </Grid>
+          <Grid size={1}>
+            <Typography className="conversation-item-subtitle"> · </Typography>
+          </Grid>
+          <Grid size={4}>
+            <Typography className="conversation-item-subtitle">
+              {conversation.lastMessageTime}
+            </Typography>
+          </Grid>
+        </Grid>
+      )}
+    </Grid>
   )
 }

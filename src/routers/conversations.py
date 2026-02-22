@@ -1,6 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from typing import Literal
+from typing import Literal, Optional
 from src.deps.db import get_db
 from src.deps.auth import get_current_user
 import logging
@@ -8,7 +8,8 @@ from pydantic import BaseModel
 from src.db.repositories.conversations import (
     get_conversation_by_id,
     get_conversations_list_by_user_id,
-    create_conversation
+    create_conversation,
+    format_last_msg_time,
 )
 from src.db.repositories.messeges import add_message, get_messages_by_conversation_id
 from uuid import UUID
@@ -43,7 +44,9 @@ async def get_user_conversations(
             {
                 "id": str(conv.id),
                 "title": conv.title,
-                "updated_at": conv.updated_at.isoformat() if conv.updated_at else None,
+                "updatedAt": conv.updated_at.isoformat() if conv.updated_at else None,
+                'lastMessage': conv.last_user_message.get('content'),
+                'lastMessageTime':  conv.last_user_message.get('created_at')
             }
             for conv in conversations
         ]
@@ -55,22 +58,42 @@ async def get_conversation_messages(
     conversation_id: UUID,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
-    limit: int = 50,
+    limit: int = Query(30, ge=1, le=100),
+    before: Optional[str] = Query(None),
 ):
-    logging.info(f"Fetching messages for conversation_id: {conversation_id} with limit: {limit}")
-    conversation = get_conversation_by_id(db=db, conversation_id=conversation_id, current_user=current_user)
-    if conversation is None:
-        logging.error("couldn't find conversation id: ", conversation_id)
-        raise HTTPException(status_code=404, detail="Conversation not found")
+    logging.info(
+        "Fetching paginated messages for conversation_id: %s limit=%s before=%s",
+        conversation_id,
+        limit,
+        before,
+    )
 
-    if str(conversation.user_id) != str(current_user.id):
-        raise HTTPException(status_code=403, detail="Forbidden")
+    conversation = get_conversation_by_id(
+        db=db,
+        conversation_id=conversation_id,
+        current_user=current_user,
+    )
 
     messages = get_messages_by_conversation_id(
         db=db,
         conversation_id=conversation_id,
         limit=limit,
+        before=before,
     )
+
+    next_before = None
+    if messages:
+        oldest = messages[0]
+        if oldest.created_at:
+            next_before = f"{oldest.created_at.isoformat()}|{str(oldest.id)}"
+
+    if conversation is None:
+        logging.error("couldn't find conversation id: %s", conversation_id)
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    # Enforce ownership
+    if str(conversation.user_id) != str(current_user.id):
+        raise HTTPException(status_code=403, detail="Forbidden")
 
     messages_data = [
         {
@@ -78,14 +101,22 @@ async def get_conversation_messages(
             "role": msg.role,
             "content": msg.content,
             "created_at": msg.created_at.isoformat() if msg.created_at else None,
-            'intent':msg.intent,
-            'claims': msg.claims,
-            'sources': msg.sources
+            "intent": msg.intent,
+            "claims": msg.claims,
+            "sources": msg.sources,
         }
         for msg in messages
     ]
 
-    return {"conversation": conversation, "messages": messages_data}
+    return {
+        "conversation": {
+            "id": str(conversation.id),
+            "title": conversation.title,
+            "updatedAt": conversation.updated_at.isoformat() if conversation.updated_at else None,
+        },
+        "messages": messages_data,
+        "next_before": next_before,
+    }
 
 @router.post("/{conversation_id}/add_message")
 async def post_message(
@@ -115,15 +146,17 @@ async def post_message(
         )
         db.commit()
         db.refresh(user_message)
+        
     except Exception:
         db.rollback()
         raise
-
     # Retrieval + generation outside DB tx
     context = run_retrieval(req.content)
     response = OllamaConnector.generate_text(
         context=context["generation_context"],
         question=req.content,
+        conversation = conversation
+        
     )
 
     # Store assistant message
@@ -148,7 +181,9 @@ async def post_message(
         "conversation": {
             "id": str(conversation.id), 
             "title": conversation.title,
-            "updated_at": asistent_message.created_at,
+            "updatedAt": asistent_message.created_at,
+            'lastMessage': user_message.content,
+            'lastMessageTime':  format_last_msg_time(user_message.created_at),
             }
         }
 

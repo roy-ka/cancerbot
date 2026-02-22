@@ -1,19 +1,30 @@
+html,
+body,
 #root {
-  width: 100%;
-  height: 100vh;
-  padding: 2rem;
-  margin: 0;
+  height: 100%;
 }
 
+body {
+  margin: 0;
+  overflow: hidden;
+}
+
+#root {
+  padding: 0;
+}
+
+/* ===== Vite defaults / shared ===== */
 .logo {
   height: 6em;
   padding: 1.5em;
   will-change: filter;
   transition: filter 300ms;
 }
+
 .logo:hover {
   filter: drop-shadow(0 0 2em #646cffaa);
 }
+
 .logo.react:hover {
   filter: drop-shadow(0 0 2em #61dafbaa);
 }
@@ -50,20 +61,282 @@
   color: #000;
 }
 
-.login-background {
-  --mx: 0px;
-  --my: 0px;
-  min-height: 90dvh;
-  width: 100%;
-  display: grid;
-  place-items: center;
-  border-radius: 4px;
-  padding: 1rem;
-  overflow: hidden;
+.chat-root {
+  height: 100dvh;
+  width: 100vw;
+  display: flex;
   position: relative;
-  background-color: var(--bg-default);
+  overflow: hidden;
+  background-color: var(--mui-palette-background-default);
+}
+.chat-grid {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
 }
 
+.chat-root::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 1;
+  background-image:
+    radial-gradient(
+      1px 1px at 18px 24px,
+      rgba(255, 255, 255, 0.9) 50%,
+      transparent 52%
+    ),
+    radial-gradient(
+      1px 1px at 70px 110px,
+      rgba(255, 255, 255, 0.7) 50%,
+      transparent 52%
+    ),
+    radial-gradient(
+      1px 1px at 140px 52px,
+      rgba(255, 255, 255, 0.55) 50%,
+      transparent 52%
+    ),
+    radial-gradient(
+      2px 2px at 110px 150px,
+      rgba(255, 255, 255, 0.4) 50%,
+      transparent 55%
+    ),
+    radial-gradient(
+      2px 2px at 220px 90px,
+      rgba(255, 255, 255, 0.25) 50%,
+      transparent 55%
+    ),
+    radial-gradient(
+      1px 1px at 44px 190px,
+      rgba(255, 255, 255, 0.4) 50%,
+      transparent 52%
+    );
+  background-size:
+    220px 220px,
+    220px 220px,
+    220px 220px,
+    220px 220px,
+    220px 220px,
+    440px 440px;
+  background-repeat: repeat;
+  filter: drop-shadow(0 0 14px rgba(255, 255, 255, 0.1));
+}
+
+.chat-root::after {
+  content: '';
+  position: absolute;
+  inset: -260px;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 1;
+  background-image:
+    radial-gradient(
+      1000px 780px at 18% 88%,
+      rgba(124, 92, 255, 0.65),
+      transparent 62%
+    ),
+    radial-gradient(
+      880px 640px at 85% 18%,
+      rgba(47, 227, 198, 0.42),
+      transparent 60%
+    ),
+    radial-gradient(
+      820px 680px at 55% 45%,
+      rgba(180, 140, 255, 0.28),
+      transparent 64%
+    ),
+    radial-gradient(
+      700px 600px at 72% 72%,
+      rgba(90, 180, 255, 0.22),
+      transparent 62%
+    ),
+    radial-gradient(
+      1400px 1000px at 50% 50%,
+      rgba(0, 0, 0, 0),
+      rgba(0, 0, 0, 0.72) 78%,
+      rgba(0, 0, 0, 0.95) 100%
+    );
+  background-repeat: no-repeat;
+  background-size: cover;
+  mix-blend-mode: screen;
+  filter: blur(28px) saturate(120%);
+}
+
+.chat-root > * {
+  position: relative;
+  z-index: 1;
+}
+
+.chat-conversations {
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(10px);
+  background: linear-gradient(
+    180deg,
+    rgba(3, 35, 84, 0.72),
+    rgba(15, 20, 35, 0.72)
+  );
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+  flex: 0 0 330px !important;
+  width: 330px;
+  max-width: 330px;
+}
+
+.chat-messages {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  /* Override MUI Grid item sizing: make this panel grow to fill remaining space */
+  flex: 1 1 0 !important;
+  width: auto !important;
+  max-width: none !important;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+.conversation-list-root {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+}
+
+.conversation-title {
+  font-weight: 800;
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.75);
+  margin-bottom: 20px;
+}
+
+.conversation-item {
+  padding: 12px;
+  border-radius: 15px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  background: linear-gradient(
+    135deg,
+    rgba(124, 92, 255, 0.18),
+    rgba(47, 227, 198, 0.08)
+  );
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  transition: background 0.15s ease;
+}
+
+.conversation-item:hover {
+  background: linear-gradient(
+    135deg,
+    rgba(124, 92, 255, 0.28),
+    rgba(47, 227, 198, 0.12)
+  );
+}
+
+.conversation-item.selected {
+  border: 2px solid rgba(255, 215, 0);
+}
+
+.conversation-item-title {
+  font-weight: 700;
+  font-size: 14px;
+  padding-left: 8px;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.conversation-item-subtitle {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+  padding-left: 8px;
+}
+
+.chat-message-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-sizing: border-box;
+  /* Override MUI Grid item sizing so this can grow */
+  flex-basis: auto !important;
+  max-width: 100% !important;
+  width: 100%;
+}
+
+.chat-input {
+  padding: 16px;
+  width: 100%;
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  flex: 0 0 auto !important;
+  flex-shrink: 0;
+  height: auto !important;
+  min-height: 72px;
+  display: flex;
+  align-items: center;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(10px);
+  background: linear-gradient(
+    180deg,
+    rgba(3, 35, 84, 0.72),
+    rgba(15, 20, 35, 0.72)
+  );
+  /* Override MUI Grid item sizing so it spans the row */
+  flex-basis: auto !important;
+  max-width: 100% !important;
+}
+
+.chat-input form {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Make the input control expand to fill available space */
+.chat-input form {
+  justify-content: stretch;
+}
+
+.chat-input form .MuiFormControl-root,
+.chat-input form .MuiTextField-root {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Keep the send button compact */
+.chat-input form button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.chat-input .MuiTextField-root,
+.chat-input .MuiInputBase-root {
+  width: 100%;
+}
+
+/* ===== Login Layout ===== */
+.login-background {
+  min-height: 100dvh;
+  width: 100%;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+/* Star + nebula overlay like chat */
 .login-background::before {
   content: '';
   position: absolute;
@@ -73,77 +346,44 @@
   opacity: 1;
   background-image:
     radial-gradient(
-      1px 1px at 12px 18px,
-      rgba(255, 255, 255, 0.95) 50%,
+      1px 1px at 18px 24px,
+      rgba(255, 255, 255, 0.9) 50%,
       transparent 52%
     ),
     radial-gradient(
-      1px 1px at 64px 92px,
-      rgba(255, 255, 255, 0.8) 50%,
-      transparent 52%
-    ),
-    radial-gradient(
-      1px 1px at 120px 40px,
+      1px 1px at 70px 110px,
       rgba(255, 255, 255, 0.7) 50%,
       transparent 52%
     ),
     radial-gradient(
-      2px 2px at 90px 130px,
-      rgba(255, 255, 255, 0.55) 50%,
-      transparent 55%
-    ),
-    radial-gradient(
-      2px 2px at 180px 70px,
-      rgba(255, 255, 255, 0.35) 50%,
-      transparent 55%
-    ),
-    radial-gradient(
-      1px 1px at 30px 160px,
+      1px 1px at 140px 52px,
       rgba(255, 255, 255, 0.55) 50%,
       transparent 52%
     ),
     radial-gradient(
-      1px 1px at 210px 210px,
-      rgba(255, 255, 255, 0.45) 50%,
-      transparent 52%
-    ),
-    radial-gradient(
-      2px 2px at 260px 120px,
-      rgba(255, 255, 255, 0.3) 50%,
+      2px 2px at 110px 150px,
+      rgba(255, 255, 255, 0.4) 50%,
       transparent 55%
     ),
     radial-gradient(
-      260px 260px at 50% 50%,
-      rgba(255, 255, 255, 0.07) 0%,
-      transparent 60%
+      2px 2px at 220px 90px,
+      rgba(255, 255, 255, 0.25) 50%,
+      transparent 55%
     ),
-    linear-gradient(
-      120deg,
-      transparent 0%,
-      rgba(255, 255, 255, 0) 18%,
-      rgba(255, 255, 255, 0.1) 34%,
-      rgba(255, 255, 255, 0.06) 48%,
-      rgba(255, 255, 255, 0.03) 58%,
-      rgba(255, 255, 255, 0) 74%,
-      transparent 100%
+    radial-gradient(
+      1px 1px at 44px 190px,
+      rgba(255, 255, 255, 0.4) 50%,
+      transparent 52%
     );
   background-size:
-    180px 180px,
-    180px 180px,
-    180px 180px,
-    180px 180px,
-    180px 180px,
-    360px 360px,
-    360px 360px,
-    360px 360px,
-    100% 100%,
-    100% 100%;
-  background-repeat:
-    repeat, repeat, repeat, repeat, repeat, repeat, repeat, repeat, no-repeat,
-    no-repeat;
-  transform: translate3d(calc(var(--mx) * 0.35), calc(var(--my) * 0.35), 0);
-  will-change: transform;
-  filter: drop-shadow(0 0 14px rgba(255, 255, 255, 0.12));
+    220px 220px,
+    220px 220px,
+    220px 220px,
+    220px 220px,
+    220px 220px,
+    440px 440px;
+  background-repeat: repeat;
+  filter: drop-shadow(0 0 14px rgba(255, 255, 255, 0.1));
 }
 
 .login-background::after {
@@ -156,41 +396,34 @@
   background-image:
     radial-gradient(
       1000px 780px at 18% 88%,
-      rgba(124, 92, 255, 0.78),
+      rgba(124, 92, 255, 0.65),
       transparent 62%
     ),
     radial-gradient(
       880px 640px at 85% 18%,
-      rgba(47, 227, 198, 0.5),
+      rgba(47, 227, 198, 0.42),
       transparent 60%
     ),
     radial-gradient(
       820px 680px at 55% 45%,
-      rgba(180, 140, 255, 0.38),
+      rgba(180, 140, 255, 0.28),
       transparent 64%
     ),
     radial-gradient(
       700px 600px at 72% 72%,
-      rgba(90, 180, 255, 0.32),
-      transparent 62%
-    ),
-    radial-gradient(
-      620px 560px at 38% 22%,
-      rgba(255, 120, 190, 0.18),
+      rgba(90, 180, 255, 0.22),
       transparent 62%
     ),
     radial-gradient(
       1400px 1000px at 50% 50%,
       rgba(0, 0, 0, 0),
-      rgba(0, 0, 0, 0.7) 78%,
+      rgba(0, 0, 0, 0.72) 78%,
       rgba(0, 0, 0, 0.95) 100%
     );
   background-repeat: no-repeat;
   background-size: cover;
   mix-blend-mode: screen;
-  transform: translate3d(calc(var(--mx) * 0.7), calc(var(--my) * 0.7), 0);
-  will-change: transform;
-  filter: blur(30px) saturate(120%);
+  filter: blur(28px) saturate(120%);
 }
 
 .login-background > * {
@@ -200,49 +433,60 @@
 
 .login-grid {
   width: 100%;
-  max-width: 1120px;
-  position: relative;
-  z-index: 1;
+  max-width: 1280px;
+  min-height: 90dvh;
+  margin: 0 auto;
+  align-items: center;
 }
 
 .login-grid-item {
-  min-height: auto;
-  display: flex;
+  min-width: 0;
 }
 
+/* Left card (details) */
 .login-details-container {
   width: 100%;
-  min-height: 0;
+  border-radius: 20px;
+  padding: 28px;
+  backdrop-filter: blur(18px);
+  background: linear-gradient(
+    180deg,
+    rgba(18, 25, 45, 0.72),
+    rgba(10, 14, 28, 0.78)
+  );
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
 }
 
+/* Right card (auth panel) */
 .login-auth-panel {
-  align-items: center;
-  justify-content: center;
+  width: 100%;
+  max-width: 520px;
+  margin-left: auto;
+  border-radius: 20px;
+  padding: 28px;
+  backdrop-filter: blur(18px);
+  background: linear-gradient(
+    180deg,
+    rgba(18, 25, 45, 0.72),
+    rgba(10, 14, 28, 0.78)
+  );
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
 }
 
-@media (max-width: 960px) {
+@media (max-width: 900px) {
   .login-background {
-    padding: 1rem;
+    padding: 16px;
+  }
+
+  .login-auth-panel {
+    max-width: none;
+    margin-left: 0;
   }
 }
 
-@media (min-width: 960px) {
-  .login-background {
-    padding: 1rem;
-  }
-
-  .login-grid-item {
-    min-height: 520px;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .login-background::before,
-  .login-background::after {
-    transform: none;
-  }
-}
-
+/* ===== Login Details + Auth components (missing classes) ===== */
 .login-details-card {
   position: relative;
   height: 100%;
@@ -332,7 +576,6 @@
   content: '';
   position: absolute;
   inset: 0;
-
   opacity: 0.92;
   -webkit-mask-image: linear-gradient(
     to right,
@@ -533,108 +776,4 @@
   .auth-form-container {
     padding: 1.75rem;
   }
-}
-
-.chat-root {
-  min-height: 100dvh;
-  width: 100%;
-  display: flex;
-  background-color: var(--mui-palette-background-default);
-}
-
-.chat-grid {
-  flex: 1;
-  display: flex;
-}
-
-.chat-conversations {
-  border-right: 1px solid rgba(255, 255, 255, 0.08);
-  backdrop-filter: blur(10px);
-  background: linear-gradient(
-    180deg,
-    rgba(3, 35, 84, 0.85),
-    rgba(15, 20, 35, 0.85)
-  );
-  display: flex;
-  flex-direction: column;
-  min-height: 100dvh;
-  flex-basis: 16.6667%;
-  max-width: 16.6667%;
-}
-
-.chat-messages {
-  display: flex;
-  flex-direction: column;
-  min-height: 100dvh;
-  flex: 1;
-}
-
-.conversation-list-root {
-  flex: 1;
-  overflow-y: auto;
-  padding: 16px;
-}
-
-.conversation-title {
-  font-weight: 800;
-  font-size: 14px;
-  color: rgba(255, 255, 255, 0.75);
-  margin-bottom: 20px;
-}
-
-.conversation-item {
-  padding: 12px;
-  border-radius: 15px;
-  margin-bottom: 8px;
-  cursor: pointer;
-  background: linear-gradient(
-    135deg,
-    rgba(124, 92, 255, 0.18),
-    rgba(47, 227, 198, 0.08)
-  );
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  transition: background 0.15s ease;
-}
-
-.conversation-item:hover {
-  background: linear-gradient(
-    135deg,
-    rgba(124, 92, 255, 0.28),
-    rgba(47, 227, 198, 0.12)
-  );
-}
-
-.conversation-item-title {
-  font-weight: 700;
-  font-size: 14px;
-  padding-left: 8px;
-  color: rgba(255, 255, 255, 0.92);
-}
-
-.conversation-item-subtitle {
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.6);
-  padding-left: 8px;
-}
-
-.chat-message-list {
-  flex: 1;
-  overflow-y: auto;
-  padding: 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  min-height: 90dvh;
-}
-
-.chat-input {
-  padding: 16px;
-  width: 100%;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-  backdrop-filter: blur(10px);
-  background: linear-gradient(
-    180deg,
-    rgba(3, 35, 84, 0.85),
-    rgba(15, 20, 35, 0.85)
-  );
 }

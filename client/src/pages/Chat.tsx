@@ -1,7 +1,7 @@
+import { useCallback, useEffect, useState } from 'react'
 import { Box, Grid } from '@mui/material'
 import ConversationList from '../components/ConversationList'
 import MessageList from '../components/MessageList'
-import { useEffect, useState } from 'react'
 import type { Conversation, Message } from '../types'
 import InputField from '../components/InputField'
 export default function Chat() {
@@ -9,6 +9,8 @@ export default function Chat() {
 
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [messages, setMessages] = useState<Message[]>([])
+  const [nextBefore, setNextBefore] = useState<string | null>(null)
+  const [isLoadingOlder, setIsLoadingOlder] = useState(false)
   const [selectedConversationId, setSelectedConversationId] =
     useState<string>('new')
 
@@ -19,6 +21,8 @@ export default function Chat() {
     timestamp: new Date().toISOString(),
     conversationId:
       selectedConversationId === 'new' ? undefined : selectedConversationId,
+    sources: [],
+    claims: [],
   })
 
   useEffect(() => {
@@ -47,28 +51,44 @@ export default function Chat() {
       if (selectedConversationId === 'new') {
         // Avoid re-render loops: only clear if there is something to clear
         setMessages((prev) => (prev.length === 0 ? prev : []))
+        setNextBefore(null)
+        setIsLoadingOlder(false)
         return
       }
 
       try {
         const res = await fetch(
-          `${BASE_URL}/conversations/${selectedConversationId}/messages`,
+          `${BASE_URL}/conversations/${selectedConversationId}/messages/?limit=30`,
           { credentials: 'include' },
         )
         if (!res.ok) throw new Error(await res.text())
 
-        const { messages, conversation_id } = await res.json()
-        if (selectedConversationId === 'new') {
-          setConversations((prev) => [conversation_id, ...prev])
-        }
+        const json = await res.json()
+        const apiMessages = json?.messages
+        const apiConversation = json?.conversation
+        const apiNextBefore = json?.next_before ?? null
+
+        setNextBefore(apiNextBefore)
 
         // Replace the message list for the selected conversation
-        if (Array.isArray(messages)) {
-          setMessages((prev) => (prev === messages ? prev : messages))
-        } else if (messages) {
-          console.warn('Unexpected messages format 1:', messages)
+        if (Array.isArray(apiMessages)) {
+          setMessages((prev) => (prev === apiMessages ? prev : apiMessages))
+        } else if (apiMessages) {
+          console.warn('Unexpected messages format:', apiMessages)
+          setMessages([])
         } else {
-          console.warn('Unexpected messages format 2:', messages)
+          setMessages([])
+        }
+
+        // Keep the conversation list in sync (update title/updatedAt) if provided
+        if (apiConversation?.id) {
+          setConversations((prev) => {
+            const idx = prev.findIndex((c) => c.id === apiConversation.id)
+            if (idx === -1) return prev
+            const updated = [...prev]
+            updated[idx] = { ...updated[idx], ...apiConversation }
+            return updated
+          })
         }
       } catch (e) {
         console.error('messages failed:', e)
@@ -77,6 +97,49 @@ export default function Chat() {
     fetchMessages()
   }, [BASE_URL, selectedConversationId])
 
+  const loadOlderMessages = useCallback(async (): Promise<boolean> => {
+    // No selected conversation or no cursor means no older messages
+    if (selectedConversationId === 'new') return false
+    if (!nextBefore) return false
+    if (isLoadingOlder) return true
+
+    setIsLoadingOlder(true)
+    try {
+      const res = await fetch(
+        `${BASE_URL}/conversations/${selectedConversationId}/messages/?limit=30&before=${encodeURIComponent(nextBefore)}`,
+        { credentials: 'include' },
+      )
+      if (!res.ok) throw new Error(await res.text())
+
+      const json = await res.json()
+      const older = Array.isArray(json?.messages)
+        ? (json.messages as Message[])
+        : []
+      const newCursor = json?.next_before ?? null
+
+      // Update cursor first
+      setNextBefore(newCursor)
+
+      if (older.length === 0) {
+        return false
+      }
+
+      // Prepend older messages, avoiding duplicates by id
+      setMessages((prev) => {
+        const seen = new Set(prev.map((m) => m.id))
+        const toAdd = older.filter((m) => !seen.has(m.id))
+        return [...toAdd, ...prev]
+      })
+
+      return true
+    } catch (e) {
+      console.error('load older messages failed:', e)
+      return false
+    } finally {
+      setIsLoadingOlder(false)
+    }
+  }, [BASE_URL, selectedConversationId, nextBefore, isLoadingOlder])
+
   const onMessageSubmit = (e: React.SubmitEvent) => {
     e.preventDefault()
     const form = e.currentTarget
@@ -84,11 +147,11 @@ export default function Chat() {
     if (!messageText) return
 
     const optimisticMessage = textToMessage(messageText)
-    console.log('optimisticMessage', optimisticMessage)
+
     // Add optimistic message immediately (functional update avoids stale state)
     setMessages((prev) => [...prev, optimisticMessage])
     const url = `${import.meta.env.VITE_BASE_URL}/conversations/${selectedConversationId === 'new' ? 'new' : `${selectedConversationId}/add_message`}`
-    console.log(url)
+
     fetch(url, {
       method: 'POST',
       credentials: 'include',
@@ -115,29 +178,26 @@ export default function Chat() {
 
   return (
     <Box className="chat-root">
-      <Grid container className="chat-grid">
-        <Grid size={2} className="chat-conversations">
+      <Grid container className="chat-grid" spacing={0}>
+        <Grid size={3} className="chat-conversations">
           <ConversationList
             setSelectedConversationId={setSelectedConversationId}
             selectedConversationId={selectedConversationId}
             conversations={conversations}
           />
         </Grid>
-        <Grid container size={10} className="chat-messages" direction="column">
-          <Grid size={11} className="chat-message-list">
-            <MessageList messages={messages} />
-          </Grid>
-          <Grid
-            size={1}
-            className="chat-input"
-            sx={{
-              justifyContent: 'center',
-              alignItems: 'stretch',
-              width: '100%',
-            }}
-          >
+        <Grid size={9} className="chat-messages">
+          <Box className="chat-message-list">
+            <MessageList
+              messages={messages}
+              onLoadOlder={loadOlderMessages}
+              hasOlder={!!nextBefore}
+              isLoadingOlder={isLoadingOlder}
+            />
+          </Box>
+          <Box className="chat-input">
             <InputField onSubmit={onMessageSubmit} />
-          </Grid>
+          </Box>
         </Grid>
       </Grid>
     </Box>

@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Set, List, Optional, Any
+from typing import  List, Optional
 from uuid import uuid4
 
 from sqlalchemy import Column, DateTime, ForeignKey, String, Text, JSON
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, relationship
-
 from .base import Base
 
 def utcnow() -> datetime:
@@ -22,11 +21,13 @@ class User(Base):
     password_hash = Column(String(255), nullable=False)
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
 
-    conversations: Mapped[Set["Conversation"]] = relationship(
+    conversations: Mapped[List["Conversation"]] = relationship(
         "Conversation",
         back_populates="user",
         cascade="all, delete-orphan",
         passive_deletes=True,
+        order_by="Conversation.created_at",
+        lazy="selectin",
     )
 
 class Conversation(Base):
@@ -43,18 +44,20 @@ class Conversation(Base):
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
 
-    user = relationship("User", back_populates="conversations")
+    user: Mapped["User"] = relationship("User", back_populates="conversations")
 
-    messages: Mapped[Set["Message"]] = relationship(
+    messages: Mapped[List["Message"]] = relationship(
         "Message",
         back_populates="conversation",
         cascade="all, delete-orphan",
         passive_deletes=True,
+        order_by="Message.created_at",
+        lazy="selectin",
     )
 
 class Message(Base):
     __tablename__ = "messages"
-    __allow_unmapped__ = True 
+    __allow_unmapped__ = True
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     conversation_id = Column(
@@ -152,7 +155,7 @@ class Message(Base):
         except Exception:
             pass
 
-    conversation = relationship(
+    conversation: Mapped["Conversation"] = relationship(
         "Conversation",
         back_populates="messages",
         passive_deletes=True,
