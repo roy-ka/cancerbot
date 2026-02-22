@@ -1,29 +1,18 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Box, Grid } from '@mui/material'
 import ConversationList from '../components/ConversationList'
 import MessageList from '../components/MessageList'
 import type { Conversation, Message } from '../types'
-import InputField, { type InputFieldHandle } from '../components/InputField'
+import InputField from '../components/InputField'
 export default function Chat() {
   const BASE_URL = import.meta.env.VITE_BASE_URL
-
-  const toWsBaseUrl = (baseUrl: string) => {
-    if (!baseUrl) return baseUrl
-    if (baseUrl.startsWith('https://'))
-      return baseUrl.replace('https://', 'wss://')
-    if (baseUrl.startsWith('http://'))
-      return baseUrl.replace('http://', 'ws://')
-    return baseUrl
-  }
 
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [messages, setMessages] = useState<Message[]>([])
   const [nextBefore, setNextBefore] = useState<string | null>(null)
   const [isLoadingOlder, setIsLoadingOlder] = useState(false)
-  const [sendStage, setSendStage] = useState<string | null>(null)
-  const [selectedConversationId, setSelectedConversationId] = useState<string>('new')
-  const [inputValue, setInputValue] = useState<string>('')
-  const inputRef = useRef<InputFieldHandle>(null)
+  const [selectedConversationId, setSelectedConversationId] =
+    useState<string>('new')
 
   const textToMessage = (text: string): Message => ({
     id: `temp-${Date.now()}`,
@@ -33,6 +22,7 @@ export default function Chat() {
     conversationId:
       selectedConversationId === 'new' ? undefined : selectedConversationId,
     sources: [],
+    claims: [],
   })
 
   useEffect(() => {
@@ -58,7 +48,6 @@ export default function Chat() {
 
   useEffect(() => {
     const fetchMessages = async () => {
-      setInputValue('')
       if (selectedConversationId === 'new') {
         // Avoid re-render loops: only clear if there is something to clear
         setMessages((prev) => (prev.length === 0 ? prev : []))
@@ -151,156 +140,40 @@ export default function Chat() {
     }
   }, [BASE_URL, selectedConversationId, nextBefore, isLoadingOlder])
 
-  const onLogout = useCallback(async () => {
-    try {
-      await fetch(`${BASE_URL}/auth/logout/`, { method: 'POST', credentials: 'include' })
-    } catch (e) {
-      console.error('logout failed:', e)
-    }
-    window.location.href = '/login'
-  }, [BASE_URL])
-
-  const onDeleteConversation = useCallback(async (id: string) => {
-    try {
-      const res = await fetch(`${BASE_URL}/conversations/${id}`, {
-        method: 'DELETE',
-        credentials: 'include',
-      })
-      if (!res.ok) throw new Error(await res.text())
-      setConversations((prev) => prev.filter((c) => c.id !== id))
-      if (selectedConversationId === id) setSelectedConversationId('new')
-    } catch (e) {
-      console.error('delete conversation failed:', e)
-    }
-  }, [BASE_URL, selectedConversationId])
-
-  const onInsertReference = useCallback((id: string) => {
-    inputRef.current?.append(`[${id}]`)
-  }, [])
-
   const onMessageSubmit = (e: React.SubmitEvent) => {
     e.preventDefault()
-    const messageText = inputValue.trim()
+    const form = e.currentTarget
+    const messageText = form && form.input ? form.input.value.trim() : ''
     if (!messageText) return
-    setInputValue('')
 
     const optimisticMessage = textToMessage(messageText)
 
     // Add optimistic message immediately (functional update avoids stale state)
     setMessages((prev) => [...prev, optimisticMessage])
+    const url = `${import.meta.env.VITE_BASE_URL}/conversations/${selectedConversationId === 'new' ? 'new' : `${selectedConversationId}/add_message`}`
 
-    // NEW conversation: keep HTTP flow (no WS endpoint for /new yet)
-    if (selectedConversationId === 'new') {
-      setSendStage('sending')
-      const url = `${import.meta.env.VITE_BASE_URL}/conversations/new`
-
-      fetch(url, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(optimisticMessage),
+    fetch(url, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(optimisticMessage),
+    })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(await res.text())
+        return res.json()
       })
-        .then(async (res) => {
-          if (!res.ok) throw new Error(await res.text())
-          return res.json()
+      .catch((error) => console.log(error.detail))
+      .then((res) => {
+        setMessages((prev) => {
+          const withoutTemp = prev.slice(0, -1)
+          return [...withoutTemp, ...res.messages]
         })
-        .then((res) => {
-          setMessages((prev) => {
-            const withoutTemp = prev.slice(0, -1)
-            return [...withoutTemp, ...res.messages]
-          })
-
+        if (selectedConversationId === 'new') {
           setConversations((prev) => [res.conversation, ...prev])
           setSelectedConversationId(res.conversation.id)
-          setSendStage(null)
-        })
-        .catch((e) => {
-          console.error('message submit failed:', e)
-          setSendStage(null)
-        })
-
-      return
-    }
-
-    // Existing conversation: WebSocket flow
-    const wsBase = toWsBaseUrl(import.meta.env.VITE_BASE_URL)
-    const wsUrl = `${wsBase}/conversations/${selectedConversationId}/add_message/ws`
-
-    setSendStage('connecting')
-
-    const ws = new WebSocket(wsUrl)
-
-    ws.onopen = () => {
-      setSendStage('sending')
-      ws.send(
-        JSON.stringify({
-          content: messageText,
-          conversation_id: selectedConversationId,
-          role: 'user',
-        }),
-      )
-    }
-
-    ws.onmessage = (evt) => {
-      try {
-        const data = JSON.parse(evt.data)
-
-        if (data?.type === 'stage') {
-          // e.g. 'retrieving_context', 'generating_answer'
-          setSendStage(String(data.stage || 'working'))
-          return
         }
-
-        if (data?.type === 'final') {
-          const res = data
-          setMessages((prev) => {
-            // Remove optimistic temp message (last item) and append real messages
-            const withoutTemp = prev.slice(0, -1)
-            return [...withoutTemp, ...(res.messages || [])]
-          })
-
-          // Keep conversation list in sync if server returned it
-          if (res?.conversation?.id) {
-            setConversations((prev) => {
-              const idx = prev.findIndex((c) => c.id === res.conversation.id)
-              if (idx === -1) return prev
-              const updated = [...prev]
-              updated[idx] = { ...updated[idx], ...res.conversation }
-              return updated
-            })
-          }
-
-          setSendStage(null)
-          ws.close()
-          return
-        }
-
-        if (data?.type === 'error') {
-          console.error('ws error:', data?.message)
-          setSendStage(null)
-          ws.close()
-          return
-        }
-      } catch (e) {
-        console.error('ws message parse failed:', e)
-      }
-    }
-
-    ws.onerror = (err) => {
-      console.error('ws transport error:', err)
-      setSendStage(null)
-      // fallback is possible, but we keep it simple
-      try {
-        ws.close()
-      } catch (e) {
-        console.log(e)
-      }
-    }
-
-    ws.onclose = () => {
-      // If we closed before final, clear stage
-      setSendStage((prev) => (prev ? null : prev))
-    }
+      })
+      .catch((e) => console.error('message submit failed:', e))
   }
 
   return (
@@ -311,8 +184,6 @@ export default function Chat() {
             setSelectedConversationId={setSelectedConversationId}
             selectedConversationId={selectedConversationId}
             conversations={conversations}
-            onDeleteConversation={onDeleteConversation}
-            onLogout={onLogout}
           />
         </Grid>
         <Grid size={9} className="chat-messages">
@@ -322,17 +193,10 @@ export default function Chat() {
               onLoadOlder={loadOlderMessages}
               hasOlder={!!nextBefore}
               isLoadingOlder={isLoadingOlder}
-              sendStage={sendStage}
-              onInsertReference={onInsertReference}
             />
           </Box>
           <Box className="chat-input">
-            <InputField
-                ref={inputRef}
-                onSubmit={onMessageSubmit}
-                value={inputValue}
-                onChange={setInputValue}
-              />
+            <InputField onSubmit={onMessageSubmit} />
           </Box>
         </Grid>
       </Grid>

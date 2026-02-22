@@ -62,10 +62,7 @@ body {
 }
 
 .chat-root {
-  /* Use multiple viewport units for better cross-browser coverage */
-  height: 100vh;
   height: 100dvh;
-  min-height: 100vh;
   width: 100vw;
   display: flex;
   position: relative;
@@ -80,7 +77,7 @@ body {
 
 .chat-root::before {
   content: '';
-  position: fixed;
+  position: absolute;
   inset: 0;
   pointer-events: none;
   z-index: 0;
@@ -88,12 +85,12 @@ body {
   background-image:
     radial-gradient(
       1px 1px at 18px 24px,
-      rgba(255, 255, 255, 0.95) 50%,
+      rgba(255, 255, 255, 0.9) 50%,
       transparent 52%
     ),
     radial-gradient(
       1px 1px at 70px 110px,
-      rgba(255, 255, 255, 0.75) 50%,
+      rgba(255, 255, 255, 0.7) 50%,
       transparent 52%
     ),
     radial-gradient(
@@ -103,67 +100,17 @@ body {
     ),
     radial-gradient(
       2px 2px at 110px 150px,
-      rgba(255, 255, 255, 0.42) 50%,
+      rgba(255, 255, 255, 0.4) 50%,
       transparent 55%
     ),
     radial-gradient(
       2px 2px at 220px 90px,
-      rgba(255, 255, 255, 0.26) 50%,
+      rgba(255, 255, 255, 0.25) 50%,
       transparent 55%
     ),
     radial-gradient(
       1px 1px at 44px 190px,
-      rgba(255, 255, 255, 0.42) 50%,
-      transparent 52%
-    ),
-    radial-gradient(
-      1px 1px at 12px 168px,
-      rgba(255, 255, 255, 0.62) 50%,
-      transparent 52%
-    ),
-    radial-gradient(
-      1px 1px at 186px 18px,
-      rgba(255, 255, 255, 0.58) 50%,
-      transparent 52%
-    ),
-    radial-gradient(
-      2px 2px at 164px 196px,
-      rgba(255, 255, 255, 0.2) 50%,
-      transparent 55%
-    ),
-    radial-gradient(
-      1px 1px at 208px 152px,
-      rgba(255, 255, 255, 0.38) 50%,
-      transparent 52%
-    ),
-    radial-gradient(
-      1px 1px at 98px 8px,
-      rgba(255, 255, 255, 0.34) 50%,
-      transparent 52%
-    ),
-    radial-gradient(
-      2px 2px at 26px 86px,
-      rgba(255, 255, 255, 0.18) 50%,
-      transparent 55%
-    ),
-    radial-gradient(
-      1px 1px at 310px 76px,
-      rgba(255, 255, 255, 0.55) 50%,
-      transparent 52%
-    ),
-    radial-gradient(
-      2px 2px at 372px 214px,
-      rgba(255, 255, 255, 0.22) 50%,
-      transparent 55%
-    ),
-    radial-gradient(
-      1px 1px at 404px 132px,
       rgba(255, 255, 255, 0.4) 50%,
-      transparent 52%
-    ),
-    radial-gradient(
-      1px 1px at 458px 22px,
-      rgba(255, 255, 255, 0.3) 50%,
       transparent 52%
     );
   background-size:
@@ -172,68 +119,38 @@ body {
     220px 220px,
     220px 220px,
     220px 220px,
-    440px 440px,
-    240px 240px,
-    260px 260px,
-    280px 280px,
-    300px 300px,
-    320px 320px,
-    360px 360px,
-    520px 520px,
-    540px 540px,
-    620px 620px,
-    700px 700px;
+    440px 440px;
   background-repeat: repeat;
   filter: drop-shadow(0 0 14px rgba(255, 255, 255, 0.1));
 }
 
 .chat-root::after {
   content: '';
-  position: fixed;
+  position: absolute;
   inset: -260px;
   pointer-events: none;
   z-index: 0;
   opacity: 1;
   background-image:
     radial-gradient(
-      1100px 820px at 12% 86%,
-      rgba(124, 92, 255, 0.58),
+      1000px 780px at 18% 88%,
+      rgba(124, 92, 255, 0.65),
       transparent 62%
     ),
     radial-gradient(
-      920px 700px at 88% 14%,
-      rgba(47, 227, 198, 0.4),
+      880px 640px at 85% 18%,
+      rgba(47, 227, 198, 0.42),
       transparent 60%
     ),
     radial-gradient(
-      860px 720px at 56% 44%,
-      rgba(180, 140, 255, 0.26),
+      820px 680px at 55% 45%,
+      rgba(180, 140, 255, 0.28),
       transparent 64%
     ),
     radial-gradient(
-      760px 640px at 74% 76%,
-      rgba(90, 180, 255, 0.2),
+      700px 600px at 72% 72%,
+      rgba(90, 180, 255, 0.22),
       transparent 62%
-    ),
-    radial-gradient(
-      680px 520px at 32% 28%,
-      rgba(255, 180, 120, 0.1),
-      transparent 62%
-    ),
-    radial-gradient(
-      520px 420px at 18% 38%,
-      rgba(255, 255, 255, 0.06),
-      transparent 65%
-    ),
-    radial-gradient(
-      900px 760px at 64% 18%,
-      rgba(124, 92, 255, 0.18),
-      transparent 66%
-    ),
-    radial-gradient(
-      720px 620px at 42% 68%,
-      rgba(47, 227, 198, 0.14),
-      transparent 66%
     ),
     radial-gradient(
       1400px 1000px at 50% 50%,
@@ -430,12 +347,12 @@ body {
   background-image:
     radial-gradient(
       1px 1px at 18px 24px,
-      rgba(255, 255, 255, 0.95) 50%,
+      rgba(255, 255, 255, 0.9) 50%,
       transparent 52%
     ),
     radial-gradient(
       1px 1px at 70px 110px,
-      rgba(255, 255, 255, 0.75) 50%,
+      rgba(255, 255, 255, 0.7) 50%,
       transparent 52%
     ),
     radial-gradient(
@@ -445,67 +362,17 @@ body {
     ),
     radial-gradient(
       2px 2px at 110px 150px,
-      rgba(255, 255, 255, 0.42) 50%,
+      rgba(255, 255, 255, 0.4) 50%,
       transparent 55%
     ),
     radial-gradient(
       2px 2px at 220px 90px,
-      rgba(255, 255, 255, 0.26) 50%,
+      rgba(255, 255, 255, 0.25) 50%,
       transparent 55%
     ),
     radial-gradient(
       1px 1px at 44px 190px,
-      rgba(255, 255, 255, 0.42) 50%,
-      transparent 52%
-    ),
-    radial-gradient(
-      1px 1px at 12px 168px,
-      rgba(255, 255, 255, 0.62) 50%,
-      transparent 52%
-    ),
-    radial-gradient(
-      1px 1px at 186px 18px,
-      rgba(255, 255, 255, 0.58) 50%,
-      transparent 52%
-    ),
-    radial-gradient(
-      2px 2px at 164px 196px,
-      rgba(255, 255, 255, 0.2) 50%,
-      transparent 55%
-    ),
-    radial-gradient(
-      1px 1px at 208px 152px,
-      rgba(255, 255, 255, 0.38) 50%,
-      transparent 52%
-    ),
-    radial-gradient(
-      1px 1px at 98px 8px,
-      rgba(255, 255, 255, 0.34) 50%,
-      transparent 52%
-    ),
-    radial-gradient(
-      2px 2px at 26px 86px,
-      rgba(255, 255, 255, 0.18) 50%,
-      transparent 55%
-    ),
-    radial-gradient(
-      1px 1px at 310px 76px,
-      rgba(255, 255, 255, 0.55) 50%,
-      transparent 52%
-    ),
-    radial-gradient(
-      2px 2px at 372px 214px,
-      rgba(255, 255, 255, 0.22) 50%,
-      transparent 55%
-    ),
-    radial-gradient(
-      1px 1px at 404px 132px,
       rgba(255, 255, 255, 0.4) 50%,
-      transparent 52%
-    ),
-    radial-gradient(
-      1px 1px at 458px 22px,
-      rgba(255, 255, 255, 0.3) 50%,
       transparent 52%
     );
   background-size:
@@ -514,17 +381,7 @@ body {
     220px 220px,
     220px 220px,
     220px 220px,
-    440px 440px,
-    240px 240px,
-    260px 260px,
-    280px 280px,
-    300px 300px,
-    320px 320px,
-    360px 360px,
-    520px 520px,
-    540px 540px,
-    620px 620px,
-    700px 700px;
+    440px 440px;
   background-repeat: repeat;
   filter: drop-shadow(0 0 14px rgba(255, 255, 255, 0.1));
 }
@@ -538,44 +395,24 @@ body {
   opacity: 1;
   background-image:
     radial-gradient(
-      1100px 820px at 12% 86%,
-      rgba(124, 92, 255, 0.58),
+      1000px 780px at 18% 88%,
+      rgba(124, 92, 255, 0.65),
       transparent 62%
     ),
     radial-gradient(
-      920px 700px at 88% 14%,
-      rgba(47, 227, 198, 0.4),
+      880px 640px at 85% 18%,
+      rgba(47, 227, 198, 0.42),
       transparent 60%
     ),
     radial-gradient(
-      860px 720px at 56% 44%,
-      rgba(180, 140, 255, 0.26),
+      820px 680px at 55% 45%,
+      rgba(180, 140, 255, 0.28),
       transparent 64%
     ),
     radial-gradient(
-      760px 640px at 74% 76%,
-      rgba(90, 180, 255, 0.2),
+      700px 600px at 72% 72%,
+      rgba(90, 180, 255, 0.22),
       transparent 62%
-    ),
-    radial-gradient(
-      680px 520px at 32% 28%,
-      rgba(255, 180, 120, 0.1),
-      transparent 62%
-    ),
-    radial-gradient(
-      520px 420px at 18% 38%,
-      rgba(255, 255, 255, 0.06),
-      transparent 65%
-    ),
-    radial-gradient(
-      900px 760px at 64% 18%,
-      rgba(124, 92, 255, 0.18),
-      transparent 66%
-    ),
-    radial-gradient(
-      720px 620px at 42% 68%,
-      rgba(47, 227, 198, 0.14),
-      transparent 66%
     ),
     radial-gradient(
       1400px 1000px at 50% 50%,

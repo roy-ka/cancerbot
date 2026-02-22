@@ -1,32 +1,21 @@
-import {
-  Alert,
-  Box,
-  CircularProgress,
-  Snackbar,
-  Typography,
-} from '@mui/material'
+import { Alert, Box, CircularProgress, Snackbar } from '@mui/material'
 import type { Message } from '../types'
 import MessageItem from './MessageItem'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 
 export default function MessageList({
   messages,
   onLoadOlder,
-  sendStage,
   hasOlder = false,
   isLoadingOlder = false,
-  onInsertReference,
 }: {
   messages: Message[]
   onLoadOlder?: () => Promise<boolean> | boolean
-  sendStage: string | null
   hasOlder?: boolean
   isLoadingOlder?: boolean
-  onInsertReference?: (id: string) => void
 }) {
   const [noOlderOpen, setNoOlderOpen] = useState(false)
   const lastTriggerRef = useRef<number>(0)
-  const bottomRef = useRef<HTMLDivElement | null>(null)
 
   const handleScroll = useCallback(
     async (e: React.UIEvent<HTMLDivElement>) => {
@@ -56,12 +45,6 @@ export default function MessageList({
     },
     [onLoadOlder, hasOlder, isLoadingOlder],
   )
-
-  // Auto-scroll to bottom when messages change (initial load or new message)
-  useEffect(() => {
-    if (!bottomRef.current) return
-    bottomRef.current.scrollIntoView({ behavior: 'auto' })
-  }, [messages])
 
   return (
     <Box
@@ -111,27 +94,8 @@ export default function MessageList({
         </Box>
       )}
       {messages.map((message) => (
-        <MessageItem
-          message={message}
-          key={message.id || 'new'}
-          onInsertReference={onInsertReference}
-        />
+        <MessageItem message={message} key={message.id || 'new'} />
       ))}
-
-      <div ref={bottomRef} />
-
-      {sendStage && (
-        <Box
-          sx={{
-            mb: 2,
-            display: 'flex',
-            flexDirection: 'row',
-            alignItems: 'flex-start',
-          }}
-        >
-          <Typography variant="body2">{sendStage}</Typography>
-        </Box>
-      )}
     </Box>
   )
 }

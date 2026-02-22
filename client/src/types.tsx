@@ -26,7 +26,6 @@ export type SourceAndClaim = {
   url: string | null
   text: string
   name: string
-  title?: string
 }
 
 export type Message = {
@@ -36,4 +35,5 @@ export type Message = {
   role: 'user' | 'assistant'
   timestamp: string
   sources: SourceAndClaim[]
+  claims: SourceAndClaim[]
 }
