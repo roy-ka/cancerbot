@@ -1,4 +1,4 @@
-from ollama import Client
+from ollama import Client, ResponseError
 from dotenv import load_dotenv
 import os
 import json
@@ -10,11 +10,57 @@ class OllamaConnector:
   
   load_dotenv()
   ollama_host = os.getenv('OLLAMA_URL', 'http://localhost:11434')
-  embed_model = os.getenv('EMBED_MODEL_NAME', os.getenv('MODEL_NAME'))
-  gen_model = os.getenv('GEN_MODEL_NAME')
+  embed_model = (os.getenv('EMBED_MODEL_NAME', os.getenv('MODEL_NAME')) or '').strip().strip("\"'")
+  gen_model = (os.getenv('GEN_MODEL_NAME') or '').strip().strip("\"'")
   ollama = Client(
       host=ollama_host  
   )
+
+  @classmethod
+  def _available_models(cls) -> list[str]:
+    try:
+      listed = cls.ollama.list()
+      models = getattr(listed, "models", None) or listed.get("models", [])
+      names: list[str] = []
+      for m in models:
+        name = (
+          getattr(m, "model", None)
+          or getattr(m, "name", None)
+          or (m.get("model") if isinstance(m, dict) else None)
+          or (m.get("name") if isinstance(m, dict) else None)
+        )
+        if isinstance(name, str) and name.strip():
+          names.append(name.strip())
+      return names
+    except Exception:
+      return []
+
+  @classmethod
+  def _resolve_gen_model(cls) -> str:
+    model = (cls.gen_model or '').strip()
+    if model:
+      return model
+    candidates = cls._candidate_gen_models()
+    if candidates:
+      return candidates[0]
+    raise ValueError(
+      "No generation model configured. Set GEN_MODEL_NAME or install a local model (e.g. `ollama pull llama3.1`)."
+    )
+
+  @classmethod
+  def _is_embedding_model(cls, model_name: str) -> bool:
+    name = (model_name or "").lower()
+    return (
+      "embed" in name
+      or "nomic-embed" in name
+      or name.startswith("mxbai-embed")
+      or name.startswith("all-minilm")
+    )
+
+  @classmethod
+  def _candidate_gen_models(cls) -> list[str]:
+    available = cls._available_models()
+    return [m for m in available if not cls._is_embedding_model(m)]
   
   @classmethod
   def embed_text(cls, text):
@@ -102,6 +148,11 @@ class OllamaConnector:
     # Compact JSON string for the prompt (stable and token-efficient)
     message_context = json.dumps(message_context_compact, ensure_ascii=False, separators=(',', ':'))
 
+    # Bound evidence size to avoid OOM / runner kills on CPU-only deployments.
+    max_context_items = int(os.getenv('OLLAMA_CONTEXT_ITEMS', '8'))
+    max_evidence_chars = int(os.getenv('OLLAMA_EVIDENCE_CHARS', '1200'))
+    safe_context = list(context or [])[:max_context_items]
+
     def render_item(item: Any, i: int) -> str:
       if not isinstance(item, Mapping):
         raise ValueError(
@@ -138,11 +189,13 @@ class OllamaConnector:
         or ''
       )
       text = ' '.join(str(text).split())
+      if len(text) > max_evidence_chars:
+        text = text[:max_evidence_chars].rstrip() + "…"
 
       # Render ONLY alias + content_for_embedding
       return f"[{alias}] {text}" if text else f"[{alias}]"
 
-    rendered = [render_item(item, i).strip() for i, item in enumerate(context)]
+    rendered = [render_item(item, i).strip() for i, item in enumerate(safe_context)]
     context_block = "\n".join(rendered)
 
     if not context_block.strip():
@@ -175,15 +228,38 @@ QUESTION:
 ANSWER:
 """.strip()
 
-    if not cls.gen_model:
+    primary = cls._resolve_gen_model()
+    candidates = [primary] + [m for m in cls._candidate_gen_models() if m != primary]
+    last_error: Exception | None = None
+    response = None
+    ollama_options = {
+      "num_ctx": int(os.getenv("OLLAMA_NUM_CTX", "2048")),
+      "num_predict": int(os.getenv("OLLAMA_NUM_PREDICT", "384")),
+      "temperature": float(os.getenv("OLLAMA_TEMPERATURE", "0.2")),
+    }
+
+    for model in candidates:
+      try:
+        response = cls.ollama.generate(
+          model=model,
+          prompt=full_prompt,
+          stream=False,
+          options=ollama_options,
+        )
+        break
+      except ResponseError as e:
+        msg = str(e).lower()
+        if "not found" in msg or "does not support generate" in msg:
+          last_error = e
+          continue
+        raise
+
+    if response is None:
+      available = cls._available_models()
       raise ValueError(
-        "GEN_MODEL_NAME is not set. Set it to a chat-capable Ollama model (e.g., llama3.1, qwen2.5)."
+        f"No Ollama model available for text generation. Tried: {candidates or [primary]}. "
+        f"Installed models: {available or '[]'}. Last error: {last_error}"
       )
-    response = cls.ollama.generate(
-        model=cls.gen_model,
-        prompt=full_prompt,
-        stream=False
-    )
 
     answer = response["response"]
 

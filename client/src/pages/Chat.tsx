@@ -7,10 +7,20 @@ import InputField from '../components/InputField'
 export default function Chat() {
   const BASE_URL = import.meta.env.VITE_BASE_URL
 
+  const toWsBaseUrl = (baseUrl: string) => {
+    if (!baseUrl) return baseUrl
+    if (baseUrl.startsWith('https://'))
+      return baseUrl.replace('https://', 'wss://')
+    if (baseUrl.startsWith('http://'))
+      return baseUrl.replace('http://', 'ws://')
+    return baseUrl
+  }
+
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [messages, setMessages] = useState<Message[]>([])
   const [nextBefore, setNextBefore] = useState<string | null>(null)
   const [isLoadingOlder, setIsLoadingOlder] = useState(false)
+  const [sendStage, setSendStage] = useState<string | null>(null)
   const [selectedConversationId, setSelectedConversationId] =
     useState<string>('new')
 
@@ -143,37 +153,127 @@ export default function Chat() {
   const onMessageSubmit = (e: React.SubmitEvent) => {
     e.preventDefault()
     const form = e.currentTarget
-    const messageText = form && form.input ? form.input.value.trim() : ''
+    const messageText =
+      form && (form as any).input ? (form as any).input.value.trim() : ''
     if (!messageText) return
 
     const optimisticMessage = textToMessage(messageText)
 
     // Add optimistic message immediately (functional update avoids stale state)
     setMessages((prev) => [...prev, optimisticMessage])
-    const url = `${import.meta.env.VITE_BASE_URL}/conversations/${selectedConversationId === 'new' ? 'new' : `${selectedConversationId}/add_message`}`
 
-    fetch(url, {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(optimisticMessage),
-    })
-      .then(async (res) => {
-        if (!res.ok) throw new Error(await res.text())
-        return res.json()
+    // NEW conversation: keep HTTP flow (no WS endpoint for /new yet)
+    if (selectedConversationId === 'new') {
+      setSendStage('sending')
+      const url = `${import.meta.env.VITE_BASE_URL}/conversations/new`
+
+      fetch(url, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(optimisticMessage),
       })
-      .catch((error) => console.log(error.detail))
-      .then((res) => {
-        setMessages((prev) => {
-          const withoutTemp = prev.slice(0, -1)
-          return [...withoutTemp, ...res.messages]
+        .then(async (res) => {
+          if (!res.ok) throw new Error(await res.text())
+          return res.json()
         })
-        if (selectedConversationId === 'new') {
+        .then((res) => {
+          setMessages((prev) => {
+            const withoutTemp = prev.slice(0, -1)
+            return [...withoutTemp, ...res.messages]
+          })
+
           setConversations((prev) => [res.conversation, ...prev])
           setSelectedConversationId(res.conversation.id)
+          setSendStage(null)
+        })
+        .catch((e) => {
+          console.error('message submit failed:', e)
+          setSendStage(null)
+        })
+
+      return
+    }
+
+    // Existing conversation: WebSocket flow
+    const wsBase = toWsBaseUrl(import.meta.env.VITE_BASE_URL)
+    const wsUrl = `${wsBase}/conversations/${selectedConversationId}/add_message/ws`
+
+    setSendStage('connecting')
+
+    const ws = new WebSocket(wsUrl)
+
+    ws.onopen = () => {
+      setSendStage('sending')
+      ws.send(
+        JSON.stringify({
+          content: messageText,
+          conversation_id: selectedConversationId,
+          role: 'user',
+        }),
+      )
+    }
+
+    ws.onmessage = (evt) => {
+      try {
+        const data = JSON.parse(evt.data)
+
+        if (data?.type === 'stage') {
+          // e.g. 'retrieving_context', 'generating_answer'
+          setSendStage(String(data.stage || 'working'))
+          return
         }
-      })
-      .catch((e) => console.error('message submit failed:', e))
+
+        if (data?.type === 'final') {
+          const res = data
+          setMessages((prev) => {
+            // Remove optimistic temp message (last item) and append real messages
+            const withoutTemp = prev.slice(0, -1)
+            return [...withoutTemp, ...(res.messages || [])]
+          })
+
+          // Keep conversation list in sync if server returned it
+          if (res?.conversation?.id) {
+            setConversations((prev) => {
+              const idx = prev.findIndex((c) => c.id === res.conversation.id)
+              if (idx === -1) return prev
+              const updated = [...prev]
+              updated[idx] = { ...updated[idx], ...res.conversation }
+              return updated
+            })
+          }
+
+          setSendStage(null)
+          ws.close()
+          return
+        }
+
+        if (data?.type === 'error') {
+          console.error('ws error:', data?.message)
+          setSendStage(null)
+          ws.close()
+          return
+        }
+      } catch (e) {
+        console.error('ws message parse failed:', e)
+      }
+    }
+
+    ws.onerror = (err) => {
+      console.error('ws transport error:', err)
+      setSendStage(null)
+      // fallback is possible, but we keep it simple
+      try {
+        ws.close()
+      } catch (e) {
+        console.log(e)
+      }
+    }
+
+    ws.onclose = () => {
+      // If we closed before final, clear stage
+      setSendStage((prev) => (prev ? null : prev))
+    }
   }
 
   return (
@@ -193,6 +293,7 @@ export default function Chat() {
               onLoadOlder={loadOlderMessages}
               hasOlder={!!nextBefore}
               isLoadingOlder={isLoadingOlder}
+              sendStage={sendStage}
             />
           </Box>
           <Box className="chat-input">

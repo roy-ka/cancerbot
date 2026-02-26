@@ -1,4 +1,4 @@
-from src.utils.utils import send_request, pubmed_api_base_url, write_to_file, crossref_api_url, isExsit
+from src.utils.utils import send_request, pubmed_api_base_url, write_to_file, crossref_api_url, is_exist
 from src.xml_to_source import pubmed_article_xml_to_source
 import pandas as pd
 from pathlib import Path
@@ -39,7 +39,7 @@ for article in without_abstract:
             message = crossref_data['message']
             if message and message['total-results'] > 0:
               abstract_text = message['items'][0]['abstract']
-              if isExsit(abstract_text):
+              if is_exist(abstract_text):
                 article["abstract_source"] ='CrossRef'
                 article['abstract_fetched_at']= pd.Timestamp.now().isoformat()
                 article['abstract'] = abstract_text

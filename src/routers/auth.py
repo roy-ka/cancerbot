@@ -5,7 +5,7 @@ from src.auth.security import SecurityUtils
 from src.deps.auth import get_current_user
 from pydantic import BaseModel
 from datetime import timedelta,datetime,timezone
-from src.utils.utils import isProd
+from src.utils.utils import is_prod
 from src.db.repositories.users import (
     create_user ,
     get_user_by_email,
@@ -56,7 +56,7 @@ async def generate_token(req: LoginRequest, response: Response, db: Session = De
     else:
         max_age = None  # session cookie
         expires =  datetime.now(timezone.utc) + timedelta(hours=1)
-    if not isProd():
+    if not is_prod():
         max_age = 31536000 # one year
         expires =  datetime.now(timezone.utc) + timedelta(days=365)
         

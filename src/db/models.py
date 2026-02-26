@@ -4,9 +4,9 @@ from datetime import datetime, timezone
 from typing import  List, Optional
 from uuid import uuid4
 
-from sqlalchemy import Column, DateTime, ForeignKey, String, Text, JSON
+from sqlalchemy import Column, DateTime, ForeignKey, String, Text, JSON, Float, func
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import Mapped, relationship
+from sqlalchemy.orm import Mapped, relationship, mapped_column
 from .base import Base
 
 def utcnow() -> datetime:
@@ -72,14 +72,6 @@ class Message(Base):
     sources_ids = Column(JSON, nullable=True) 
     claim_ids = Column(JSON, nullable=True)
     intent = Column(String(20), nullable=True)
-
-    # --- Virtual fields (not stored as separate DB columns) ---
-    # Stored in DB: sources_ids / claim_ids (JSON)
-    # Exposed to client: sources / claims (list[dict])
-    #
-    # The API layer (routers/services) should attach resolved objects by setting
-    # `message.sources = [...]` / `message.claims = [...]` where each item is a dict
-    # with whatever fields the UI needs (id, title, url, snippet, score, etc.).
 
     _sources: Optional[List[dict]] = None
     _claims: Optional[List[dict]] = None
@@ -159,4 +151,42 @@ class Message(Base):
         "Conversation",
         back_populates="messages",
         passive_deletes=True,
+    )
+    
+
+class Abbreviation(Base):
+    __tablename__ = "abbreviations"
+
+    id: Mapped[UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+    )
+
+    short: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+
+    long: Mapped[str] = mapped_column(String, nullable=False)
+
+    source: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+        default="manual",
+    )
+
+    confidence: Mapped[float] = mapped_column(
+        Float,
+        nullable=False,
+        default=1.0,
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
     )

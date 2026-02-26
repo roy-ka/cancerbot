@@ -5,7 +5,6 @@ ollama
 python-dotenv
 fastapi[standard]
 uvicorn
-psycopg[binary]
 sqlalchemy
 alembic
 passlib[bcrypt]
@@ -14,3 +13,7 @@ beautifulsoup4
 wikipedia-api
 lxml
 tldextract
+httpx
+asyncpg
+psycopg[binary]
+greenlet

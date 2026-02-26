@@ -20,7 +20,6 @@ export default function MessageSourceItem({
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null)
   const open = Boolean(anchorEl)
   const popupText = source.text
-  console.log(source)
   const url = source.url ?? ''
   const name = source.name === 'unknown' ? text : source.name
 

@@ -1,8 +1,56 @@
-# Created by venv; see https://docs.python.org/3/library/venv.html
-venv/
+# --- Environment / secrets ---
 .env
-__pycache__/
-pyvenv.cfg
-.vscode/*
+.env.*
+!.env.example
+!.example.env
+!example.env
+nlp_service/.env
 
-*/node_modules
+# --- Python virtual environments ---
+venv/
+.venv/
+.venv-nlp/
+env/
+ENV/
+
+# --- Python cache / tooling ---
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+
+# --- Runtime / logs ---
+*.log
+logs/
+*.pid
+
+# --- Build artifacts ---
+build/
+dist/
+site/
+*.egg-info/
+.eggs/
+
+# --- Frontend ---
+node_modules/
+client/node_modules/
+client/dist/
+client/.vite/
+
+# --- Editors / OS ---
+.vscode/*
+!.vscode/settings.json
+.idea/
+.DS_Store
+Thumbs.db
+
+# --- Local runtime files ---
+pyvenv.cfg

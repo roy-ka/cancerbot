@@ -45,8 +45,6 @@ services:
     container_name: opensearch-dashboards
     environment:
       - OPENSEARCH_HOSTS=["https://opensearch-node1:9200"]
-      # You can list both, but one is enough for Dashboards to talk to the cluster.
-      # - OPENSEARCH_HOSTS=["https://opensearch-node1:9200","https://opensearch-node2:9200"]
     ports:
       - '5601:5601'
     depends_on:
@@ -62,6 +60,10 @@ services:
     volumes:
       - ollama:/root/.ollama
     networks: [osnet]
+    environment:
+      - OLLAMA_NUM_PARALLEL=1
+      - OLLAMA_MAX_LOADED_MODELS=1
+
   postgres:
     image: postgres:16
     container_name: cancerbot-postgres
@@ -78,6 +80,22 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+    networks: [osnet]
+
+  cancerbot-nlp:
+    build:
+      context: ./nlp_service
+      dockerfile: Dockerfile
+    image: cancerbot-nlp:latest
+    container_name: cancerbot-nlp
+    environment:
+      NLP_DATABASE_URL: ${NLP_DATABASE_URL}
+    ports:
+      - '8011:8011'
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [osnet]
 
 volumes:
   os-data1:

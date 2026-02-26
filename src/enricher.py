@@ -2,7 +2,7 @@ from pathlib import Path
 import pandas as pd
 import re 
 import json
-from src.utils.utils import send_request, pubmed_api_base_url, write_to_file,crossref_api_url, isExsit
+from src.utils.utils import send_request, pubmed_api_base_url, write_to_file,crossref_api_url, is_exist
 import wikipedia
 
 pubmed_api_efetch_url = pubmed_api_base_url +'efetch.fcgi?db=pubmed&id='#&rettype=["abstract","doi"]
@@ -27,7 +27,7 @@ def send_request_wrapper(url):
     return None
 
 def fetchDataFromPubmed(pmid):
-  if not isExsit(pmid): return None 
+  if not is_exist(pmid): return None 
   url = f"{pubmed_api_efetch_url}{pmid}"
   soup = send_request_wrapper(url)
   if soup:
@@ -41,22 +41,22 @@ def fetchDataFromPubmed(pmid):
 empty_abstract_count = 0
 for index, row in data.iterrows():
   enriched_record = row.to_dict()
-  if not isExsit(enriched_record['abstract']):
+  if not is_exist(enriched_record['abstract']):
     empty_abstract_count += 1 
-    if isExsit(enriched_record['pmid']):
+    if is_exist(enriched_record['pmid']):
       if enriched_record['pmid'] in pmids:
         continue
       pmids.append(enriched_record['pmid'])
-      if isExsit(enriched_record['doi']) and enriched_record['doi'] not in dois:
+      if is_exist(enriched_record['doi']) and enriched_record['doi'] not in dois:
         dois.append(enriched_record['doi'])
       response = fetchDataFromPubmed(enriched_record['pmid'])
       if response:
         enriched_record["abstract_source"] ='PubMed'
         enriched_record['abstract_fetched_at']= pd.Timestamp.now().isoformat()
         enriched_record['abstract'] = response['abstract_text']
-        if not isExsit(enriched_record['doi']):
+        if not is_exist(enriched_record['doi']):
           enriched_record['doi'] = response['doi']
-    if isExsit(enriched_record['doi']):
+    if is_exist(enriched_record['doi']):
       if enriched_record['doi'] in dois:
         continue
       pubmed_doi_url = pubmed_api_esearch_url(enriched_record['doi'])
@@ -75,8 +75,8 @@ for index, row in data.iterrows():
           enriched_record["abstract_source"] ='PubMed'
           enriched_record['abstract_fetched_at']= pd.Timestamp.now().isoformat()
           enriched_record['abstract'] = response['abstract_text']
-    if not isExsit(enriched_record['abstract']): #not found any abstract so far: 
-      if isExsit(enriched_record['doi']):
+    if not is_exist(enriched_record['abstract']): #not found any abstract so far: 
+      if is_exist(enriched_record['doi']):
         crossref_url = f"{crossref_api_url}{enriched_record['doi']}"
         crossref_soup = send_request_wrapper(crossref_url)
         if crossref_soup:
@@ -85,7 +85,7 @@ for index, row in data.iterrows():
             message = crossref_data['message']
             if message and message['total-results'] > 0:
               abstract_text = message['items'][0]['abstract']
-              if isExsit(abstract_text):
+              if is_exist(abstract_text):
                 enriched_record["abstract_source"] ='CrossRef'
                 enriched_record['abstract_fetched_at']= pd.Timestamp.now().isoformat()
                 enriched_record['abstract'] = abstract_text

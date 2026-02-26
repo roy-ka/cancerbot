@@ -1,0 +1,376 @@
+import os
+import asyncio
+from contextlib import asynccontextmanager
+from typing import Optional
+import re
+
+from fastapi import FastAPI, Depends
+from pydantic import BaseModel
+from dotenv import load_dotenv
+import spacy
+import scispacy  # required to register scispaCy pipeline components
+import scispacy.abbreviation  # registers abbreviation_detector factory
+from spellchecker import SpellChecker
+
+from sqlalchemy import select, or_
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.concurrency import run_in_threadpool
+
+from models import Abbreviation
+from db import get_session, SessionLocal
+
+load_dotenv()
+# --- DB (SQLAlchemy) ---
+DATABASE_URL = os.getenv("NLP_DATABASE_URL")
+    
+
+if not DATABASE_URL:
+    # Keep the service running for /health even if DB isn't configured,
+    # but abbreviation expansion from DB will be disabled.
+    DATABASE_ENABLED = False
+else:
+    DATABASE_ENABLED = True
+
+
+# In-memory cache: short_lower -> long
+abbrev_cache: dict[str, str] = {}
+_abbrev_cache_lock = asyncio.Lock()
+_abbrev_refresher_task: Optional[asyncio.Task] = None
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    global _abbrev_refresher_task
+
+    if DATABASE_ENABLED:
+        count = await load_abbrev_cache()
+        # Refresh periodically so DB updates are picked up without restart
+        _abbrev_refresher_task = start_abbrev_cache_refresher(
+            interval_seconds=int(os.getenv("ABBREV_REFRESH_SECONDS", "60"))
+        )
+        print(f"abbrev cache loaded: {count} entries")
+    else:
+        print("abbrev cache disabled: NLP_DATABASE_URL/DATABASE_URL/POSTGRES_URL not set")
+
+    try:
+        yield
+    finally:
+        if _abbrev_refresher_task:
+            _abbrev_refresher_task.cancel()
+            try:
+                await _abbrev_refresher_task
+            except asyncio.CancelledError:
+                pass
+
+
+app = FastAPI(title="Cancerbot NLP Service", lifespan=lifespan)
+
+
+async def load_abbrev_cache() -> int:
+    """Load all abbreviations from DB into memory. Returns number of entries."""
+    if not DATABASE_ENABLED:
+        return 0
+
+    async with SessionLocal() as session:
+        res = await session.execute(select(Abbreviation.short, Abbreviation.long))
+        rows = res.all()
+
+    new_cache: dict[str, str] = {}
+    for short, long in rows:
+        if not short or not long:
+            continue
+        new_cache[short.strip().lower()] = long
+
+    async with _abbrev_cache_lock:
+        abbrev_cache.clear()
+        abbrev_cache.update(new_cache)
+
+    return len(new_cache)
+
+
+async def get_abbrev_long(short: str) -> Optional[str]:
+    """Fast lookup from in-memory cache."""
+    key = (short or "").strip().lower()
+    if not key:
+        return None
+    async with _abbrev_cache_lock:
+        return abbrev_cache.get(key)
+
+
+async def save_new_abbreviations(abbr_found: dict[str, str]) -> int:
+    """Persist newly discovered abbreviations and refresh in-memory cache entries."""
+    if not DATABASE_ENABLED or not abbr_found:
+        return 0
+
+    to_insert: list[tuple[str, str, str]] = []
+    for short_raw, long_raw in abbr_found.items():
+        short = (short_raw or "").strip()
+        long = (long_raw or "").strip()
+        key = short.lower()
+        if not short or not long:
+            continue
+        if await get_abbrev_long(key):
+            continue
+        to_insert.append((short, long, key))
+
+    if not to_insert:
+        return 0
+
+    saved = 0
+    async with SessionLocal() as session:
+        for short, long, key in to_insert:
+            if await session.get(Abbreviation, short):
+                continue
+            session.add(
+                Abbreviation(
+                    short=short,
+                    long=long,
+                    source="scispacy",
+                    confidence=0.85,
+                )
+            )
+            async with _abbrev_cache_lock:
+                abbrev_cache[key] = long
+            saved += 1
+
+        if saved:
+            try:
+                await session.commit()
+            except IntegrityError:
+                await session.rollback()
+                return 0
+
+    return saved
+
+
+def start_abbrev_cache_refresher(interval_seconds: int = 60) -> Optional[asyncio.Task]:
+    """Background task refresher (async)."""
+    if not DATABASE_ENABLED:
+        return None
+
+    async def _run():
+        while True:
+            try:
+                await load_abbrev_cache()
+            except Exception as e:
+                # Don't crash the service if DB hiccups
+                print("abbrev cache refresh failed:", e)
+            await asyncio.sleep(max(5, interval_seconds))
+
+    return asyncio.create_task(_run())
+# Load once on startup (important for speed)
+nlp = spacy.load("en_core_sci_sm")
+
+# Explicitly add scispaCy abbreviation detector
+if "abbreviation_detector" not in nlp.pipe_names:
+    nlp.add_pipe("abbreviation_detector", last=True)
+spell_checker = SpellChecker(distance=1)
+
+STOP_ENTS = {"cancer", "tumor"}  # optional: cut overly generic entities
+
+
+class ExtractReq(BaseModel):
+    text: str
+
+
+class SpellingReq(BaseModel):
+    text: str
+
+
+def _dedupe_keep_order(items):
+    seen = set()
+    out = []
+    for x in items:
+        k = (x or "").strip().lower()
+        if not k or k in seen:
+            continue
+        seen.add(k)
+        out.append(x)
+    return out
+
+
+def _preserve_case(original: str, corrected: str) -> str:
+    if original.isupper():
+        return corrected.upper()
+    if original[:1].isupper():
+        return corrected.capitalize()
+    return corrected
+
+
+async def _correct_spelling_text(text: str) -> tuple[str, list[dict]]:
+    doc = await run_in_threadpool(nlp, text)
+
+    protected_terms = {
+        tok.text.strip().lower()
+        for ent in doc.ents
+        for tok in ent
+        if tok.text and tok.text.strip()
+    }
+    protected_terms.update(
+        {
+            str(a).strip().lower()
+            for a in doc._.abbreviations
+            if str(a).strip()
+        }
+    )
+    protected_terms.update(
+        {
+            str(a._.long_form).strip().lower()
+            for a in doc._.abbreviations
+            if str(a._.long_form).strip()
+        }
+    )
+    async with _abbrev_cache_lock:
+        protected_terms.update(abbrev_cache.keys())
+
+    parts: list[str] = []
+    changes: list[dict] = []
+    for tok in doc:
+        raw = tok.text
+        fixed = raw
+        lower = raw.lower()
+
+        should_try = (
+            tok.is_alpha
+            and len(raw) >= 4
+            and not raw.isupper()
+            and lower not in protected_terms
+            and not re.search(r"\d", raw)
+            and "'" not in raw
+        )
+
+        if should_try and spell_checker.unknown([lower]):
+            suggestion = spell_checker.correction(lower)
+            if (
+                suggestion
+                and suggestion != lower
+                and suggestion[0] == lower[0]
+                and abs(len(suggestion) - len(lower)) <= 2
+            ):
+                fixed = _preserve_case(raw, suggestion)
+                changes.append({"from": raw, "to": fixed})
+
+        parts.append(f"{fixed}{tok.whitespace_}")
+
+    return "".join(parts), changes
+
+
+@app.post("/spelling/correct")
+async def spelling_correct(req: SpellingReq):
+    corrected, changes = await _correct_spelling_text(req.text or "")
+    return {
+        "text": req.text,
+        "corrected": corrected,
+        "changes": changes,
+    }
+
+
+@app.post("/extract")
+async def extract(req: ExtractReq):
+    doc = await run_in_threadpool(nlp, req.text)
+
+    entities = [ent.text.strip() for ent in doc.ents if ent.text.strip()]
+    entities = [e for e in entities if e.lower() not in STOP_ENTS]
+
+    # Abbreviations detected from text forms like "glioblastoma (GBM)"
+    abbr_found = {str(a): str(a._.long_form) for a in doc._.abbreviations}
+    saved_abbreviations = 0
+    try:
+        saved_abbreviations = await save_new_abbreviations(abbr_found)
+    except Exception as e:
+        # Extraction should still succeed even if DB write fails.
+        print("save abbreviations failed:", e)
+
+    # Expand entities using: detected abbreviations first, then DB-backed cache
+    expanded = []
+    for e in entities:
+        key = e.lower()
+        if key in abbr_found:
+            expanded.append(abbr_found[key])
+        else:
+            expanded.append((await get_abbrev_long(key)) or e)
+
+    return {
+        "entities": _dedupe_keep_order(entities),
+        "expanded_entities": _dedupe_keep_order(expanded),
+        "abbreviations_found": abbr_found,
+        "saved_abbreviations": saved_abbreviations,
+    }
+
+
+# --- Abbreviation DB endpoints ---
+@app.get("/abbrev/{short}")
+async def get_abbrev(short: str, session: AsyncSession = Depends(get_session)):
+    """Return a single abbreviation mapping (from DB)."""
+    if not DATABASE_ENABLED:
+        return {"ok": False, "error": "DB not configured (set NLP_DATABASE_URL)"}
+
+    row = await session.get(Abbreviation, short)
+    if not row:
+        return {"ok": True, "found": False}
+
+    return {
+        "ok": True,
+        "found": True,
+        "short": row.short,
+        "long": row.long,
+        "source": row.source,
+        "confidence": row.confidence,
+        "updated_at": str(row.updated_at) if row.updated_at else None,
+    }
+
+
+@app.get("/abbrev/search")
+async def search_abbrev(q: str, limit: int = 20, session: AsyncSession = Depends(get_session)):
+    """Simple search by short/long contains (case-insensitive)."""
+    if not DATABASE_ENABLED:
+        return {"ok": False, "error": "DB not configured (set NLP_DATABASE_URL)"}
+
+    q_norm = (q or "").strip()
+    if not q_norm:
+        return {"ok": True, "results": []}
+
+    
+
+    stmt = (
+        select(Abbreviation)
+        .where(
+            or_(
+                Abbreviation.short.ilike(f"%{q_norm}%"),
+                Abbreviation.long.ilike(f"%{q_norm}%"),
+            )
+        )
+        .limit(max(1, min(limit, 100)))
+    )
+    res = await session.execute(stmt)
+    rows = res.scalars().all()
+
+    return {
+        "ok": True,
+        "results": [
+            {
+                "short": r.short,
+                "long": r.long,
+                "source": r.source,
+                "confidence": r.confidence,
+                "updated_at": str(r.updated_at) if r.updated_at else None,
+            }
+            for r in rows
+        ],
+    }
+
+
+@app.post("/abbrev/reload")
+async def reload_abbrev_cache():
+    """Reload the in-memory cache immediately."""
+    if not DATABASE_ENABLED:
+        return {"ok": False, "error": "DB not configured (set NLP_DATABASE_URL)"}
+
+    count = await load_abbrev_cache()
+    return {"ok": True, "count": count}
+
+
+@app.get("/health")
+def health():
+    return {"ok": True}

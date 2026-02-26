@@ -5,6 +5,7 @@ import pandas as pd
 from dotenv import load_dotenv
 import os
 
+
 pubmed_api_base_url = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/'
 crossref_api_url = "https://api.crossref.org/works?select=DOI,abstract&rows=1&filter=has-abstract:1,doi:"
 load_dotenv()
@@ -28,8 +29,8 @@ def write_to_file(filepath, data):
     for record in data:
       f.write(json.dumps(record, ensure_ascii=False) + '\n')  
 
-def isExsit(field):
+def is_exist(field):
   return field and not pd.isna(field) and field != '' and field != 'NA' and field != 'N/A' and field != 'null' and field != 'None'
 
-def isProd():
+def is_prod():
   return ENV.lower() == 'prod' or ENV.lower() == 'production'
