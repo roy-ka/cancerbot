@@ -33,4 +33,4 @@ def is_exist(field):
   return field and not pd.isna(field) and field != '' and field != 'NA' and field != 'N/A' and field != 'null' and field != 'None'
 
 def is_prod():
-  return ENV.lower() == 'prod' or ENV.lower() == 'production'
+  return (ENV or '').lower() in ('prod', 'production')

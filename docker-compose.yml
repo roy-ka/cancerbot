@@ -52,17 +52,8 @@ services:
       - opensearch-node2
     networks: [osnet]
 
-  ollama:
-    image: ollama/ollama:latest
-    container_name: ollama
-    ports:
-      - '11434:11434'
-    volumes:
-      - ollama:/root/.ollama
-    networks: [osnet]
-    environment:
-      - OLLAMA_NUM_PARALLEL=1
-      - OLLAMA_MAX_LOADED_MODELS=1
+  # ollama runs natively on Mac for Metal (GPU) acceleration — not in Docker
+  # brew install ollama && ollama serve
 
   postgres:
     image: postgres:16
@@ -100,7 +91,6 @@ services:
 volumes:
   os-data1:
   os-data2:
-  ollama:
   cancerbot_pgdata:
 
 networks:

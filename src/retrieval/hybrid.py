@@ -39,7 +39,7 @@ def hybrid_results(intent, claims, sources, k_primary: int = 5, k_secondary: int
       'sources_ids': sources_ids,
     }
   elif intent == intervention:
-    if len(claims) > 2: 
+    if len(claims + sources) > k_primary and len(claims) > k_primary:
       claims = claims[:k_primary]
       sources = sources[:k_secondary]
     primary = claims

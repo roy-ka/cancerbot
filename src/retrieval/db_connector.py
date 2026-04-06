@@ -39,7 +39,7 @@ class dbConnector:
       http_auth=auth
     )
   except KeyError:
-    print(f"Model {model_name} not found in MODELS. valid models are: {list(MODELS.keys())}")
+    raise KeyError(f"EMBED_MODEL_NAME='{model_name}' not found in MODELS. Valid models: {list(MODELS.keys())}")
 
   @classmethod
   def index_to_db(cls, index_name, document):

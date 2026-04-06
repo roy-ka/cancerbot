@@ -1,9 +1,9 @@
-fastapi
-uvicorn
-spacy==3.7.5
+fastapi>=0.115.0
+uvicorn[standard]>=0.34.0
+spacy>=3.7.5,<3.8.0
 scispacy==0.5.5
-numpy==1.26.4
-asyncpg
-SQLAlchemy==2.0.46
-dotenv
-pyspellchecker==0.8.2
+numpy>=2.0.0,<3.0.0
+asyncpg>=0.30.0
+SQLAlchemy>=2.0.46
+python-dotenv>=1.0.0
+pyspellchecker>=0.8.2

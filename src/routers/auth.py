@@ -47,7 +47,7 @@ async def register_user(req: CreateUserRequest, db: Session = Depends(get_db)):
 @router.post("/login/")
 async def generate_token(req: LoginRequest, response: Response, db: Session = Depends(get_db)):
     user = get_user_by_email(db=db, email=req.email)
-    logging.info(f"Attempting login for user: {user.id if user else 'unknown'} with email: {req.email}")
+    logging.info(f"Login attempt for user_id: {user.id if user else 'unknown'}")
     if not user or not SecurityUtils.verify_password(req.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     if req.rememberMe:
@@ -66,8 +66,8 @@ async def generate_token(req: LoginRequest, response: Response, db: Session = De
         key="access_token",
         value=access_token,
         httponly=True,
-        secure=False,          # True in production (HTTPS). False on localhost.
-        samesite="lax",        # good default for same-site usage
+        secure=is_prod(),
+        samesite="lax",
         max_age=max_age,
         path="/",
     )

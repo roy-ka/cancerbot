@@ -46,6 +46,8 @@ def add_claims_and_sources(message: Message):
 
   claims = []
   sources = []
+  claims_index = dbConnector.model['claims_index']
+  sources_index = dbConnector.model['sources_index']
   for res in results:
     data = res['_source']
     url = data.get('url') or data.get('pmid') or data.get('doi')
@@ -57,9 +59,9 @@ def add_claims_and_sources(message: Message):
       'url': url,
       'name': _extract_source_name(url),
     }
-    if data.get('index') == 'claims_index':
+    if res.get('_index') == claims_index:
       claims.append(entry)
-    elif data.get('index') == 'sources_index':
+    elif res.get('_index') == sources_index:
       sources.append(entry)
 
   # Set once after processing
@@ -78,12 +80,20 @@ def add_message(db, conversation_id, role, content, sources_ids='', claim_ids=''
   )
   logging.info(f"Adding message to conversation {conversation_id} with role {role}")
   db.add(new_message)
-  db.commit()
-
-  if role == 'assistant':
-    add_claims_and_sources(new_message)
-
+  # Caller is responsible for commit/rollback
   return new_message
+
+
+def get_recent_messages(db, conversation_id, limit: int = 12):
+  """Return the most recent `limit` messages (oldest-first) without resolving citations."""
+  rows = (
+    db.query(Message)
+    .filter(Message.conversation_id == conversation_id)
+    .order_by(Message.created_at.desc(), Message.id.desc())
+    .limit(limit)
+    .all()
+  )
+  return list(reversed(rows))
 
 
 def get_messages_by_conversation_id(db, conversation_id, limit=50, before: Optional[str] = None):

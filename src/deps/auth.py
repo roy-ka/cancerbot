@@ -25,6 +25,9 @@ def get_current_user(
         user_id = payload.get("sub")
         if not user_id:
             raise HTTPException(status_code=401, detail="Invalid token")
-        return get_user_by_id(db = db, user_id= user_id)
+        user = get_user_by_id(db=db, user_id=user_id)
+        if user is None:
+            raise HTTPException(status_code=401, detail="User not found")
+        return user
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid or expired token")

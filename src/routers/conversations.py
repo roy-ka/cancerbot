@@ -12,12 +12,14 @@ from src.db.repositories.conversations import (
     create_conversation,
     format_last_msg_time,
 )
-from src.db.repositories.messeges import add_message, get_messages_by_conversation_id
+from src.db.repositories.messeges import add_message, add_claims_and_sources, get_messages_by_conversation_id, get_recent_messages
 from uuid import UUID
 from src.retrieval import run_retrieval
 from src.classes.ollama_connector import OllamaConnector
 from src.routers.conversation_helper import _emit_noop, search_and_embed
 import asyncio
+import os
+
 ROLLS = Literal['user', 'assistant']
 
 
@@ -76,14 +78,16 @@ async def _process_post_message(
 
     await emit('retrieving_context', {})
     context = await asyncio.to_thread(run_retrieval, req.content)
-    await emit('building_prompt', {'history_messages': len(getattr(conversation, 'messages', []) or [])})
+    max_history = int(os.getenv('PROMPT_MAX_HISTORY', '8'))
+    history = get_recent_messages(db, conversation.id, limit=max_history)
+    await emit('building_prompt', {'history_messages': len(history)})
     await emit('generating_answer', {})
 
     response = await asyncio.to_thread(
         OllamaConnector.generate_text,
         context=context["generation_context"],
         question=req.content,
-        conversation=conversation,
+        history=history,
     )
     if response == 'Insufficient evidence in provided context.':
         await emit('fallback_triggered', {'reason': 'insufficient_evidence'})
@@ -97,13 +101,13 @@ async def _process_post_message(
             },
         )
         context = await asyncio.to_thread(run_retrieval, req.content)
-        await emit('rebuilding_prompt', {'history_messages': len(getattr(conversation, 'messages', []) or [])})
+        await emit('rebuilding_prompt', {'history_messages': len(history)})
         await emit('re_generating_answer', {})
         response = await asyncio.to_thread(
             OllamaConnector.generate_text,
             context=context["generation_context"],
             question=req.content,
-            conversation=conversation,
+            history=history,
         )
         if response == 'Insufficient evidence in provided context.':
             response = (
@@ -129,6 +133,8 @@ async def _process_post_message(
     except Exception:
         db.rollback()
         raise
+
+    add_claims_and_sources(assistant_message)
 
     took_ms = int((time.time() - t0) * 1000)
     await emit('done', {'took_ms': took_ms})
@@ -158,7 +164,7 @@ async def _process_post_message(
 
 @router.get("/")
 async def get_user_conversations(
-    limit: int = 10,
+    limit: int = Query(10, ge=1, le=50),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
@@ -289,13 +295,19 @@ async def post_message_ws(
         )
 
         await websocket.send_json({'type': 'final', **result})
-        await websocket.close()
+        # Wait for client to close — avoids racing a CLOSE frame against the final message
+        try:
+            await websocket.receive()
+        except WebSocketDisconnect:
+            pass
 
     except WebSocketDisconnect:
         return
     except Exception as e:
+        import logging as _logging
+        _logging.getLogger(__name__).exception("WebSocket error for conversation %s", conversation_id)
         try:
-            await websocket.send_json({'type': 'error', 'message': str(e)})
+            await websocket.send_json({'type': 'error', 'message': 'An internal error occurred'})
         except Exception:
             pass
         try:
