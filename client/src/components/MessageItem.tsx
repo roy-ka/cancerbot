@@ -3,7 +3,13 @@ import React, { useMemo } from 'react'
 import type { Message, SourceAndClaim } from '../types'
 import MessageSourceItem from './MessageSourceItem'
 
-export default function MessageItem({ message }: { message: Message }) {
+export default function MessageItem({
+  message,
+  onInsertReference,
+}: {
+  message: Message
+  onInsertReference?: (id: string) => void
+}) {
   const normalizeRefId = (raw: string) => {
     let id = (raw ?? '').trim()
 
@@ -37,7 +43,7 @@ export default function MessageItem({ message }: { message: Message }) {
   }
 
   const mergedSourcesAndClaims: Record<string, SourceAndClaim> = useMemo(() => {
-    return [...(message.sources ?? []), ...(message.claims ?? [])].reduce(
+    return (message.sources ?? []).reduce(
       (h, item) => {
         const k = normalizeRefId(item.id)
         h[k] = item
@@ -47,7 +53,7 @@ export default function MessageItem({ message }: { message: Message }) {
       },
       {} as Record<string, SourceAndClaim>,
     )
-  }, [message.sources, message.claims])
+  }, [message.sources])
   // Build a Typography node that contains text + clickable citation tokens like [C1], [pmid:...]
   const mesegeEnrichedText = useMemo(() => {
     const text = message.content ?? ''
@@ -72,7 +78,11 @@ export default function MessageItem({ message }: { message: Message }) {
       }
 
       parts.push(
-        <MessageSourceItem key={key} source={safeSource} text={token} />,
+        <MessageSourceItem
+          key={key}
+          source={safeSource}
+          onInsertReference={onInsertReference}
+        />,
       )
     }
 

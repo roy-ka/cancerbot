@@ -1,6 +1,7 @@
 from ollama import Client, ResponseError
 from dotenv import load_dotenv
 import os
+import re
 import json
 from typing import Any, Mapping, Sequence
 from src.db.models import Message
@@ -96,7 +97,7 @@ class OllamaConnector:
       return (s[:n] + '…') if len(s) > n else s
 
     def _ids_only(items, max_items: int = 6):
-      """Extract compact ids (and optional names) from msg.sources/msg.claims."""
+      """Extract compact ids (and optional names) from msg.sources."""
       if not items:
         return []
       out = []
@@ -122,22 +123,12 @@ class OllamaConnector:
 
     recent_msgs = list(history)
 
-    # Drop assistant messages that are purely tool output (e.g., raw JSON blobs)
+    # Drop assistant messages that are purely JSON blobs (not real responses)
     def _is_tool_output(msg: Message) -> bool:
       if msg.role != 'assistant':
         return False
-
       content = str(getattr(msg, 'content', '') or '').strip()
-
-      # Explicit tool intent flag
-      if getattr(msg, 'intent', None) == 'tool':
-        return True
-
-      # Heuristic: large JSON-like payloads
-      if content.startswith('{') and content.endswith('}') and len(content) > 200:
-        return True
-
-      return False
+      return content.startswith('{') and content.endswith('}') and len(content) > 200
 
     recent_msgs = [m for m in recent_msgs if not _is_tool_output(m)]
     logger.info(f"[generate] history={len(recent_msgs)} messages after filtering")
@@ -148,13 +139,32 @@ class OllamaConnector:
         'content': _truncate(msg.content, 360 if msg.role == 'user' else 520),
         # Keep only small id lists (enriched content already appears in Scientific Evidence)
         'source_ids': _ids_only(getattr(msg, 'sources', None)),
-        'claim_ids': _ids_only(getattr(msg, 'claims', None)),
       }
       for msg in recent_msgs
     ]
 
     # Compact JSON string for the prompt (stable and token-efficient)
     message_context = json.dumps(message_context_compact, ensure_ascii=False, separators=(',', ':'))
+
+    # If the user explicitly references a source ID from a previous answer (e.g. [pmid:123]),
+    # inject those sources at the front of the context so the LLM can elaborate on them.
+    referenced_ids = {m.lower() for m in re.findall(r'\[([^\]]+)\]', question)}
+    if referenced_ids:
+      injected: list[dict] = []
+      seen_injected: set[str] = set()
+      for msg in reversed(recent_msgs):
+        if msg.role != 'assistant':
+          continue
+        for item in (getattr(msg, 'sources', None) or []):
+          item_id = str(item.get('id') or '').strip()
+          if item_id.lower() in referenced_ids and item_id not in seen_injected:
+            text = item.get('text') or item.get('content_for_embedding') or ''
+            if text:
+              injected.append({'id': item_id, 'content_for_embedding': text})
+              seen_injected.add(item_id)
+      if injected:
+        logger.info(f"[generate] injecting {len(injected)} explicitly referenced sources: {[i['id'] for i in injected]}")
+      context = injected + list(context or [])
 
     # Bound evidence size to avoid OOM / runner kills on CPU-only deployments.
     max_context_items = int(os.getenv('OLLAMA_CONTEXT_ITEMS', '8'))
@@ -210,11 +220,16 @@ class OllamaConnector:
     if not context_block.strip():
       context_block = "(no context provided)"
 
+    history_section = (
+        f"\nConversation History:\n{message_context}\n"
+        if recent_msgs else ""
+    )
+
     full_prompt = f"""
 You are a doctor specializing in cancer research and treatment, metabolism, and integrative medicine.
 
 Use ONLY the Scientific Evidence below as factual grounding.
-Conversation History is for user intent and context only; it is NOT evidence unless explicitly cited from Scientific Evidence.
+{"Conversation History is for user intent and context only; it is NOT evidence unless explicitly cited from Scientific Evidence." if recent_msgs else ""}
 
 If fewer than 2 citations support the answer, write: "Insufficient evidence in provided context."
 
@@ -227,10 +242,7 @@ CITATION RULES:
 
 Scientific Evidence:
 {context_block}
-
-Conversation History:
-{message_context}
-
+{history_section}
 QUESTION:
 {question}
 

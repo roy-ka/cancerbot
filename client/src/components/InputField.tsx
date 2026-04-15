@@ -1,18 +1,28 @@
 import { FormControl, TextField, Button, Grid } from '@mui/material'
-import { useState } from 'react'
+import { forwardRef, useImperativeHandle } from 'react'
 
-export default function InputField({
-  onSubmit,
-}: {
-  onSubmit: (e: React.SubmitEvent<HTMLFormElement>) => void
-}) {
-  const [input, setInput] = useState<string>('')
+export type InputFieldHandle = {
+  append: (text: string) => void
+}
+
+const InputField = forwardRef<
+  InputFieldHandle,
+  {
+    onSubmit: (e: React.SubmitEvent<HTMLFormElement>) => void
+    value: string
+    onChange: (value: string) => void
+  }
+>(({ onSubmit, value, onChange }, ref) => {
+  useImperativeHandle(ref, () => ({
+    append: (text: string) => {
+      onChange(value + (value.endsWith(' ') || value === '' ? '' : ' ') + text)
+    },
+  }))
 
   const handleSubmit = (e: React.SubmitEvent<HTMLFormElement>) => {
     e.preventDefault()
-    if (input.trim() === '') return
+    if (value.trim() === '') return
     onSubmit(e)
-    setInput('')
   }
 
   return (
@@ -31,8 +41,8 @@ export default function InputField({
             hiddenLabel
             type="input"
             variant="outlined"
-            onChange={(e) => setInput(e.target.value)}
-            value={input}
+            onChange={(e) => onChange(e.target.value)}
+            value={value}
           />
         </Grid>
         <Grid size={1}>
@@ -43,4 +53,7 @@ export default function InputField({
       </Grid>
     </FormControl>
   )
-}
+})
+
+InputField.displayName = 'InputField'
+export default InputField

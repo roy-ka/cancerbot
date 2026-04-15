@@ -59,7 +59,7 @@ export default function AuthPanel() {
         <Typography variant="body2" className="auth-panel-subtitle">
           {isLogin
             ? 'Log in to continue to cancerbot.'
-            : 'Register to start saving sources and building claims.'}
+            : 'Register to start saving sources and exploring evidence.'}
         </Typography>
       </Box>
 

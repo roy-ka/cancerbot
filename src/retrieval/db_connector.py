@@ -20,7 +20,6 @@ class dbConnector:
       'dimensions': 768,
       'description': 'A general-purpose text embedding model by Nomic AI, suitable for various NLP tasks including semantic search, clustering, and classification.',
       'sources_index': 'v1.5_en_nomic-embed-text_index',
-      'claims_index': 'v1.5_claims_nomic-embed-text_index'
     },
   }
 
@@ -101,12 +100,27 @@ class dbConnector:
     return res
 
   @classmethod
-  def get_claims_and_sources_by_id(cls, ids):
+  def existing_source_ids(cls, ids: list) -> set:
+    """Return the subset of `ids` that already exist in the sources index."""
+    if not ids:
+      return set()
+    res = cls.db_client.search(
+      index=cls.model['sources_index'],
+      body={
+        'size': len(ids),
+        '_source': ['id'],
+        'query': {'terms': {'id': ids}},
+      }
+    )
+    return {hit['_source']['id'] for hit in res['hits']['hits'] if hit.get('_source', {}).get('id')}
+
+  @classmethod
+  def get_sources_by_id(cls, ids):
     if not ids:
       return {'hits': {'hits': []}}
 
     return cls.db_client.search(
-      index=[cls.model['claims_index'], cls.model['sources_index']],
+      index=cls.model['sources_index'],
       body={
         'size': 200,
         '_source': True,

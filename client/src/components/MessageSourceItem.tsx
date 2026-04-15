@@ -1,6 +1,8 @@
 import React, { useState } from 'react'
 import {
   Box,
+  Button,
+  Divider,
   IconButton,
   Link,
   Popover,
@@ -8,29 +10,39 @@ import {
   Typography,
 } from '@mui/material'
 import CloseIcon from '@mui/icons-material/Close'
+import AddCommentOutlinedIcon from '@mui/icons-material/AddCommentOutlined'
 import type { SourceAndClaim } from '../types'
 
 export default function MessageSourceItem({
-  text,
   source,
+  onInsertReference,
 }: {
-  text: string
   source: SourceAndClaim
+  onInsertReference?: (id: string) => void
 }) {
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null)
   const open = Boolean(anchorEl)
   const popupText = source.text
   const url = source.url ?? ''
-  const name = source.name === 'unknown' ? text : source.name
+
+  // Display label: prefer title, then domain name, then cleaned id
+  const displayName =
+    source.title?.trim() ||
+    (source.name && source.name !== 'unknown' ? source.name : null) ||
+    source.id.replace(/^(pmid|doi|url|src):/, '')
 
   const handleClick = (e: React.MouseEvent<HTMLElement>) => {
-    // Prevent navigating when later you swap to a link component.
     e.preventDefault()
     e.stopPropagation()
     setAnchorEl(e.currentTarget)
   }
 
   const handleClose = () => setAnchorEl(null)
+
+  const handleAddToAnswer = () => {
+    onInsertReference?.(source.id)
+    handleClose()
+  }
 
   const chip = (
     <Box
@@ -43,13 +55,12 @@ export default function MessageSourceItem({
         userSelect: 'none',
       }}
     >
-      {name}
+      {displayName}
     </Box>
   )
 
   return (
     <>
-      {/* Hover popup */}
       <Tooltip
         title={
           <Box sx={{ maxWidth: 1000, p: 1 }}>
@@ -75,7 +86,6 @@ export default function MessageSourceItem({
         {chip}
       </Tooltip>
 
-      {/* Click popup with close button */}
       <Popover
         open={open}
         anchorEl={anchorEl}
@@ -88,15 +98,12 @@ export default function MessageSourceItem({
               maxWidth: 640,
               p: 2,
               borderRadius: 2,
-              opacity: 1,
               bgcolor: 'rgba(17, 24, 39, 0.98)',
-              backdropFilter: 'none',
             },
           },
         }}
       >
         <Box sx={{ position: 'relative', maxWidth: 640 }}>
-          {/* Close button top-right */}
           <IconButton
             size="small"
             onClick={handleClose}
@@ -107,33 +114,44 @@ export default function MessageSourceItem({
           </IconButton>
 
           <Box sx={{ pr: 4 }}>
+            {source.title && (
+              <Typography
+                variant="subtitle2"
+                sx={{ mb: 1, fontWeight: 700, color: 'primary.light' }}
+              >
+                {source.title}
+              </Typography>
+            )}
+
             <Typography
               variant="body1"
-              sx={{
-                whiteSpace: 'pre-wrap',
-                fontSize: '0.98rem',
-                lineHeight: 1.7,
-              }}
+              sx={{ whiteSpace: 'pre-wrap', fontSize: '0.98rem', lineHeight: 1.7 }}
             >
               {popupText || 'No details available.'}
             </Typography>
 
-            {/* Show source link ONLY in the click popup */}
-            {url ? (
+            {url && (
               <Box sx={{ mt: 2 }}>
                 <Typography variant="caption">Source</Typography>
                 <Box>
-                  <Link
-                    href={url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    underline="hover"
-                  >
-                    {name}
+                  <Link href={url} target="_blank" rel="noopener noreferrer" underline="hover">
+                    {source.title || displayName}
                   </Link>
                 </Box>
               </Box>
-            ) : null}
+            )}
+
+            <Divider sx={{ my: 1.5, borderColor: 'rgba(255,255,255,0.12)' }} />
+
+            <Button
+              size="small"
+              startIcon={<AddCommentOutlinedIcon fontSize="small" />}
+              onClick={handleAddToAnswer}
+              variant="outlined"
+              sx={{ textTransform: 'none' }}
+            >
+              Add to answer
+            </Button>
           </Box>
         </Box>
       </Popover>

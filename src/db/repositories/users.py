@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from src.db.models import User
 import logging
 
@@ -17,3 +18,7 @@ def get_user_by_email(db, email):
 
 def get_user_by_id(db, user_id):
   return db.query(User).filter(User.id == user_id).first()
+
+def update_last_login(db, user: User) -> None:
+  user.last_login = datetime.now(timezone.utc)
+  db.commit()

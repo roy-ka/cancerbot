@@ -7,8 +7,9 @@ from pydantic import BaseModel
 from datetime import timedelta,datetime,timezone
 from src.utils.utils import is_prod
 from src.db.repositories.users import (
-    create_user ,
+    create_user,
     get_user_by_email,
+    update_last_login,
 )
 import logging
 
@@ -50,6 +51,7 @@ async def generate_token(req: LoginRequest, response: Response, db: Session = De
     logging.info(f"Login attempt for user_id: {user.id if user else 'unknown'}")
     if not user or not SecurityUtils.verify_password(req.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid credentials")
+    update_last_login(db=db, user=user)
     if req.rememberMe:
         max_age = 2592000  # 30 days
         expires =  datetime.now(timezone.utc) + timedelta(days=30)
@@ -76,3 +78,8 @@ async def generate_token(req: LoginRequest, response: Response, db: Session = De
 @router.get("/check/")
 async def check_auth(current_user=Depends(get_current_user)):
     return {"authenticated": True, "user_id": str(current_user.id), "email": current_user.email}
+
+@router.post("/logout/")
+async def logout(response: Response):
+    response.delete_cookie(key="access_token", path="/", httponly=True, secure=is_prod(), samesite="lax")
+    return {"logged_out": True}

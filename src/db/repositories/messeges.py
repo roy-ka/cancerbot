@@ -19,17 +19,13 @@ def _decode_cursor(cursor: str) -> Tuple[datetime, uuid.UUID]:
     raise ValueError('Invalid cursor format') from e
 
 
-def add_claims_and_sources(message: Message):
+def add_sources(message: Message):
   src = message.sources_ids or []
-  clm = message.claim_ids or []
 
   if isinstance(src, str):
     src = [s.strip() for s in src.split(',') if s.strip()]
-  if isinstance(clm, str):
-    clm = [s.strip() for s in clm.split(',') if s.strip()]
 
-  ids = [*src, *clm]
-  if not ids:
+  if not src:
     return
 
   def _extract_source_name(url: Optional[str]) -> str:
@@ -41,13 +37,10 @@ def add_claims_and_sources(message: Message):
     except Exception:
       return 'unknown'
 
-  response = dbConnector.get_claims_and_sources_by_id(ids)
+  response = dbConnector.get_sources_by_id(src)
   results = response['hits']['hits']
 
-  claims = []
   sources = []
-  claims_index = dbConnector.model['claims_index']
-  sources_index = dbConnector.model['sources_index']
   for res in results:
     data = res['_source']
     url = data.get('url') or data.get('pmid') or data.get('doi')
@@ -58,25 +51,19 @@ def add_claims_and_sources(message: Message):
       'id': data.get('id'),
       'url': url,
       'name': _extract_source_name(url),
+      'title': data.get('title'),
     }
-    if res.get('_index') == claims_index:
-      claims.append(entry)
-    elif res.get('_index') == sources_index:
-      sources.append(entry)
+    sources.append(entry)
 
-  # Set once after processing
-  message.claims = claims
   message.sources = sources
 
 
-def add_message(db, conversation_id, role, content, sources_ids='', claim_ids='', intent=None):
+def add_message(db, conversation_id, role, content, sources_ids=''):
   new_message = Message(
     conversation_id=conversation_id,
     role=role,
     content=content,
     sources_ids=sources_ids,
-    claim_ids=claim_ids,
-    intent=intent,
   )
   logging.info(f"Adding message to conversation {conversation_id} with role {role}")
   db.add(new_message)
@@ -117,6 +104,6 @@ def get_messages_by_conversation_id(db, conversation_id, limit=50, before: Optio
 
   for msg in messages:
     if msg.role == 'assistant':
-      add_claims_and_sources(msg)
+      add_sources(msg)
 
   return messages

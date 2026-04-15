@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Box, Grid } from '@mui/material'
 import ConversationList from '../components/ConversationList'
 import MessageList from '../components/MessageList'
 import type { Conversation, Message } from '../types'
-import InputField from '../components/InputField'
+import InputField, { type InputFieldHandle } from '../components/InputField'
 export default function Chat() {
   const BASE_URL = import.meta.env.VITE_BASE_URL
 
@@ -21,8 +21,9 @@ export default function Chat() {
   const [nextBefore, setNextBefore] = useState<string | null>(null)
   const [isLoadingOlder, setIsLoadingOlder] = useState(false)
   const [sendStage, setSendStage] = useState<string | null>(null)
-  const [selectedConversationId, setSelectedConversationId] =
-    useState<string>('new')
+  const [selectedConversationId, setSelectedConversationId] = useState<string>('new')
+  const [inputValue, setInputValue] = useState<string>('')
+  const inputRef = useRef<InputFieldHandle>(null)
 
   const textToMessage = (text: string): Message => ({
     id: `temp-${Date.now()}`,
@@ -32,7 +33,6 @@ export default function Chat() {
     conversationId:
       selectedConversationId === 'new' ? undefined : selectedConversationId,
     sources: [],
-    claims: [],
   })
 
   useEffect(() => {
@@ -58,6 +58,7 @@ export default function Chat() {
 
   useEffect(() => {
     const fetchMessages = async () => {
+      setInputValue('')
       if (selectedConversationId === 'new') {
         // Avoid re-render loops: only clear if there is something to clear
         setMessages((prev) => (prev.length === 0 ? prev : []))
@@ -150,12 +151,38 @@ export default function Chat() {
     }
   }, [BASE_URL, selectedConversationId, nextBefore, isLoadingOlder])
 
+  const onLogout = useCallback(async () => {
+    try {
+      await fetch(`${BASE_URL}/auth/logout/`, { method: 'POST', credentials: 'include' })
+    } catch (e) {
+      console.error('logout failed:', e)
+    }
+    window.location.href = '/login'
+  }, [BASE_URL])
+
+  const onDeleteConversation = useCallback(async (id: string) => {
+    try {
+      const res = await fetch(`${BASE_URL}/conversations/${id}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      })
+      if (!res.ok) throw new Error(await res.text())
+      setConversations((prev) => prev.filter((c) => c.id !== id))
+      if (selectedConversationId === id) setSelectedConversationId('new')
+    } catch (e) {
+      console.error('delete conversation failed:', e)
+    }
+  }, [BASE_URL, selectedConversationId])
+
+  const onInsertReference = useCallback((id: string) => {
+    inputRef.current?.append(`[${id}]`)
+  }, [])
+
   const onMessageSubmit = (e: React.SubmitEvent) => {
     e.preventDefault()
-    const form = e.currentTarget
-    const messageText =
-      form && (form as any).input ? (form as any).input.value.trim() : ''
+    const messageText = inputValue.trim()
     if (!messageText) return
+    setInputValue('')
 
     const optimisticMessage = textToMessage(messageText)
 
@@ -284,6 +311,8 @@ export default function Chat() {
             setSelectedConversationId={setSelectedConversationId}
             selectedConversationId={selectedConversationId}
             conversations={conversations}
+            onDeleteConversation={onDeleteConversation}
+            onLogout={onLogout}
           />
         </Grid>
         <Grid size={9} className="chat-messages">
@@ -294,10 +323,16 @@ export default function Chat() {
               hasOlder={!!nextBefore}
               isLoadingOlder={isLoadingOlder}
               sendStage={sendStage}
+              onInsertReference={onInsertReference}
             />
           </Box>
           <Box className="chat-input">
-            <InputField onSubmit={onMessageSubmit} />
+            <InputField
+                ref={inputRef}
+                onSubmit={onMessageSubmit}
+                value={inputValue}
+                onChange={setInputValue}
+              />
           </Box>
         </Grid>
       </Grid>

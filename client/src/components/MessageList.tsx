@@ -15,12 +15,14 @@ export default function MessageList({
   sendStage,
   hasOlder = false,
   isLoadingOlder = false,
+  onInsertReference,
 }: {
   messages: Message[]
   onLoadOlder?: () => Promise<boolean> | boolean
   sendStage: string | null
   hasOlder?: boolean
   isLoadingOlder?: boolean
+  onInsertReference?: (id: string) => void
 }) {
   const [noOlderOpen, setNoOlderOpen] = useState(false)
   const lastTriggerRef = useRef<number>(0)
@@ -109,7 +111,11 @@ export default function MessageList({
         </Box>
       )}
       {messages.map((message) => (
-        <MessageItem message={message} key={message.id || 'new'} />
+        <MessageItem
+          message={message}
+          key={message.id || 'new'}
+          onInsertReference={onInsertReference}
+        />
       ))}
 
       <div ref={bottomRef} />

@@ -65,7 +65,7 @@ export default function LoginDetails() {
                 <Stack spacing={1.2} sx={{ mt: 0.5 }}>
                   <Feature
                     icon={<SearchOutlinedIcon />}
-                    text="Search across sources + claims"
+                    text="Search across medical sources"
                   />
                   <Feature
                     icon={<DescriptionOutlinedIcon />}

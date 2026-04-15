@@ -10,13 +10,15 @@ from src.db.repositories.conversations import (
     get_conversation_by_id,
     get_conversations_list_by_user_id,
     create_conversation,
+    soft_delete_conversation,
     format_last_msg_time,
 )
-from src.db.repositories.messeges import add_message, add_claims_and_sources, get_messages_by_conversation_id, get_recent_messages
+from src.db.repositories.messeges import add_message, add_sources, get_messages_by_conversation_id, get_recent_messages
 from uuid import UUID
 from src.retrieval import run_retrieval
 from src.classes.ollama_connector import OllamaConnector
 from src.routers.conversation_helper import _emit_noop, search_and_embed
+from src.db.repositories.fallback_searches import save_fallback_search
 import asyncio
 import os
 
@@ -91,7 +93,18 @@ async def _process_post_message(
     )
     if response == 'Insufficient evidence in provided context.':
         await emit('fallback_triggered', {'reason': 'insufficient_evidence'})
+        initial_context = context.get('generation_context', [])
         fallback_meta = await search_and_embed(conversation, emit=emit)
+
+        save_fallback_search(
+            db=db,
+            conversation_id=conversation.id,
+            message_id=user_message.id,
+            question=req.content,
+            initial_context=initial_context,
+            fallback_meta=fallback_meta,
+            searched_web=bool(fallback_meta.get("pubmed_found") or fallback_meta.get("crossref_found") or fallback_meta.get("wikipedia_found")),
+        )
 
         await emit(
             're_retrieving_context',
@@ -115,7 +128,7 @@ async def _process_post_message(
                 f"Fallback indexing completed with {fallback_meta.get('indexed', 0)} new sources "
                 f"(skipped {fallback_meta.get('skipped', 0)})."
             )
-    await emit('saving_assistant_message', {'intent': context.get('intent')})
+    await emit('saving_assistant_message', {})
 
     try:
         assistant_message = add_message(
@@ -123,8 +136,6 @@ async def _process_post_message(
             conversation_id=conversation.id,
             role="assistant",
             content=response,
-            intent=context.get("intent"),
-            claim_ids=context.get('claims_ids'),
             sources_ids=context.get('sources_ids'),
         )
 
@@ -134,7 +145,7 @@ async def _process_post_message(
         db.rollback()
         raise
 
-    add_claims_and_sources(assistant_message)
+    add_sources(assistant_message)
 
     took_ms = int((time.time() - t0) * 1000)
     await emit('done', {'took_ms': took_ms})
@@ -145,8 +156,6 @@ async def _process_post_message(
             "role": m.role,
             "content": m.content,
             "created_at": m.created_at.isoformat() if getattr(m, 'created_at', None) else None,
-            "intent": getattr(m, 'intent', None),
-            "claims": getattr(m, 'claims', None),
             "sources": getattr(m, 'sources', None),
         }
 
@@ -159,6 +168,47 @@ async def _process_post_message(
             "lastMessage": user_message.content,
             "lastMessageTime": format_last_msg_time(user_message.created_at),
         },
+    }
+
+
+@router.delete("/{conversation_id}")
+async def delete_conversation(
+    conversation_id: UUID,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    deleted = soft_delete_conversation(db, conversation_id, current_user.id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return {"ok": True}
+
+
+@router.get("/fallback-searches")
+async def get_fallback_searches_endpoint(
+    limit: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    from src.db.repositories.fallback_searches import get_fallback_searches
+    records = get_fallback_searches(db, limit=limit)
+    return {
+        "fallback_searches": [
+            {
+                "id": str(r.id),
+                "conversation_id": str(r.conversation_id),
+                "message_id": str(r.message_id) if r.message_id else None,
+                "question": r.question,
+                "terms": r.terms or [],
+                "initial_sources": r.initial_sources or [],
+                "pubmed_found": r.pubmed_found,
+                "crossref_found": r.crossref_found,
+                "wikipedia_found": r.wikipedia_found,
+                "indexed": r.indexed,
+                "searched_web": r.searched_web,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in records
+        ]
     }
 
 
@@ -228,8 +278,6 @@ async def get_conversation_messages(
             "role": msg.role,
             "content": msg.content,
             "created_at": msg.created_at.isoformat() if msg.created_at else None,
-            "intent": msg.intent,
-            "claims": getattr(msg, 'claims', None),
             "sources": getattr(msg, 'sources', None),
         }
         for msg in messages
