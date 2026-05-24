@@ -2,20 +2,44 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from src.deps.db import get_db
 from src.db import sql
-router = APIRouter(prefix="/conversations", tags=["conversations"])
+import logging
+
+router = APIRouter(prefix="/health", tags=["health"])
+logger = logging.getLogger(__name__)
 
 
-@router.get("/health/db")
-async def health_db(db: Session = Depends(get_db)):
-    stmt = sql.select(sql.text("1"))
-    with db.begin():
-        result = db.execute(stmt)
-        return {"status": "ok", "result": [row[0] for row in result]}
+@router.get("/")
+async def health_check(db: Session = Depends(get_db)):
+    """Overall health check. Returns 200 if all critical services are up."""
+    checks = {}
+    overall_ok = True
 
+    try:
+        stmt = sql.select(sql.text("1"))
+        with db.begin():
+            db.execute(stmt)
+        checks["database"] = {"status": "ok"}
+    except Exception as e:
+        logger.error(f"Database health check failed: {e}")
+        checks["database"] = {"status": "error", "message": str(e)}
+        overall_ok = False
 
-@router.get("/health/conversations/")
-async def debug_conversations(db: Session = Depends(get_db)):
-    stmt = sql.text("SELECT COUNT(*) FROM conversations")
-    with db.begin():
-        count = db.execute(stmt).scalar_one()
-    return {"conversations_count": int(count)}
+    try:
+        from src.classes.ollama_connector import OllamaConnector
+        models = OllamaConnector._available_models()
+        if models:
+            checks["ollama"] = {"status": "ok", "models": len(models)}
+        else:
+            checks["ollama"] = {"status": "error", "message": "No models available"}
+            overall_ok = False
+    except Exception as e:
+        logger.error(f"Ollama health check failed: {e}")
+        checks["ollama"] = {"status": "error", "message": str(e)}
+        overall_ok = False
+
+    status_code = 200 if overall_ok else 503
+    return {
+        "status": "ok" if overall_ok else "degraded",
+        "checks": checks,
+        "status_code": status_code,
+    }

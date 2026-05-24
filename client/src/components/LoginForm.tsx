@@ -10,7 +10,11 @@ import React, { useState } from 'react'
 import { useNavigate } from 'react-router'
 import type { LoginPayload } from '../types'
 
-export default function LoginForm() {
+export default function LoginForm({
+  onForgotPassword,
+}: {
+  onForgotPassword?: () => void
+}) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [rememberMe, setRememberMe] = useState(false)
@@ -95,6 +99,11 @@ export default function LoginForm() {
         <Button type="submit" variant="contained" fullWidth>
           Submit
         </Button>
+        {onForgotPassword && (
+          <Button size="small" onClick={onForgotPassword}>
+            Forgot password?
+          </Button>
+        )}
       </Stack>
     </FormControl>
   )

@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import  List, Optional
 from uuid import uuid4
 
-from sqlalchemy import Column, DateTime, ForeignKey, String, Text, JSON, Float, Boolean, func
+from sqlalchemy import Column, DateTime, ForeignKey, String, Text, JSON, Float, Boolean, Integer, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, relationship, mapped_column
 from .base import Base
@@ -182,3 +182,20 @@ class Abbreviation(Base):
         onupdate=func.now(),
         nullable=False,
     )
+
+
+class PasswordResetCode(Base):
+    __tablename__ = "password_reset_codes"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    code_hash = Column(String(64), nullable=False)        # SHA-256 hex of the 6-digit code
+    created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    used_at = Column(DateTime(timezone=True), nullable=True, default=None)
+    attempts = Column(Integer, nullable=False, default=0)  # failed verification attempts

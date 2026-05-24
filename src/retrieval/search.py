@@ -6,45 +6,50 @@ logger = logging.getLogger(__name__)
 
 
 def search_sources(db, text=None ,vector=None):
-  knn_query = {
-      "knn": {
-        "embedding": {
-          "vector": vector,
-          "k": 5,
-          'boost': 2
-        },
+  try:
+    knn_query = {
+        "knn": {
+          "embedding": {
+            "vector": vector,
+            "k": 5,
+            'boost': 2
+          },
+        }
       }
-    } 
-  text_query =  [{
-    "match": {
-      "content_for_embedding": {
-        'query': text,
-        'boost': 1
+    text_query =  [{
+      "match": {
+        "content_for_embedding": {
+          'query': text,
+          'boost': 1
+        },
       },
-    }, 
-  },{
-    "match": {
-      "title": {
-        'query': text,
-        'boost': 1.5
+    },{
+      "match": {
+        "title": {
+          'query': text,
+          'boost': 1.5
+        },
       },
-    }, 
-  }]
-  should_clauses = []
-  if vector:
-    should_clauses.append(knn_query)
-  if text:
-    should_clauses += text_query
-  body = {
-    "size": 5,
-    "query": {
-      'bool':{
-        'should':should_clauses,
-        'minimum_should_match': 1,
+    }]
+    should_clauses = []
+    if vector:
+      should_clauses.append(knn_query)
+    if text:
+      should_clauses += text_query
+    body = {
+      "size": 5,
+      "query": {
+        'bool':{
+          'should':should_clauses,
+          'minimum_should_match': 1,
+        }
       }
     }
-  }
-  return db.search(
-    index_type = 'sources_index',
-    body = body
-  )['hits']['hits']
+    result = db.search(
+      index_type = 'sources_index',
+      body = body
+    )
+    return result.get('hits', {}).get('hits', [])
+  except Exception as e:
+    logger.exception("Search failed for text=%s", text[:100] if text else None)
+    return []

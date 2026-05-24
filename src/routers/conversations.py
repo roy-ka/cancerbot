@@ -47,75 +47,47 @@ async def _process_post_message(
     conversation=None,
     emit: StageEmitter = _emit_noop,
 ):
+    import logging
+    logger = logging.getLogger(__name__)
     t0 = time.time()
 
-    await emit('loading_conversation', {'conversation_id': str(conversation_id)})
-
-    conversation = conversation or get_conversation_by_id(
-        db=db,
-        conversation_id=conversation_id,
-        current_user=current_user,
-    )
-
-    if conversation is None:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-
-    if str(conversation.user_id) != str(current_user.id):
-        raise HTTPException(status_code=403, detail="Forbidden")
-
-    await emit('saving_user_message', {})
-
     try:
-        user_message = add_message(
+        await emit('loading_conversation', {'conversation_id': str(conversation_id)})
+
+        conversation = conversation or get_conversation_by_id(
             db=db,
-            conversation_id=conversation.id,
-            role="user",
-            content=req.content,
-        )
-        db.commit()
-        db.refresh(user_message)
-    except Exception:
-        db.rollback()
-        raise
-
-    await emit('retrieving_context', {})
-    context = await asyncio.to_thread(run_retrieval, req.content)
-    max_history = int(os.getenv('PROMPT_MAX_HISTORY', '8'))
-    history = get_recent_messages(db, conversation.id, limit=max_history)
-    await emit('building_prompt', {'history_messages': len(history)})
-    await emit('generating_answer', {})
-
-    response = await asyncio.to_thread(
-        OllamaConnector.generate_text,
-        context=context["generation_context"],
-        question=req.content,
-        history=history,
-    )
-    if response == 'Insufficient evidence in provided context.':
-        await emit('fallback_triggered', {'reason': 'insufficient_evidence'})
-        initial_context = context.get('generation_context', [])
-        fallback_meta = await search_and_embed(conversation, emit=emit)
-
-        save_fallback_search(
-            db=db,
-            conversation_id=conversation.id,
-            message_id=user_message.id,
-            question=req.content,
-            initial_context=initial_context,
-            fallback_meta=fallback_meta,
-            searched_web=bool(fallback_meta.get("pubmed_found") or fallback_meta.get("crossref_found") or fallback_meta.get("wikipedia_found")),
+            conversation_id=conversation_id,
+            current_user=current_user,
         )
 
-        await emit(
-            're_retrieving_context',
-            {
-                'indexed': fallback_meta.get('indexed', 0),
-                'terms_count': len(fallback_meta.get('terms') or []),
-            },
-        )
+        if conversation is None:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+
+        if str(conversation.user_id) != str(current_user.id):
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        await emit('saving_user_message', {})
+
+        try:
+            user_message = add_message(
+                db=db,
+                conversation_id=conversation.id,
+                role="user",
+                content=req.content,
+            )
+            db.commit()
+            db.refresh(user_message)
+        except Exception:
+            db.rollback()
+            raise
+
+        await emit('retrieving_context', {})
         context = await asyncio.to_thread(run_retrieval, req.content)
-        await emit('rebuilding_prompt', {'history_messages': len(history)})
-        await emit('re_generating_answer', {})
+        max_history = int(os.getenv('PROMPT_MAX_HISTORY', '8'))
+        history = get_recent_messages(db, conversation.id, limit=max_history)
+        await emit('building_prompt', {'history_messages': len(history)})
+        await emit('generating_answer', {})
+
         response = await asyncio.to_thread(
             OllamaConnector.generate_text,
             context=context["generation_context"],
@@ -123,52 +95,89 @@ async def _process_post_message(
             history=history,
         )
         if response == 'Insufficient evidence in provided context.':
-            response = (
-                "Insufficient evidence in provided context. "
-                f"Fallback indexing completed with {fallback_meta.get('indexed', 0)} new sources "
-                f"(skipped {fallback_meta.get('skipped', 0)})."
+            await emit('fallback_triggered', {'reason': 'insufficient_evidence'})
+            initial_context = context.get('generation_context', [])
+            fallback_meta = await search_and_embed(conversation, emit=emit)
+
+            save_fallback_search(
+                db=db,
+                conversation_id=conversation.id,
+                message_id=user_message.id,
+                question=req.content,
+                initial_context=initial_context,
+                fallback_meta=fallback_meta,
+                searched_web=bool(fallback_meta.get("pubmed_found") or fallback_meta.get("crossref_found") or fallback_meta.get("wikipedia_found")),
             )
-    await emit('saving_assistant_message', {})
 
-    try:
-        assistant_message = add_message(
-            db=db,
-            conversation_id=conversation.id,
-            role="assistant",
-            content=response,
-            sources_ids=context.get('sources_ids'),
-        )
+            await emit(
+                're_retrieving_context',
+                {
+                    'indexed': fallback_meta.get('indexed', 0),
+                    'terms_count': len(fallback_meta.get('terms') or []),
+                },
+            )
+            context = await asyncio.to_thread(run_retrieval, req.content)
+            await emit('rebuilding_prompt', {'history_messages': len(history)})
+            await emit('re_generating_answer', {})
+            response = await asyncio.to_thread(
+                OllamaConnector.generate_text,
+                context=context["generation_context"],
+                question=req.content,
+                history=history,
+            )
+            if response == 'Insufficient evidence in provided context.':
+                response = (
+                    "Insufficient evidence in provided context. "
+                    f"Fallback indexing completed with {fallback_meta.get('indexed', 0)} new sources "
+                    f"(skipped {fallback_meta.get('skipped', 0)})."
+                )
+        await emit('saving_assistant_message', {})
 
-        db.commit()
-        db.refresh(assistant_message)
-    except Exception:
-        db.rollback()
-        raise
+        try:
+            assistant_message = add_message(
+                db=db,
+                conversation_id=conversation.id,
+                role="assistant",
+                content=response,
+                sources_ids=context.get('sources_ids'),
+            )
 
-    add_sources(assistant_message)
+            db.commit()
+            db.refresh(assistant_message)
+        except Exception:
+            db.rollback()
+            raise
 
-    took_ms = int((time.time() - t0) * 1000)
-    await emit('done', {'took_ms': took_ms})
+        add_sources(assistant_message)
 
-    def _msg_to_dict(m):
+        took_ms = int((time.time() - t0) * 1000)
+        await emit('done', {'took_ms': took_ms})
+
+        def _msg_to_dict(m):
+            return {
+                "id": str(m.id),
+                "role": m.role,
+                "content": m.content,
+                "created_at": m.created_at.isoformat() if getattr(m, 'created_at', None) else None,
+                "sources": getattr(m, 'sources', None),
+            }
+
         return {
-            "id": str(m.id),
-            "role": m.role,
-            "content": m.content,
-            "created_at": m.created_at.isoformat() if getattr(m, 'created_at', None) else None,
-            "sources": getattr(m, 'sources', None),
+            "messages": [_msg_to_dict(user_message), _msg_to_dict(assistant_message)],
+            "conversation": {
+                "id": str(conversation.id),
+                "title": conversation.title,
+                "updatedAt": assistant_message.created_at.isoformat() if getattr(assistant_message, 'created_at', None) else None,
+                "lastMessage": user_message.content,
+                "lastMessageTime": format_last_msg_time(user_message.created_at),
+            },
         }
-
-    return {
-        "messages": [_msg_to_dict(user_message), _msg_to_dict(assistant_message)],
-        "conversation": {
-            "id": str(conversation.id),
-            "title": conversation.title,
-            "updatedAt": assistant_message.created_at.isoformat() if getattr(assistant_message, 'created_at', None) else None,
-            "lastMessage": user_message.content,
-            "lastMessageTime": format_last_msg_time(user_message.created_at),
-        },
-    }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Error processing message for conversation %s", conversation_id)
+        await emit('error', {'message': 'Unable to generate response. Please try again.'})
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.delete("/{conversation_id}")

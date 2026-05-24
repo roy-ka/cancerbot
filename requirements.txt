@@ -17,3 +17,4 @@ httpx
 asyncpg
 psycopg[binary]
 greenlet
+sendgrid>=6.10.0

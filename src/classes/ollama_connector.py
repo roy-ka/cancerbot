@@ -213,9 +213,13 @@ class OllamaConnector:
       # Render ONLY alias + content_for_embedding
       return f"[{alias}] {text}" if text else f"[{alias}]"
 
-    rendered = [render_item(item, i).strip() for i, item in enumerate(safe_context)]
-    context_block = "\n".join(rendered)
-    logger.info(f"[generate] context_items={len(rendered)} alias_map={alias_to_id}")
+    try:
+      rendered = [render_item(item, i).strip() for i, item in enumerate(safe_context)]
+      context_block = "\n".join(rendered)
+      logger.info(f"[generate] context_items={len(rendered)} alias_map={alias_to_id}")
+    except ValueError as e:
+      logger.error(f"[generate] Failed to render context: {e}")
+      context_block = "(context unavailable)"
 
     if not context_block.strip():
       context_block = "(no context provided)"
@@ -277,7 +281,13 @@ ANSWER:
           logger.warning(f"[generate] model '{model}' unavailable: {e}")
           last_error = e
           continue
-        raise
+        logger.error(f"[generate] Ollama error: {e}")
+        last_error = e
+        raise ValueError("Model error. Please try again in a moment.")
+      except (ConnectionError, TimeoutError, OSError) as e:
+        logger.error(f"[generate] Connection error to Ollama: {e}")
+        last_error = e
+        raise ValueError("Service unavailable. Please try again in a moment.")
 
     if response is None:
       available = cls._available_models()
