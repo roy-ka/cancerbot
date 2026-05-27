@@ -40,6 +40,7 @@ def get_conversation_by_id(db, current_user, conversation_id):
   stmt = select(Conversation).where(
     Conversation.id == conversation_id,
     Conversation.user_id == current_user.id,
+    Conversation.deleted_at.is_(None),
   )
 
   conversation = db.scalars(stmt).one_or_none()
@@ -47,6 +48,20 @@ def get_conversation_by_id(db, current_user, conversation_id):
     return None
 
   return conversation
+
+
+def soft_delete_conversation(db, conversation_id, user_id):
+  stmt = select(Conversation).where(
+    Conversation.id == conversation_id,
+    Conversation.user_id == user_id,
+  )
+  conversation = db.scalars(stmt).one_or_none()
+  if conversation is None:
+    return False
+
+  conversation.deleted_at = datetime.now(timezone.utc)
+  db.commit()
+  return True
 
 
 def get_conversations_list_by_user_id(db, user_id, limit=10):
@@ -64,7 +79,10 @@ def get_conversations_list_by_user_id(db, user_id, limit=10):
 
   rows = (
     db.query(Conversation, LastMsg)
-    .filter(Conversation.user_id == user_id)
+    .filter(
+      Conversation.user_id == user_id,
+      Conversation.deleted_at.is_(None),
+    )
     .join(last_user_ts_sq, last_user_ts_sq.c.conversation_id == Conversation.id)
     .join(
       LastMsg,

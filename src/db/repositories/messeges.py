@@ -86,6 +86,22 @@ def add_message(db, conversation_id, role, content, sources_ids='', claim_ids=''
   return new_message
 
 
+def get_recent_messages(db, conversation_id, limit=50):
+  messages = (
+    db.query(Message)
+    .filter(Message.conversation_id == conversation_id)
+    .order_by(Message.created_at.desc())
+    .limit(limit)
+    .all()
+  )
+
+  for msg in messages:
+    if msg.role == 'assistant':
+      add_claims_and_sources(msg)
+
+  return messages
+
+
 def get_messages_by_conversation_id(db, conversation_id, limit=50, before: Optional[str] = None):
   q = db.query(Message).filter(Message.conversation_id == conversation_id)
 

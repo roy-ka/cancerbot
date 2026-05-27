@@ -21,7 +21,7 @@ from src.db.repositories.messeges import add_message
 from src.auth.security import SecurityUtils
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="function")
 def engine():
     _engine = create_engine(
         "sqlite:///:memory:",
@@ -33,7 +33,7 @@ def engine():
     Base.metadata.drop_all(bind=_engine)
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="function")
 def TestingSessionLocal(engine):
     return sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
