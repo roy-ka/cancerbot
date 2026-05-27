@@ -2,12 +2,14 @@ import pytest
 import asyncio
 from unittest.mock import patch, MagicMock
 
+sendgrid = pytest.importorskip("sendgrid", minversion="6.0")
+
 
 class TestPasswordResetEmail:
     def test_send_password_reset_email_noop_when_no_api_key(self, monkeypatch):
         monkeypatch.delenv("SENDGRID_API_KEY", raising=False)
 
-        with patch("src.utils.email.SendGridAPIClient") as mock_client:
+        with patch("sendgrid.SendGridAPIClient") as mock_client:
             from src.utils.email import send_password_reset_email
             asyncio.run(send_password_reset_email("test@example.com", "123456"))
             mock_client.assert_not_called()
@@ -17,7 +19,7 @@ class TestPasswordResetEmail:
         monkeypatch.setenv("EMAIL_FROM", "noreply@test.com")
         monkeypatch.setenv("EMAIL_FROM_NAME", "TestBot")
 
-        with patch("src.utils.email.SendGridAPIClient") as MockClient:
+        with patch("sendgrid.SendGridAPIClient") as MockClient:
             mock_sg = MagicMock()
             MockClient.return_value = mock_sg
 
@@ -37,7 +39,7 @@ class TestPasswordResetEmail:
         monkeypatch.setenv("SENDGRID_API_KEY", "test-key")
         monkeypatch.setenv("EMAIL_FROM", "noreply@test.com")
 
-        with patch("src.utils.email.SendGridAPIClient") as MockClient:
+        with patch("sendgrid.SendGridAPIClient") as MockClient:
             mock_sg = MagicMock()
             mock_sg.send.side_effect = Exception("SendGrid API error")
             MockClient.return_value = mock_sg
@@ -50,7 +52,7 @@ class TestPasswordResetEmail:
         monkeypatch.setenv("SENDGRID_API_KEY", "test-key")
         monkeypatch.setenv("EMAIL_FROM", "noreply@test.com")
 
-        with patch("src.utils.email.SendGridAPIClient") as MockClient:
+        with patch("sendgrid.SendGridAPIClient") as MockClient:
             mock_sg = MagicMock()
             MockClient.return_value = mock_sg
 

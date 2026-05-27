@@ -41,8 +41,13 @@ def add_claims_and_sources(message: Message):
     except Exception:
       return 'unknown'
 
-  response = dbConnector.get_claims_and_sources_by_id(ids)
-  results = response['hits']['hits']
+  try:
+    response = dbConnector.get_claims_and_sources_by_id(ids)
+    results = response['hits']['hits']
+  except (AttributeError, TypeError, KeyError):
+    # dbConnector not available (e.g., in tests without OpenSearch)
+    logging.warning(f"dbConnector not available for message {message.id}")
+    return
 
   claims = []
   sources = []
