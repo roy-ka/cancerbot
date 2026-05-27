@@ -5,6 +5,7 @@
 !.example.env
 !example.env
 nlp_service/.env
+client/.env
 
 # --- Python virtual environments ---
 venv/
