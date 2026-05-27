@@ -55,7 +55,13 @@ def verify_and_consume_code(db, user_id, code: str) -> tuple[bool, str]:
     if not record:
         return False, "No active reset code found."
 
-    if datetime.now(timezone.utc) > record.expires_at:
+    # Handle both naive and aware datetimes (SQLite doesn't preserve timezone)
+    now = datetime.now(timezone.utc)
+    expires_at = record.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+
+    if now > expires_at:
         return False, "Reset code has expired."
 
     if record.attempts >= _MAX_ATTEMPTS:

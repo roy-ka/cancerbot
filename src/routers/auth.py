@@ -31,9 +31,12 @@ class LoginRequest(BaseModel):
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-@router.post("/register/")
+@router.post("/register/", status_code=201)
 async def register_user(req: CreateUserRequest, db: Session = Depends(get_db)):
-    # Optional: check for existing email first to return a clean error
+    # Validate password length
+    if len(req.password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    # Check for existing email first to return a clean error
     existing = get_user_by_email(db=db, email=req.email)
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -44,7 +47,7 @@ async def register_user(req: CreateUserRequest, db: Session = Depends(get_db)):
         email=req.email,
         password_hash=password_hash ,
     )
-    return {status.HTTP_201_CREATED: "User created", "user_id": str(user.id)}
+    return {"message": "User created", "email": user.email, "user_id": str(user.id)}
 
 
 @router.post("/login/")
@@ -79,7 +82,7 @@ async def generate_token(req: LoginRequest, response: Response, db: Session = De
 
 @router.get("/check/")
 async def check_auth(current_user=Depends(get_current_user)):
-    return {"authenticated": True, "user_id": str(current_user.id), "email": current_user.email}
+    return {"authenticated": True, "user_id": str(current_user.id), "email": current_user.email, "name": current_user.name}
 
 @router.post("/logout/")
 async def logout(response: Response):

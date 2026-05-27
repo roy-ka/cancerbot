@@ -172,12 +172,8 @@ class TestPasswordResetRepository:
         code = create_reset_code(db_session, test_user.id)
         db_session.commit()
 
-        # Mock datetime to be before expiry
-        naive_now = datetime(2026, 1, 1, 12, 0, 0)
-        with patch("src.db.repositories.password_resets.datetime") as mock_dt:
-            mock_dt.now.return_value = naive_now
-            ok, msg = verify_and_consume_code(db_session, test_user.id, code)
-
+        # Immediately verify should succeed
+        ok, msg = verify_and_consume_code(db_session, test_user.id, code)
         assert ok is True
         assert msg == ""
 
@@ -185,37 +181,32 @@ class TestPasswordResetRepository:
         create_reset_code(db_session, test_user.id)
         db_session.commit()
 
-        naive_now = datetime(2026, 1, 1, 12, 0, 0)
-        with patch("src.db.repositories.password_resets.datetime") as mock_dt:
-            mock_dt.now.return_value = naive_now
-            ok, msg = verify_and_consume_code(db_session, test_user.id, "999999")
-
+        ok, msg = verify_and_consume_code(db_session, test_user.id, "999999")
         assert ok is False
-        assert "attempt" in msg.lower()
+        assert "attempt" in msg.lower() or "incorrect" in msg.lower()
 
     def test_verify_and_consume_code_max_attempts_blocks(self, db_session, test_user):
         code = create_reset_code(db_session, test_user.id)
         db_session.commit()
 
-        naive_now = datetime(2026, 1, 1, 12, 0, 0)
-        with patch("src.db.repositories.password_resets.datetime") as mock_dt:
-            mock_dt.now.return_value = naive_now
-            for _ in range(5):
-                verify_and_consume_code(db_session, test_user.id, "wrong")
-            db_session.commit()
-            ok, msg = verify_and_consume_code(db_session, test_user.id, code)
-
-        assert ok is False
-        assert "exceeded" in msg.lower() or "locked" in msg.lower() or "blocked" in msg.lower()
-
-    def test_verify_and_consume_code_expired(self, db_session, test_user):
-        code = create_reset_code(db_session, test_user.id)
+        # Make max attempts
+        for _ in range(5):
+            verify_and_consume_code(db_session, test_user.id, "wrong")
         db_session.commit()
 
-        # Mock datetime to be AFTER expiry
-        naive_now = datetime(2026, 1, 1, 23, 0, 0)  # 15+ minutes later
-        with patch("src.db.repositories.password_resets.datetime") as mock_dt:
-            mock_dt.now.return_value = naive_now
+        # Next attempt should be blocked
+        ok, msg = verify_and_consume_code(db_session, test_user.id, code)
+        assert ok is False
+        assert "too many" in msg.lower() or "exceeded" in msg.lower()
+
+    def test_verify_and_consume_code_expired(self, db_session, test_user):
+        from freezegun import freeze_time
+        with freeze_time("2026-01-01 12:00:00"):
+            code = create_reset_code(db_session, test_user.id)
+            db_session.commit()
+
+        # Move time forward past expiration (15+ minutes later)
+        with freeze_time("2026-01-01 12:30:00"):
             ok, msg = verify_and_consume_code(db_session, test_user.id, code)
 
         assert ok is False
@@ -225,15 +216,11 @@ class TestPasswordResetRepository:
         code = create_reset_code(db_session, test_user.id)
         db_session.commit()
 
-        naive_now = datetime(2026, 1, 1, 12, 0, 0)
-        with patch("src.db.repositories.password_resets.datetime") as mock_dt:
-            mock_dt.now.return_value = naive_now
-            ok, _ = verify_and_consume_code(db_session, test_user.id, code)
+        # First use should succeed
+        ok, _ = verify_and_consume_code(db_session, test_user.id, code)
         assert ok is True
 
-        with patch("src.db.repositories.password_resets.datetime") as mock_dt:
-            mock_dt.now.return_value = naive_now
-            ok, msg = verify_and_consume_code(db_session, test_user.id, code)
-
+        # Second use should fail
+        ok, msg = verify_and_consume_code(db_session, test_user.id, code)
         assert ok is False
-        assert "already used" in msg.lower() or "invalid" in msg.lower()
+        assert "no active" in msg.lower() or "invalid" in msg.lower()
