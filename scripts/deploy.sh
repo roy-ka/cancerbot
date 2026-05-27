@@ -108,6 +108,9 @@ if [ -n "$NLP_IMAGE" ]; then
   echo "✓ Saved NLP image: $NLP_IMAGE_TAG"
 fi
 
+# Initialize backup file variable (may remain empty if not created)
+BACKUP_FILE=""
+
 # Rollback function
 rollback() {
   local exit_code=$?
@@ -161,13 +164,13 @@ rollback() {
     echo ""
     echo "Rollback complete. Check log for details: $LOG_FILE"
   else
-    echo "✗ No backup file found - cannot restore database"
+    echo "⚠ No backup file available - database not restored"
   fi
 
   exit $exit_code
 }
 
-# Set trap for errors (after we have the backup)
+# Set trap for errors
 trap rollback ERR
 
 # Pull latest code
@@ -181,18 +184,6 @@ else
   exit 1
 fi
 
-# Create database backup
-echo ""
-echo "Creating PostgreSQL backup..."
-BACKUP_FILE="$PROJECT_DIR/backups/backup_$TIMESTAMP.sql"
-if docker exec cancerbot-postgres pg_dump -U cancerbot cancerbot > "$BACKUP_FILE"; then
-  BACKUP_SIZE=$(du -h "$BACKUP_FILE" | cut -f1)
-  echo "✓ Database backup created: $BACKUP_FILE ($BACKUP_SIZE)"
-else
-  echo "✗ Database backup failed"
-  exit 1
-fi
-
 # Build Docker images
 echo ""
 echo "Building Docker images..."
@@ -200,6 +191,62 @@ if docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot build; then
   echo "✓ Docker images built successfully"
 else
   echo "✗ Docker build failed"
+  exit 1
+fi
+
+# Conditional database backup - only if postgres is running
+echo ""
+if docker ps --format '{{.Names}}' | grep -q 'cancerbot-postgres'; then
+  echo "Creating PostgreSQL backup..."
+  BACKUP_FILE="$PROJECT_DIR/backups/backup_$TIMESTAMP.sql"
+  if docker exec cancerbot-postgres pg_dump -U cancerbot cancerbot > "$BACKUP_FILE"; then
+    BACKUP_SIZE=$(du -h "$BACKUP_FILE" | cut -f1)
+    echo "✓ Database backup created: $BACKUP_FILE ($BACKUP_SIZE)"
+  else
+    echo "✗ Database backup failed"
+    exit 1
+  fi
+else
+  echo "⚠ Warning: postgres not running, skipping backup"
+  BACKUP_FILE=""
+fi
+
+# Stop and remove existing containers
+echo ""
+echo "Stopping and removing existing containers..."
+if docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot down --remove-orphans; then
+  echo "✓ Containers stopped and removed"
+else
+  echo "✗ Failed to stop containers"
+  exit 1
+fi
+
+# Start services
+echo ""
+echo "Starting services..."
+if docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot up -d; then
+  echo "✓ Services started"
+else
+  echo "✗ Failed to start services"
+  exit 1
+fi
+
+# Wait for PostgreSQL to be healthy before running migrations
+echo ""
+echo "Waiting for PostgreSQL to be ready (up to 60 seconds)..."
+POSTGRES_READY=false
+for i in $(seq 1 30); do
+  if docker exec cancerbot-postgres pg_isready -U cancerbot -d cancerbot &>/dev/null; then
+    POSTGRES_READY=true
+    echo "✓ PostgreSQL is ready (attempt $i/30)"
+    break
+  fi
+  echo "  Attempt $i/30 - PostgreSQL not ready, waiting..."
+  sleep 2
+done
+
+if [ "$POSTGRES_READY" = false ]; then
+  echo "✗ PostgreSQL failed to become ready after 60 seconds"
   exit 1
 fi
 
@@ -222,22 +269,11 @@ else
   exit 1
 fi
 
-# Restart services
+# Fix iptables rules for Docker-host connectivity (after 10 second sleep)
 echo ""
-echo "Restarting Docker services..."
-if docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot down --remove-orphans && \
-   docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot up -d; then
-  echo "✓ Services restarted"
-else
-  echo "✗ Failed to restart services"
-  exit 1
-fi
-
-# Fix iptables rules for Docker-host connectivity
-echo ""
-echo "Fixing iptables rules for Docker-host connectivity..."
+echo "Waiting 10 seconds for Docker networks to fully initialize..."
 sleep 10
-echo "Waiting for Docker networks to fully initialize..."
+echo "Fixing iptables rules for Docker-host connectivity..."
 if sudo "$SCRIPT_DIR/fix-iptables.sh"; then
   echo "✓ iptables rules applied successfully"
 else
