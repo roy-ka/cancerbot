@@ -98,6 +98,11 @@ services:
     depends_on:
       - postgres
       - cancerbot-nlp
+    healthcheck:
+      test: ['CMD-SHELL', 'curl -sf http://172.17.0.1:11434/api/tags || exit 1']
+      interval: 10s
+      timeout: 5s
+      retries: 3
     networks:
       - osnet
 

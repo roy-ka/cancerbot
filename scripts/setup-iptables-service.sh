@@ -33,6 +33,7 @@ Requires=docker.service
 
 [Service]
 Type=oneshot
+ExecStartPre=/bin/sleep 15
 ExecStart=SCRIPT_PATH
 RemainAfterExit=yes
 

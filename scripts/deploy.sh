@@ -232,6 +232,17 @@ else
   exit 1
 fi
 
+# Fix iptables rules for Docker-host connectivity
+echo ""
+echo "Fixing iptables rules for Docker-host connectivity..."
+sleep 10
+echo "Waiting for Docker networks to fully initialize..."
+if sudo "$SCRIPT_DIR/fix-iptables.sh"; then
+  echo "✓ iptables rules applied successfully"
+else
+  echo "⚠ Warning: iptables fix failed (this may affect Ollama connectivity)"
+fi
+
 # Health check loop
 echo ""
 echo "Running health checks (up to 30 attempts, 5 seconds apart)..."
