@@ -204,7 +204,7 @@ else
 fi
 
 # Extract POSTGRES_PASSWORD from .env
-POSTGRES_PASSWORD=$(grep -E '^POSTGRES_PASSWORD=' "$PROJECT_DIR/.env" | cut -d'=' -f2-)
+POSTGRES_PASSWORD=$(grep -E '^POSTGRES_PASSWORD=' "$PROJECT_DIR/.env" | cut -d'=' -f2- | tr -d "'\"")
 
 # Run Alembic migrations
 echo ""
