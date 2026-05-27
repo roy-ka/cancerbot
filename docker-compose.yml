@@ -1,0 +1,111 @@
+services:
+  opensearch-node1:
+    image: opensearchproject/opensearch:3
+    container_name: opensearch-node1
+    environment:
+      - cluster.name=opensearch-cluster
+      - node.name=opensearch-node1
+      - node.roles=cluster_manager,data,ingest
+      - discovery.seed_hosts=opensearch-node1,opensearch-node2
+      - cluster.initial_cluster_manager_nodes=opensearch-node1,opensearch-node2
+      - OPENSEARCH_INITIAL_ADMIN_PASSWORD=${OPENSEARCH_INITIAL_ADMIN_PASSWORD}
+      - bootstrap.memory_lock=true
+      - OPENSEARCH_JAVA_OPTS=-Xms2g -Xmx2g
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      nofile: { soft: 65536, hard: 65536 }
+    ports:
+      - '9200:9200'
+      - '9600:9600'
+    volumes:
+      - os-data1:/usr/share/opensearch/data
+    networks: [osnet]
+
+  opensearch-node2:
+    image: opensearchproject/opensearch:3
+    container_name: opensearch-node2
+    environment:
+      - cluster.name=opensearch-cluster
+      - node.name=opensearch-node2
+      - node.roles=cluster_manager,data,ingest
+      - discovery.seed_hosts=opensearch-node1,opensearch-node2
+      - cluster.initial_cluster_manager_nodes=opensearch-node1,opensearch-node2
+      - OPENSEARCH_INITIAL_ADMIN_PASSWORD=${OPENSEARCH_INITIAL_ADMIN_PASSWORD}
+      - bootstrap.memory_lock=true
+      - OPENSEARCH_JAVA_OPTS=-Xms2g -Xmx2g
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      nofile: { soft: 65536, hard: 65536 }
+    volumes:
+      - os-data2:/usr/share/opensearch/data
+    networks: [osnet]
+
+  dashboards:
+    image: opensearchproject/opensearch-dashboards:3
+    container_name: opensearch-dashboards
+    environment:
+      - OPENSEARCH_HOSTS=["https://opensearch-node1:9200"]
+    ports:
+      - '5601:5601'
+    depends_on:
+      - opensearch-node1
+      - opensearch-node2
+    networks: [osnet]
+
+  # ollama runs natively on Mac for Metal (GPU) acceleration — not in Docker
+  # brew install ollama && ollama serve
+
+  postgres:
+    image: postgres:16
+    container_name: cancerbot-postgres
+    environment:
+      POSTGRES_DB: cancerbot
+      POSTGRES_USER: cancerbot
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - '5432:5432'
+    volumes:
+      - cancerbot_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U cancerbot -d cancerbot']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [osnet]
+
+  cancerbot-nlp:
+    build:
+      context: ./nlp_service
+      dockerfile: Dockerfile
+    image: cancerbot-nlp:latest
+    container_name: cancerbot-nlp
+    environment:
+      NLP_DATABASE_URL: ${NLP_DATABASE_URL}
+    ports:
+      - '8011:8011'
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [osnet]
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file: .env
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgres
+      - cancerbot-nlp
+    networks:
+      - osnet
+
+volumes:
+  os-data1:
+  os-data2:
+  cancerbot_pgdata:
+
+networks:
+  osnet:
+    driver: bridge
