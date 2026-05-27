@@ -225,7 +225,8 @@ fi
 # Restart services
 echo ""
 echo "Restarting Docker services..."
-if docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot up -d --force-recreate; then
+if docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot down --remove-orphans && \
+   docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot up -d; then
   echo "✓ Services restarted"
 else
   echo "✗ Failed to restart services"
