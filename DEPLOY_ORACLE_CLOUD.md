@@ -1,428 +1,292 @@
-# Deploying CancerBot to Oracle Cloud (Free Tier)
+# CancerBot Deployment Guide - Oracle Cloud Ubuntu
 
-Oracle Cloud free tier gives you:
-- 2x Ampere A1 Compute instances (4 OCPUs, 24GB RAM, ARM-based)
-- 200GB block storage
-- Object Storage (S3-compatible)
-- Always free (no expiration)
+This guide covers deploying CancerBot to an Oracle Cloud Ubuntu instance with Docker, including setup for persistent iptables rules to maintain Docker-host connectivity.
 
-## 1. Create Compute Instance
+## Prerequisites
 
-**From Oracle Cloud Console:**
-1. Navigate to Compute → Instances
-2. Click "Create Instance"
-3. Name: `cancerbot`
-4. Image & Shape:
-   - Image: Ubuntu 24.04 LTS (Canonical)
-   - Shape: Ampere (Always Free eligible)
-   - OCPU: 4, Memory: 24GB
-5. Networking:
-   - Create new VCN or use existing
-   - Assign public IP: Yes
-6. SSH Key:
-   - Download/use your SSH key
-7. Click Create
+- Oracle Cloud Ubuntu instance (20.04 LTS or later)
+- Docker and Docker Compose installed
+- Python 3.12+
+- Git
+- 4GB+ RAM, 20GB+ disk space
 
-**Wait ~5 minutes for instance to start**
+## Initial Server Setup
 
-## 2. Configure Network Security
-
-**From VCN → Security Lists:**
-1. Add Ingress Rules:
-   - Port 22 (SSH): Your IP only
-   - Port 80 (HTTP): 0.0.0.0/0
-   - Port 443 (HTTPS): 0.0.0.0/0
-   - Port 8000 (backend): 0.0.0.0/0 (optional, for testing)
-
-## 3. SSH In
+### 1. Clone the repository
 
 ```bash
-ssh -i your-key.pem ubuntu@your-instance-public-ip
+git clone https://github.com/roy-ka/cancerbot-private.git
+cd cancerbot-private
 ```
 
-## 4. Install Docker
+### 2. Configure environment variables
 
 ```bash
-sudo apt update && sudo apt install -y docker.io docker-compose
-
-sudo usermod -aG docker $USER
-# Log out and back in
-
-docker --version
-```
-
-## 5. Clone & Configure
-
-```bash
-cd /opt
-sudo git clone https://github.com/YOUR_REPO/cancerbot.git
-cd cancerbot
-sudo chown -R $USER:$USER .
-
 cp .env.example .env
+# Edit .env with your values
 nano .env
 ```
 
-**Key differences for Oracle Cloud:**
+Key variables:
+- `OPENSEARCH_INITIAL_ADMIN_PASSWORD` — OpenSearch admin password
+- `POSTGRES_PASSWORD` — PostgreSQL password
+- `OLLAMA_URL` — Points to Ollama running on host (e.g., http://localhost:11434)
+- `JWT_SECRET` — Session secret
+- Other API keys and settings as needed
+
+### 3. Install Ollama on host
+
+Ollama runs on the host (not in Docker) for GPU acceleration:
 
 ```bash
-# Database
-POSTGRES_PASSWORD=<generate-strong-password>
-POSTGRES_URL=postgresql+asyncpg://cancerbot:PASSWORD@postgres:5432/cancerbot
+# On Ubuntu, follow: https://github.com/ollama/ollama/blob/main/README.md
+curl -fsSL https://ollama.ai/install.sh | sh
 
-# JWT
-JWT_SECRET=<python3 -c "import secrets; print(secrets.token_urlsafe(32))">
+# Pull a model
+ollama pull llama3.1:8b
+ollama pull nomic-embed-text
 
-# CORS
-CORS_ORIGINS=https://your-domain.com
-
-# Services (same as Docker Compose)
-OLLAMA_URL=http://ollama:11434
-NLP_URL=http://nlp_service:8011
-OPENSEARCH_URL=https://opensearch:9200
-OPENSEARCH_INITIAL_ADMIN_PASSWORD=<strong-password>
-
-# SMTP
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
-SMTP_USER=your-gmail@gmail.com
-SMTP_PASSWORD=<app-password>
-SMTP_FROM=noreply@your-domain.com
-
-# Object Storage (instead of S3)
-BACKUP_OBJECT_STORAGE_BUCKET=cancerbot-backups
-BACKUP_OBJECT_STORAGE_NAMESPACE=<your-namespace>
-BACKUP_OBJECT_STORAGE_REGION=<region-code>
-
-ENV=production
+# Start Ollama service
+systemctl start ollama
+systemctl enable ollama
 ```
 
-**Get namespace & region:**
+Verify Ollama is accessible from the Docker network:
 ```bash
-# From Oracle Cloud Console:
-# 1. Object Storage → Buckets (note the "Namespace")
-# 2. Top right corner shows region code (e.g., us-phoenix-1)
+curl http://localhost:11434/api/tags
 ```
 
-## 6. Docker Compose (Oracle-specific)
+## Docker Deployment
 
-Create `docker-compose.yml`:
-
-```yaml
-version: '3.8'
-
-services:
-  postgres:
-    image: postgres:16
-    environment:
-      POSTGRES_USER: cancerbot
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: cancerbot
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
-    healthcheck:
-      test: ["CMD", "pg_isready", "-U", "cancerbot"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  opensearch:
-    image: opensearchproject/opensearch:latest
-    environment:
-      - discovery.type=single-node
-      - OPENSEARCH_INITIAL_ADMIN_PASSWORD=${OPENSEARCH_INITIAL_ADMIN_PASSWORD}
-      - OPENSEARCH_JAVA_OPTS=-Xms256m -Xmx256m
-    volumes:
-      - opensearch_data:/usr/share/opensearch/data
-    ports:
-      - "9200:9200"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "-u", "admin:${OPENSEARCH_INITIAL_ADMIN_PASSWORD}", "http://localhost:9200"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  ollama:
-    image: ollama/ollama:latest
-    volumes:
-      - ollama_data:/root/.ollama
-    ports:
-      - "11434:11434"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  nlp_service:
-    build:
-      context: ./nlp_service
-      dockerfile: Dockerfile
-    environment:
-      NLP_DATABASE_URL: ${NLP_DATABASE_URL}
-    depends_on:
-      postgres:
-        condition: service_healthy
-    ports:
-      - "8011:8011"
-
-  backend:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    environment:
-      POSTGRES_URL: ${POSTGRES_URL}
-      OPENSEARCH_URL: ${OPENSEARCH_URL}
-      OPENSEARCH_INITIAL_ADMIN_PASSWORD: ${OPENSEARCH_INITIAL_ADMIN_PASSWORD}
-      OLLAMA_URL: ${OLLAMA_URL}
-      NLP_URL: ${NLP_URL}
-      JWT_SECRET: ${JWT_SECRET}
-      CORS_ORIGINS: ${CORS_ORIGINS}
-      SMTP_HOST: ${SMTP_HOST}
-      SMTP_PORT: ${SMTP_PORT}
-      SMTP_USER: ${SMTP_USER}
-      SMTP_PASSWORD: ${SMTP_PASSWORD}
-      SMTP_FROM: ${SMTP_FROM}
-      ENV: ${ENV}
-    ports:
-      - "8000:8000"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      opensearch:
-        condition: service_healthy
-      ollama:
-        condition: service_healthy
-    command: uvicorn src.main:app --host 0.0.0.0 --port 8000
-
-volumes:
-  postgres_data:
-  opensearch_data:
-  ollama_data:
-```
-
-## 7. Create Dockerfile for Backend
-
-Create `Dockerfile`:
-
-```dockerfile
-FROM python:3.11-slim
-
-WORKDIR /app
-
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY . .
-
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
-```
-
-## 8. Set Up Object Storage Backups
-
-**Create bucket in Oracle Cloud Console:**
-1. Object Storage → Buckets
-2. Click "Create Bucket"
-3. Name: `cancerbot-backups`
-4. Standard tier
-5. Click Create
-
-**Create API key for backups:**
-1. Profile → My Profile
-2. API Keys → Add API Key
-3. Download `.pem` file
-4. Note the fingerprint and OCID
-
-**Install OCI SDK:**
-```bash
-pip3 install oci
-
-# Create ~/.oci/config (Oracle CLI config)
-cat > ~/.oci/config << EOF
-[DEFAULT]
-user=<your-user-ocid>
-fingerprint=<api-key-fingerprint>
-key_file=~/.oci/your_api_key.pem
-tenancy=<your-tenancy-ocid>
-region=<region-code>
-EOF
-
-chmod 600 ~/.oci/config
-cp your_api_key.pem ~/.oci/
-```
-
-**Update backup script for Oracle Object Storage:**
-
-Create `scripts/backup_db_oracle.py`:
-
-```python
-#!/usr/bin/env python3
-import subprocess
-import os
-from pathlib import Path
-from datetime import datetime
-import oci
-
-def backup_to_file(output_path: Path):
-    """Dump database to SQL file."""
-    db_url = os.getenv("POSTGRES_URL")
-    # Parse URL... (same as before)
-    
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    
-    cmd = [
-        "pg_dump",
-        "--format=custom",
-        db_url.replace("postgresql+asyncpg://", "postgresql://"),
-    ]
-    
-    subprocess.run(cmd, stdout=open(output_path, 'wb'), check=True)
-    print(f"✓ Backup saved: {output_path}")
-    return output_path
-
-def backup_to_oracle_storage(local_path: Path):
-    """Upload backup to Oracle Object Storage."""
-    config = oci.config.from_file("~/.oci/config")
-    object_storage = oci.object_storage.ObjectStorageClient(config)
-    
-    bucket = os.getenv("BACKUP_OBJECT_STORAGE_BUCKET")
-    namespace = os.getenv("BACKUP_OBJECT_STORAGE_NAMESPACE")
-    
-    with open(local_path, 'rb') as f:
-        object_storage.put_object(
-            namespace_name=namespace,
-            bucket_name=bucket,
-            object_name=local_path.name,
-            put_object_body=f,
-        )
-    
-    print(f"✓ Uploaded to Oracle Object Storage: {bucket}/{local_path.name}")
-
-if __name__ == "__main__":
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    backup_path = Path("backups") / f"cancerbot_{timestamp}.dump"
-    
-    backup_to_file(backup_path)
-    backup_to_oracle_storage(backup_path)
-```
-
-## 9. Deploy
+### 1. Build and start services
 
 ```bash
-# Build containers (first time)
-docker-compose build
+docker compose build
+docker compose up -d
+```
 
-# Run migrations
-docker-compose run backend alembic upgrade head
+Verify services are running:
+```bash
+docker compose ps
+```
 
-# Start all services
-docker-compose up -d
+### 2. Run database migrations
 
-# Check status
-docker-compose logs -f backend
+```bash
+docker run --rm \
+  --network cancerbot_osnet \
+  --env-file .env \
+  -v $(pwd):/app -w /app \
+  python:3.12-slim bash -c \
+  "pip install -q alembic psycopg2-binary sqlalchemy python-dotenv && alembic upgrade head"
+```
+
+### 3. Test health endpoints
+
+```bash
+# Backend health check
 curl http://localhost:8000/health/
+
+# Expected response:
+# {"status":"ok","checks":{"database":"ok","ollama":"ok"}}
 ```
 
-## 10. Set Up Nginx + HTTPS
+## Docker-to-Host Connectivity (Iptables Fix)
+
+### The Problem
+
+When Docker restarts, it recreates network bridges and iptables rules are lost, breaking connectivity between Docker containers and the host (where Ollama runs). This causes the health check to fail and chat to fail with "Ollama unavailable" errors.
+
+### The Solution
+
+A systemd service automatically applies and persists iptables rules after Docker restarts.
+
+### Setup (One-time, requires sudo)
 
 ```bash
-sudo apt install -y nginx certbot python3-certbot-nginx
+# Make scripts executable
+chmod +x scripts/fix-iptables.sh scripts/setup-iptables-service.sh
 
-sudo certbot certonly --standalone -d your-domain.com
+# Run setup as root (this creates and enables the systemd service)
+sudo ./scripts/setup-iptables-service.sh
 ```
 
-**Create `/etc/nginx/sites-available/cancerbot`:**
+What this does:
+1. Creates `/etc/systemd/system/iptables-docker.service` systemd unit
+2. Enables the service to run on every boot after Docker starts
+3. Immediately applies iptables rules so containers can reach the host
+4. Saves rules persistently with netfilter-persistent
 
+### Verify the service
+
+```bash
+# Check service status
+sudo systemctl status iptables-docker.service
+
+# View service logs
+sudo journalctl -u iptables-docker.service -n 20
+
+# Manually re-apply rules if needed
+sudo ./scripts/fix-iptables.sh
+```
+
+### What the scripts do
+
+**fix-iptables.sh:**
+- Adds `iptables -I INPUT -i docker0 -j ACCEPT` (allow docker0 bridge)
+- Adds `iptables -I INPUT -i br-<osnet> -j ACCEPT` (allow OpenSearch network)
+- Saves rules with `netfilter-persistent save` for persistence across reboots
+
+**setup-iptables-service.sh:**
+- Creates systemd service that runs fix-iptables.sh after Docker starts
+- Enables service for auto-run on every boot
+- Starts the service immediately
+
+## Using the Deploy Script
+
+After the initial setup, use the deploy script for subsequent deployments:
+
+```bash
+# Interactive deploy (asks for confirmation)
+./scripts/deploy.sh
+
+# Automated deploy (skips confirmation)
+./scripts/deploy.sh --force
+```
+
+The deploy script:
+- Pulls latest code from git
+- Creates PostgreSQL backup
+- Builds Docker images
+- Runs Alembic migrations
+- Restarts services with `--force-recreate`
+- Verifies health checks (30 retries × 5 seconds)
+- Auto-rollback on failure with database restore
+
+Deploy logs are saved to `logs/deploy_TIMESTAMP.log`
+
+## Nginx Reverse Proxy Setup
+
+Setup Nginx as a reverse proxy to expose the FastAPI backend on port 80/443:
+
+```bash
+sudo apt-get install -y nginx
+
+# Create /etc/nginx/sites-available/cancerbot
+sudo nano /etc/nginx/sites-available/cancerbot
+```
+
+Example configuration:
 ```nginx
 server {
-  listen 80;
-  server_name your-domain.com;
-  return 301 https://$server_name$request_uri;
-}
+    listen 80;
+    server_name your-domain.com;
 
-server {
-  listen 443 ssl http2;
-  server_name your-domain.com;
-
-  ssl_certificate /etc/letsencrypt/live/your-domain.com/fullchain.pem;
-  ssl_certificate_key /etc/letsencrypt/live/your-domain.com/privkey.pem;
-
-  location / {
-    proxy_pass http://localhost:8000;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection "upgrade";
-  }
+    location / {
+        proxy_pass http://localhost:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
 }
 ```
 
-Enable:
+Enable the site:
 ```bash
 sudo ln -s /etc/nginx/sites-available/cancerbot /etc/nginx/sites-enabled/
 sudo nginx -t
 sudo systemctl restart nginx
-sudo systemctl enable nginx
 ```
 
-## 11. Monitor & Maintain
+## Database Backups
 
-**Check backups:**
+Backups are created automatically before each deploy. Manual backup:
+
 ```bash
-python3 scripts/backup_db_oracle.py
+docker exec cancerbot-postgres pg_dump -U cancerbot cancerbot > backups/backup_manual_$(date +%Y%m%d_%H%M%S).sql
 ```
 
-**View logs:**
+Restore from backup:
 ```bash
-docker-compose logs -f
+cat backups/backup_TIMESTAMP.sql | docker exec -i cancerbot-postgres psql -U cancerbot cancerbot
 ```
 
-**Restart services:**
+## Monitoring
+
+### View logs
+
 ```bash
-docker-compose restart
+# Backend logs
+docker logs cancerbot-backend-1 --follow
+
+# NLP service logs
+docker logs cancerbot-nlp --follow
+
+# OpenSearch logs
+docker logs opensearch-node1 --follow
+
+# PostgreSQL logs
+docker logs cancerbot-postgres --follow
 ```
 
-**Health check:**
+### Check container status
+
 ```bash
-curl https://your-domain.com/health/
+docker compose ps
+docker compose stats
 ```
 
-## Cost (Always Free)
+### Health endpoints
 
-- 2 Ampere instances: Free
-- 200GB block storage: Free
-- Object Storage: 20GB free/month (backups are small)
-- Total: **$0/month** (if under free tier limits)
+- Backend: `GET http://localhost:8000/health/`
+- OpenSearch: `GET https://localhost:9200/_cluster/health` (with auth)
+- PostgreSQL: `docker exec cancerbot-postgres pg_isready -U cancerbot`
 
 ## Troubleshooting
 
-**ARM architecture issues:**
-If a Docker image doesn't support ARM (unlikely for standard images):
+### Containers can't reach Ollama
+
+**Symptom:** Health check fails, "Ollama unavailable" in chat
+
+**Solution:**
+1. Verify Ollama is running: `curl http://localhost:11434/api/tags`
+2. Check iptables service: `sudo systemctl status iptables-docker.service`
+3. Manually apply rules: `sudo ./scripts/fix-iptables.sh`
+4. Verify connectivity from container: `docker exec cancerbot-backend-1 curl http://host.docker.internal:11434/api/tags`
+
+### Database connection errors
+
+**Solution:**
+1. Verify PostgreSQL is running: `docker compose ps`
+2. Check `.env` has correct `POSTGRES_PASSWORD`
+3. Verify health check: `docker exec cancerbot-postgres pg_isready -U cancerbot`
+
+### OpenSearch cluster issues
+
+**Solution:**
 ```bash
-# Force x86 emulation (slower but works)
-docker run --platform linux/amd64 image:tag
+# Check cluster status
+docker exec opensearch-node1 curl -u admin:PASSWORD -k https://localhost:9200/_cluster/health
+
+# Restart cluster
+docker compose restart opensearch-node1 opensearch-node2
 ```
 
-**Out of memory:**
-```bash
-# Check memory
-free -h
+## Security Notes
 
-# Reduce Java heap for OpenSearch
-OPENSEARCH_JAVA_OPTS=-Xms128m -Xmx128m
-```
+- `.env` files are gitignored and never committed
+- Secrets (passwords, API keys) are loaded from `.env` at runtime
+- All connections between services use Docker network isolation
+- OpenSearch requires authentication for all APIs
+- PostgreSQL is not exposed outside the Docker network
 
-**Disk full:**
-```bash
-df -h
-du -sh /opt/cancerbot/
+## Additional Resources
 
-# Clean up old Docker images
-docker image prune -a
-```
+- [CancerBot CLAUDE.md](CLAUDE.md) — Development guide and architecture
+- [FastAPI Docs](https://fastapi.tiangolo.com/) — Backend framework
+- [Docker Compose Docs](https://docs.docker.com/compose/) — Container orchestration
+- [OpenSearch Docs](https://opensearch.org/docs/) — Vector search
