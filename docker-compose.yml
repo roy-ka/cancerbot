@@ -88,6 +88,19 @@ services:
         condition: service_healthy
     networks: [osnet]
 
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file: .env
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgres
+      - cancerbot-nlp
+    networks:
+      - osnet
+
 volumes:
   os-data1:
   os-data2:
