@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # CancerBot
 
 A Retrieval-Augmented Generation (RAG) chatbot for cancer-related medical information. Answers are grounded in a curated corpus of medical claims and source documents, with citations traced back to PubMed articles and structured protocol claims.
@@ -133,3 +134,8 @@ python -m src.embedding
 Canonical data files live in `data/`:
 - `sources_canonical.jsonl` — deduplicated source documents
 - `claims_canonical.jsonl` — structured protocol claims
+=======
+# cancerbot
+chatbot for metabolic understanding of cancer
+🚧 still under constraction 🚧
+>>>>>>> main
