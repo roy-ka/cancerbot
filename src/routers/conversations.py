@@ -7,9 +7,11 @@ import logging
 from pydantic import BaseModel
 from src.db.repositories.conversations import (
     get_conversation_by_id,
+    get_conversation_by_id_no_auth,
     get_conversations_list_by_user_id,
     create_conversation,
     format_last_msg_time,
+    soft_delete_conversation,
 )
 from src.db.repositories.messeges import add_message, get_messages_by_conversation_id
 from uuid import UUID
@@ -45,8 +47,8 @@ async def get_user_conversations(
                 "id": str(conv.id),
                 "title": conv.title,
                 "updatedAt": conv.updated_at.isoformat() if conv.updated_at else None,
-                'lastMessage': conv.last_user_message.get('content'),
-                'lastMessageTime':  conv.last_user_message.get('created_at')
+                'lastMessage': conv.last_user_message.get('content') if conv.last_user_message else None,
+                'lastMessageTime': conv.last_user_message.get('created_at') if conv.last_user_message else None
             }
             for conv in conversations
         ]
@@ -126,16 +128,12 @@ async def post_message(
     current_user = Depends(get_current_user),
     conversation=None,
 ):
-    conversation = conversation or get_conversation_by_id(
-        db=db,
-        conversation_id=conversation_id,
-        current_user=current_user,
-    )
     if conversation is None:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-    # Enforce ownership
-    if str(conversation.user_id) != str(current_user.id):
-        raise HTTPException(status_code=403, detail="Forbidden")
+        conversation = get_conversation_by_id_no_auth(db=db, conversation_id=conversation_id)
+        if conversation is None:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        if str(conversation.user_id) != str(current_user.id):
+            raise HTTPException(status_code=403, detail="Forbidden")
 
     try:
         user_message = add_message(
@@ -188,7 +186,7 @@ async def post_message(
         }
 
 @router.post("/new")
-async def new_conversation(    
+async def new_conversation(
     req: Message,
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user),
@@ -201,3 +199,15 @@ async def new_conversation(
         current_user=current_user,
         conversation=conversation,
     )
+
+
+@router.delete("/{conversation_id}")
+async def delete_conversation(
+    conversation_id: UUID,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    success = soft_delete_conversation(db=db, conversation_id=conversation_id, user_id=current_user.id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return {"ok": True}

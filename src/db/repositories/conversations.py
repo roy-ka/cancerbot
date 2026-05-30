@@ -50,10 +50,19 @@ def get_conversation_by_id(db, current_user, conversation_id):
   return conversation
 
 
+def get_conversation_by_id_no_auth(db, conversation_id):
+  stmt = select(Conversation).where(
+    Conversation.id == conversation_id,
+    Conversation.deleted_at.is_(None),
+  )
+  return db.scalars(stmt).one_or_none()
+
+
 def soft_delete_conversation(db, conversation_id, user_id):
   stmt = select(Conversation).where(
     Conversation.id == conversation_id,
     Conversation.user_id == user_id,
+    Conversation.deleted_at.is_(None),
   )
   conversation = db.scalars(stmt).one_or_none()
   if conversation is None:
@@ -83,8 +92,8 @@ def get_conversations_list_by_user_id(db, user_id, limit=10):
       Conversation.user_id == user_id,
       Conversation.deleted_at.is_(None),
     )
-    .join(last_user_ts_sq, last_user_ts_sq.c.conversation_id == Conversation.id)
-    .join(
+    .outerjoin(last_user_ts_sq, last_user_ts_sq.c.conversation_id == Conversation.id)
+    .outerjoin(
       LastMsg,
       and_(
         LastMsg.conversation_id == Conversation.id,
