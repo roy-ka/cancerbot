@@ -13,6 +13,7 @@ export default function Chat() {
   const [isLoadingOlder, setIsLoadingOlder] = useState(false)
   const [selectedConversationId, setSelectedConversationId] =
     useState<string>('new')
+  const [inputValue, setInputValue] = useState<string>('')
 
   const textToMessage = (text: string): Message => ({
     id: `temp-${Date.now()}`,
@@ -140,16 +141,16 @@ export default function Chat() {
     }
   }, [BASE_URL, selectedConversationId, nextBefore, isLoadingOlder])
 
-  const onMessageSubmit = (e: React.SubmitEvent) => {
+  const onMessageSubmit = (e: React.SubmitEvent<HTMLFormElement>) => {
     e.preventDefault()
-    const form = e.currentTarget
-    const messageText = form && form.input ? form.input.value.trim() : ''
+    const messageText = inputValue.trim()
     if (!messageText) return
 
     const optimisticMessage = textToMessage(messageText)
 
     // Add optimistic message immediately (functional update avoids stale state)
     setMessages((prev) => [...prev, optimisticMessage])
+    setInputValue('')
     const url = `${import.meta.env.VITE_BASE_URL}/conversations/${selectedConversationId === 'new' ? 'new' : `${selectedConversationId}/add_message`}`
 
     fetch(url, {
@@ -196,7 +197,11 @@ export default function Chat() {
             />
           </Box>
           <Box className="chat-input">
-            <InputField onSubmit={onMessageSubmit} />
+            <InputField
+              onSubmit={onMessageSubmit}
+              value={inputValue}
+              onChange={setInputValue}
+            />
           </Box>
         </Grid>
       </Grid>

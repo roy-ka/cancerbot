@@ -15,13 +15,11 @@ export default function ConversationList({
   conversations,
   selectedConversationId,
   setSelectedConversationId,
-  onDeleteConversation,
   onLogout,
 }: {
   conversations?: Conversation[]
   selectedConversationId?: string
   setSelectedConversationId: React.Dispatch<React.SetStateAction<string>>
-  onDeleteConversation?: (id: string) => void
   onLogout?: () => void
 }) {
   const onclick = (id: string) => {
@@ -56,7 +54,6 @@ export default function ConversationList({
             conversation={conv}
             selected={selectedConversationId === conv.id}
             onClick={() => onclick(conv.id)}
-            onDelete={onDeleteConversation}
           />
         ))}
     </Box>
