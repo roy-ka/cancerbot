@@ -15,6 +15,7 @@ jobs:
       EMBED_MODEL_NAME: nomic-embed-text
       ENV: test
       SENDGRID_API_KEY: ""
+      PYTHONPATH: ${{ github.workspace }}
 
     steps:
       - uses: actions/checkout@v4
