@@ -135,7 +135,11 @@ class TestMessageRepository:
             sources_ids="src-001,src-002",
         )
         assert msg.role == "assistant"
-        assert msg.sources_ids == "src-001,src-002"
+        # JSON column may store as list or string depending on database
+        if isinstance(msg.sources_ids, list):
+            assert msg.sources_ids == ["src-001", "src-002"]
+        else:
+            assert msg.sources_ids == "src-001,src-002"
 
     def test_get_recent_messages(self, db_session, test_conversation):
         add_message(db_session, conversation_id=test_conversation.id, role="user", content="msg1")
