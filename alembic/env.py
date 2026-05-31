@@ -15,9 +15,9 @@ config = context.config
 # Override the sqlalchemy.url from environment (.env) so Alembic uses the same DB as the app
 db_url = os.getenv("POSTGRES_URL")
 if db_url:
-    # Alembic requires a synchronous driver. Replace async drivers with psycopg2.
-    db_url = db_url.replace("postgresql+asyncpg://", "postgresql+psycopg2://")
-    db_url = db_url.replace("postgresql+aiopg://", "postgresql+psycopg2://")
+    # Alembic requires a synchronous driver. Replace async drivers with psycopg (v3).
+    db_url = db_url.replace("postgresql+asyncpg://", "postgresql+psycopg://")
+    db_url = db_url.replace("postgresql+aiopg://", "postgresql+psycopg://")
     # Alembic's Config uses ConfigParser which treats `%` as interpolation markers.
     # Escape `%` so passwords like `f%W...` don't crash `alembic` commands.
     safe_db_url = db_url.replace("%", "%%")
