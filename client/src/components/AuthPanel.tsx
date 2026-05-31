@@ -3,7 +3,7 @@ import { Box, Button, Typography } from '@mui/material'
 import LoginForm from './LoginForm'
 import RegistrationForm from './RegistrationForm'
 import ForgotPasswordForm from './ForgotPasswordForm'
-import { useNavigate } from 'react-router'
+import { useNavigate } from 'react-router-dom'
 import type { AuthButtonsProps } from '../types'
 
 function AuthButtons({ isLogin, setIsLogin }: AuthButtonsProps) {
