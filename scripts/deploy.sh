@@ -184,6 +184,25 @@ else
   exit 1
 fi
 
+# Build frontend
+echo ""
+echo "Building frontend..."
+cd "$PROJECT_DIR/client"
+if npm install; then
+  echo "✓ npm dependencies installed"
+else
+  echo "✗ npm install failed"
+  exit 1
+fi
+
+if npm run build; then
+  echo "✓ Frontend build completed"
+else
+  echo "✗ Frontend build failed"
+  exit 1
+fi
+cd "$PROJECT_DIR"
+
 # Build Docker images
 echo ""
 echo "Building Docker images..."
@@ -298,6 +317,19 @@ done
 if [ "$HEALTHY" = false ]; then
   echo "✗ Health check failed after 30 attempts"
   exit 1
+fi
+
+# Reload nginx with new frontend
+echo ""
+echo "Reloading nginx..."
+if sudo nginx -t &>/dev/null; then
+  if sudo systemctl reload nginx; then
+    echo "✓ Nginx reloaded successfully"
+  else
+    echo "⚠ Warning: Nginx reload failed (frontend may not be updated)"
+  fi
+else
+  echo "⚠ Warning: Nginx config test failed (frontend may not be updated)"
 fi
 
 # Unset error trap on success
