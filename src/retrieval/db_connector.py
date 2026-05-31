@@ -23,27 +23,51 @@ class dbConnector:
     },
   }
 
-  try:
-    host = 'localhost'
-    port = 9200
-    auth = ('admin', _PASS)
-    model = MODELS[model_name]
-    db_client = OpenSearch(
-      hosts=[{'host': host, 'port': port}],
-      http_compress=True,
-      use_ssl=True,
-      verify_certs=False,
-      ssl_assert_hostname=False,
-      ssl_show_warn=False,
-      http_auth=auth
-    )
-  except KeyError:
-    raise KeyError(f"EMBED_MODEL_NAME='{model_name}' not found in MODELS. Valid models: {list(MODELS.keys())}")
+  db_client = None
+  _initialized = False
+  _model = None
+
+  @classmethod
+  def _initialize(cls):
+    if cls._initialized:
+      return
+    cls._initialized = True
+
+    if not model_name or not cls._PASS:
+      cls.logger.warning("OpenSearch not configured (missing EMBED_MODEL_NAME or OPENSEARCH_INITIAL_ADMIN_PASSWORD)")
+      return
+
+    try:
+      if model_name not in cls.MODELS:
+        raise KeyError(f"EMBED_MODEL_NAME='{model_name}' not found in MODELS. Valid models: {list(cls.MODELS.keys())}")
+
+      cls._model = cls.MODELS[model_name]
+      host = 'localhost'
+      port = 9200
+      auth = ('admin', cls._PASS)
+      cls.db_client = OpenSearch(
+        hosts=[{'host': host, 'port': port}],
+        http_compress=True,
+        use_ssl=True,
+        verify_certs=False,
+        ssl_assert_hostname=False,
+        ssl_show_warn=False,
+        http_auth=auth
+      )
+    except KeyError as e:
+      raise KeyError(str(e))
+    except Exception as e:
+      cls.logger.warning(f"Failed to initialize OpenSearch client: {e}")
+      cls.db_client = None
+      cls._model = None
 
   @classmethod
   def index_to_db(cls, index_name, document):
+    cls._initialize()
+    if not cls.db_client:
+      raise RuntimeError("OpenSearch client not available")
     response = cls.db_client.index(
-      index=cls.model[index_name],
+      index=cls._model[index_name],
       body=document,
       refresh=True
     )
@@ -51,7 +75,11 @@ class dbConnector:
 
   @classmethod
   def create_index(cls, index_name):
-    index = cls.model[index_name]
+    cls._initialize()
+    if not cls.db_client:
+      raise RuntimeError("OpenSearch client not available")
+
+    index = cls._model[index_name]
     body = {
       'settings': {
         'index': {
@@ -93,8 +121,11 @@ class dbConnector:
 
   @classmethod
   def search(cls, index_type, body):
+    cls._initialize()
+    if not cls.db_client:
+      raise RuntimeError("OpenSearch client not available")
     res = cls.db_client.search(
-      index=cls.model[index_type],
+      index=cls._model[index_type],
       body=body
     )
     return res
@@ -104,8 +135,11 @@ class dbConnector:
     """Return the subset of `ids` that already exist in the sources index."""
     if not ids:
       return set()
+    cls._initialize()
+    if not cls.db_client:
+      return set()
     res = cls.db_client.search(
-      index=cls.model['sources_index'],
+      index=cls._model['sources_index'],
       body={
         'size': len(ids),
         '_source': ['id'],
@@ -118,9 +152,34 @@ class dbConnector:
   def get_sources_by_id(cls, ids):
     if not ids:
       return {'hits': {'hits': []}}
+    cls._initialize()
+    if not cls.db_client:
+      return {'hits': {'hits': []}}
 
     return cls.db_client.search(
-      index=cls.model['sources_index'],
+      index=cls._model['sources_index'],
+      body={
+        'size': 200,
+        '_source': True,
+        'query': {
+          'terms': {
+            'id': ids
+          }
+        }
+      }
+    )
+
+  @classmethod
+  def get_claims_and_sources_by_id(cls, ids):
+    """Get claims and sources by their IDs from both indices."""
+    if not ids:
+      return {'hits': {'hits': []}}
+    cls._initialize()
+    if not cls.db_client:
+      return {'hits': {'hits': []}}
+
+    return cls.db_client.search(
+      index=f"{cls._model['sources_index']}*",
       body={
         'size': 200,
         '_source': True,

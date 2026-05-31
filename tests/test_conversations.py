@@ -21,7 +21,12 @@ def mock_external_services(mock_retrieval):
 
 
 class TestNewConversation:
-    def test_new_conversation_creates_conversation_and_messages(self, client):
+    @patch("src.routers.conversations.run_retrieval")
+    @patch("src.routers.conversations.OllamaConnector.generate_text")
+    def test_new_conversation_creates_conversation_and_messages(self, mock_generate, mock_retrieval, client):
+        mock_retrieval.return_value = {"generation_context": "cancer info", "intent": "concept"}
+        mock_generate.return_value = "Cancer is a disease."
+
         response = client.post(
             "/conversations/new",
             json={"content": "What is cancer?"},
@@ -32,7 +37,12 @@ class TestNewConversation:
         assert "conversation" in data
         assert len(data["messages"]) == 2  # user + assistant
 
-    def test_new_conversation_returns_messages_and_metadata(self, client):
+    @patch("src.routers.conversations.run_retrieval")
+    @patch("src.routers.conversations.OllamaConnector.generate_text")
+    def test_new_conversation_returns_messages_and_metadata(self, mock_generate, mock_retrieval, client):
+        mock_retrieval.return_value = {"generation_context": "metastasis info", "intent": "concept"}
+        mock_generate.return_value = "Metastasis is cancer spread."
+
         response = client.post(
             "/conversations/new",
             json={"content": "Tell me about metastasis"},
@@ -54,7 +64,12 @@ class TestNewConversation:
         )
         assert response.status_code == 401
 
-    def test_new_conversation_empty_content_allowed(self, client):
+    @patch("src.routers.conversations.run_retrieval")
+    @patch("src.routers.conversations.OllamaConnector.generate_text")
+    def test_new_conversation_empty_content_allowed(self, mock_generate, mock_retrieval, client):
+        mock_retrieval.return_value = {"generation_context": "", "intent": "concept"}
+        mock_generate.return_value = "I need more information."
+
         response = client.post(
             "/conversations/new",
             json={"content": ""},
@@ -65,7 +80,12 @@ class TestNewConversation:
 
 
 class TestAddMessage:
-    def test_add_message_to_existing_conversation(self, client, test_conversation):
+    @patch("src.routers.conversations.run_retrieval")
+    @patch("src.routers.conversations.OllamaConnector.generate_text")
+    def test_add_message_to_existing_conversation(self, mock_generate, mock_retrieval, client, test_conversation):
+        mock_retrieval.return_value = {"generation_context": "glycolysis info", "intent": "concept"}
+        mock_generate.return_value = "Glycolysis is the breakdown of glucose."
+
         response = client.post(
             f"/conversations/{test_conversation.id}/add_message",
             json={"content": "What is glycolysis?"},
@@ -99,7 +119,12 @@ class TestAddMessage:
         )
         assert response.status_code == 403
 
-    def test_add_message_returns_conversation_metadata(self, client, test_conversation):
+    @patch("src.routers.conversations.run_retrieval")
+    @patch("src.routers.conversations.OllamaConnector.generate_text")
+    def test_add_message_returns_conversation_metadata(self, mock_generate, mock_retrieval, client, test_conversation):
+        mock_retrieval.return_value = {"generation_context": "apoptosis info", "intent": "concept"}
+        mock_generate.return_value = "Apoptosis is programmed cell death."
+
         response = client.post(
             f"/conversations/{test_conversation.id}/add_message",
             json={"content": "What is apoptosis?"},

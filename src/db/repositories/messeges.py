@@ -44,9 +44,9 @@ def add_claims_and_sources(message: Message):
   try:
     response = dbConnector.get_claims_and_sources_by_id(ids)
     results = response['hits']['hits']
-  except (AttributeError, TypeError, KeyError):
-    # dbConnector not available (e.g., in tests without OpenSearch)
-    logging.warning(f"dbConnector not available for message {message.id}")
+  except Exception:
+    # dbConnector not available or error occurred (e.g., in tests without OpenSearch)
+    logging.warning(f"Failed to retrieve claims and sources for message {message.id}")
     return
 
   claims = []
