@@ -67,9 +67,11 @@ def add_claims_and_sources(message: Message):
     elif data.get('index') == 'sources_index':
       sources.append(entry)
 
-  # Set once after processing
-  message.claims = claims
-  message.sources = sources
+  # Only set if we found something; don't overwrite with empty lists
+  if claims:
+    message.claims = claims
+  if sources:
+    message.sources = sources
 
 
 def add_message(db, conversation_id, role, content, sources_ids='', claim_ids='', intent=None):

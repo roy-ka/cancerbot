@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Box, Grid } from '@mui/material'
+import { useNavigate } from 'react-router-dom'
 import ConversationList from '../components/ConversationList'
 import MessageList from '../components/MessageList'
 import type { Conversation, Message } from '../types'
 import InputField from '../components/InputField'
 export default function Chat() {
   const BASE_URL = import.meta.env.VITE_BASE_URL
+  const navigate = useNavigate()
 
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [messages, setMessages] = useState<Message[]>([])
@@ -141,6 +143,20 @@ export default function Chat() {
     }
   }, [BASE_URL, selectedConversationId, nextBefore, isLoadingOlder])
 
+  const handleLogout = async () => {
+    try {
+      const res = await fetch('/auth/logout/', {
+        method: 'POST',
+        credentials: 'include',
+      })
+      if (!res.ok) throw new Error(await res.text())
+      localStorage.removeItem('termsAccepted')
+      navigate('/login')
+    } catch (e) {
+      console.error('logout failed:', e)
+    }
+  }
+
   const onMessageSubmit = (e: React.SubmitEvent<HTMLFormElement>) => {
     e.preventDefault()
     const messageText = inputValue.trim()
@@ -185,6 +201,7 @@ export default function Chat() {
             setSelectedConversationId={setSelectedConversationId}
             selectedConversationId={selectedConversationId}
             conversations={conversations}
+            onLogout={handleLogout}
           />
         </Grid>
         <Grid size={9} className="chat-messages">

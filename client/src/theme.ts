@@ -21,7 +21,7 @@ const commonConfig = {
     },
     MuiTextField: {
       defaultProps: {
-        variant: 'outlined',
+        variant: 'outlined' as const,
       },
     },
   },
