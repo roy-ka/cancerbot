@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Stack, TextField, FormControl, Button, Checkbox, FormControlLabel, Link, Box } from '@mui/material'
+import { Stack, TextField, FormControl, Button, Checkbox, FormControlLabel, Link, Box, Alert } from '@mui/material'
 import { Link as RouterLink } from 'react-router-dom'
 import type { RegistrationPayload } from '../types'
 
@@ -14,6 +14,7 @@ export default function RegistrationForm({
   const [passwordError, setPasswordError] = useState(false)
   const [name, setName] = useState('')
   const [termsAccepted, setTermsAccepted] = useState(false)
+  const [error, setError] = useState('')
   const BASE_URL = import.meta.env.VITE_BASE_URL
 
   const verifyEmail = (email: string) => {
@@ -35,7 +36,7 @@ export default function RegistrationForm({
     })
     if (!res.ok) {
       const err = await res.json().catch(() => null)
-      throw new Error(err?.message ?? 'Login failed')
+      throw new Error(err?.detail ?? err?.message ?? 'Registration failed')
     }
     console.log('Registration successful, redirecting to login...')
     changeToLogin()
@@ -46,12 +47,14 @@ export default function RegistrationForm({
     if (emailError || passwordError || !termsAccepted) {
       return
     }
+    setError('')
     register({ email, password, name })
       .then((res) => {
-        console.log('Login successful:', res)
+        console.log('Registration successful:', res)
       })
       .catch((err) => {
-        console.error('Login error:', err)
+        console.error('Registration error:', err)
+        setError(err.message)
       })
   }
 
@@ -73,6 +76,7 @@ export default function RegistrationForm({
 
   return (
     <Stack spacing={2} sx={{ width: '100%' }}>
+      {error && <Alert severity="error">{error}</Alert>}
       <FormControl component="form" onSubmit={onSubmit} sx={{ width: '100%' }}>
         <Stack spacing={2} sx={{ width: '100%' }}>
           <TextField
