@@ -11,18 +11,26 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
   const [termsAccepted, setTermsAccepted] = useState<boolean | null>(null)
 
   useEffect(() => {
-    // Check auth
-    const baseUrl = import.meta.env.VITE_BASE_URL || ''
-    fetch(`${baseUrl}/auth/check/`, {
-      method: 'GET',
-      credentials: 'include',
-    })
-      .then((res) => {
+    const checkAuth = async () => {
+      try {
+        const baseUrl = import.meta.env.VITE_BASE_URL || ''
+        const controller = new AbortController()
+        const timeout = setTimeout(() => controller.abort(), 5000)
+
+        const res = await fetch(`${baseUrl}/auth/check/`, {
+          method: 'GET',
+          credentials: 'include',
+          signal: controller.signal,
+        })
+        clearTimeout(timeout)
         setIsAuthenticated(res.ok)
-      })
-      .catch(() => {
+      } catch (e) {
+        console.error('Auth check failed:', e)
         setIsAuthenticated(false)
-      })
+      }
+    }
+
+    checkAuth()
 
     // Check terms acceptance
     const accepted = localStorage.getItem('termsAccepted') === 'true'
