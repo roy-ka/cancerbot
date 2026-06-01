@@ -35,17 +35,22 @@ export default function AuthPanel() {
   const navigate = useNavigate()
 
   useEffect(() => {
-    fetch('/auth/check/', {
-      method: 'GET',
-      credentials: 'include',
-    })
-      .then((res) => {
+    const checkAuth = async () => {
+      try {
+        const baseUrl = import.meta.env.VITE_BASE_URL || ''
+        const res = await fetch(`${baseUrl}/auth/check/`, {
+          method: 'GET',
+          credentials: 'include',
+        })
         if (res.ok) {
           navigate('/chat', { replace: true })
         }
-      })
-      .catch(() => {})
-  }, [navigate])
+      } catch (e) {
+        // Not authenticated, stay on login page
+      }
+    }
+    checkAuth()
+  }, [])
 
   const titles: Record<View, string> = {
     login: 'Welcome back',
