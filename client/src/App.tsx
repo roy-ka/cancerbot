@@ -26,8 +26,8 @@ function App() {
           }
         />
 
-        {/* Catch-all */}
-        <Route path="*" element={<Navigate to="/chat" replace />} />
+        {/* Catch-all - go to login, let ProtectedRoute handle redirects */}
+        <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     </BrowserRouter>
   )
