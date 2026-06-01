@@ -36,7 +36,7 @@ export default function AuthPanel() {
   const BASE_URL = import.meta.env.VITE_BASE_URL
 
   useEffect(() => {
-    fetch(`${BASE_URL}/auth/check`, {
+    fetch(`${BASE_URL}/auth/check/`, {
       method: 'GET',
       credentials: 'include',
     })
