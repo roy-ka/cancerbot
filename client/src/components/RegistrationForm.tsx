@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
-import { Stack, TextField, FormControl, Button } from '@mui/material'
+import { Stack, TextField, FormControl, Button, Checkbox, FormControlLabel, Link, Box } from '@mui/material'
+import { Link as RouterLink } from 'react-router-dom'
 import type { RegistrationPayload } from '../types'
 
 export default function RegistrationForm({
@@ -12,6 +13,7 @@ export default function RegistrationForm({
   const [emailError, setEmailError] = useState(false)
   const [passwordError, setPasswordError] = useState(false)
   const [name, setName] = useState('')
+  const [termsAccepted, setTermsAccepted] = useState(false)
   const BASE_URL = import.meta.env.VITE_BASE_URL
 
   const verifyEmail = (email: string) => {
@@ -41,7 +43,7 @@ export default function RegistrationForm({
 
   const onSubmit = (e: React.SubmitEvent<HTMLFormElement>) => {
     e.preventDefault()
-    if (emailError || passwordError) {
+    if (emailError || passwordError || !termsAccepted) {
       return
     }
     register({ email, password, name })
@@ -110,7 +112,38 @@ export default function RegistrationForm({
             onChange={changePassword}
             error={passwordError}
           />
-          <Button type="submit" variant="contained" fullWidth>
+
+          <Box>
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={termsAccepted}
+                  onChange={(e) => setTermsAccepted(e.target.checked)}
+                  required
+                />
+              }
+              label={
+                <Box component="span">
+                  I accept the{' '}
+                  <Link
+                    component={RouterLink}
+                    to="/terms"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Terms and Conditions
+                  </Link>
+                </Box>
+              }
+            />
+          </Box>
+
+          <Button
+            type="submit"
+            variant="contained"
+            fullWidth
+            disabled={!termsAccepted}
+          >
             Submit
           </Button>
         </Stack>
