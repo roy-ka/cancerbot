@@ -127,7 +127,7 @@ export default function RegistrationForm({
                   I accept the{' '}
                   <Link
                     component={RouterLink}
-                    to="/terms"
+                    to="/terms?readonly=true"
                     target="_blank"
                     rel="noopener noreferrer"
                   >

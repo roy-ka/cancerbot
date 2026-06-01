@@ -1,10 +1,12 @@
 import { useState } from 'react'
 import { Box, Button, Container, Typography, Checkbox, FormControlLabel, Alert } from '@mui/material'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 
 export default function Terms() {
   const [accepted, setAccepted] = useState(false)
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const readonly = searchParams.get('readonly') === 'true'
 
   const handleAccept = () => {
     localStorage.setItem('termsAccepted', 'true')
@@ -82,35 +84,48 @@ export default function Terms() {
         </Typography>
       </Box>
 
-      <Box sx={{ mb: 3 }}>
-        <FormControlLabel
-          control={
-            <Checkbox
-              checked={accepted}
-              onChange={(e) => setAccepted(e.target.checked)}
+      {!readonly && (
+        <>
+          <Box sx={{ mb: 3 }}>
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={accepted}
+                  onChange={(e) => setAccepted(e.target.checked)}
+                />
+              }
+              label="I have read and understand the Terms and Conditions. I accept full responsibility for using this app and will consult qualified healthcare professionals for medical decisions."
             />
-          }
-          label="I have read and understand the Terms and Conditions. I accept full responsibility for using this app and will consult qualified healthcare professionals for medical decisions."
-        />
-      </Box>
+          </Box>
 
-      <Box sx={{ display: 'flex', gap: 2 }}>
-        <Button
-          variant="contained"
-          color="primary"
-          onClick={handleAccept}
-          disabled={!accepted}
-        >
-          Accept and Continue
-        </Button>
+          <Box sx={{ display: 'flex', gap: 2 }}>
+            <Button
+              variant="contained"
+              color="primary"
+              onClick={handleAccept}
+              disabled={!accepted}
+            >
+              Accept and Continue
+            </Button>
+            <Button
+              variant="outlined"
+              color="secondary"
+              onClick={handleDecline}
+            >
+              Decline
+            </Button>
+          </Box>
+        </>
+      )}
+
+      {readonly && (
         <Button
           variant="outlined"
-          color="secondary"
-          onClick={handleDecline}
+          onClick={() => navigate(-1)}
         >
-          Decline
+          Back
         </Button>
-      </Box>
+      )}
     </Container>
   )
 }
