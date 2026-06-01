@@ -36,7 +36,7 @@ export default function AuthPanel() {
   const BASE_URL = import.meta.env.VITE_BASE_URL
 
   useEffect(() => {
-    fetch(`${BASE_URL}/auth/check/`, {
+    fetch('/auth/check/', {
       method: 'GET',
       credentials: 'include',
     })
@@ -46,7 +46,7 @@ export default function AuthPanel() {
         }
       })
       .catch(() => {})
-  }, [navigate, BASE_URL])
+  }, [navigate])
 
   const titles: Record<View, string> = {
     login: 'Welcome back',
