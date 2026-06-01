@@ -145,7 +145,7 @@ export default function Chat() {
 
   const handleLogout = async () => {
     try {
-      const res = await fetch('/auth/logout/', {
+      const res = await fetch(`${BASE_URL}/auth/logout/`, {
         method: 'POST',
         credentials: 'include',
       })

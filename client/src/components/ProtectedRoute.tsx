@@ -12,7 +12,8 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
 
   useEffect(() => {
     // Check auth
-    fetch('/auth/check/', {
+    const baseUrl = import.meta.env.VITE_BASE_URL || ''
+    fetch(`${baseUrl}/auth/check/`, {
       method: 'GET',
       credentials: 'include',
     })
