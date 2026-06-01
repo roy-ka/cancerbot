@@ -33,7 +33,6 @@ type View = 'login' | 'register' | 'forgot'
 export default function AuthPanel() {
   const [view, setView] = useState<View>('login')
   const navigate = useNavigate()
-  const BASE_URL = import.meta.env.VITE_BASE_URL
 
   useEffect(() => {
     fetch('/auth/check/', {
