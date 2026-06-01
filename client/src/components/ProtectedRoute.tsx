@@ -8,8 +8,10 @@ interface ProtectedRouteProps {
 
 export default function ProtectedRoute({ children }: ProtectedRouteProps) {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null)
+  const [termsAccepted, setTermsAccepted] = useState<boolean | null>(null)
 
   useEffect(() => {
+    // Check auth
     fetch('/auth/check/', {
       method: 'GET',
       credentials: 'include',
@@ -20,14 +22,22 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
       .catch(() => {
         setIsAuthenticated(false)
       })
+
+    // Check terms acceptance
+    const accepted = localStorage.getItem('termsAccepted') === 'true'
+    setTermsAccepted(accepted)
   }, [])
 
-  if (isAuthenticated === null) {
+  if (isAuthenticated === null || termsAccepted === null) {
     return <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>Loading...</Box>
   }
 
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />
+  }
+
+  if (!termsAccepted) {
+    return <Navigate to="/terms" replace />
   }
 
   return <>{children}</>

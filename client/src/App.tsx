@@ -1,6 +1,7 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import Login from './pages/Login'
 import Chat from './pages/Chat'
+import Terms from './pages/Terms'
 import ProtectedRoute from './components/ProtectedRoute'
 import './App.css'
 
@@ -13,6 +14,7 @@ function App() {
 
         {/* Public */}
         <Route path="/login" element={<Login />} />
+        <Route path="/terms" element={<Terms />} />
 
         {/* Protected App */}
         <Route
