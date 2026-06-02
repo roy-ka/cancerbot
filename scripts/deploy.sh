@@ -295,27 +295,15 @@ else
   echo "⚠ Warning: docker compose down had issues, continuing with manual cleanup"
 fi
 
-# Force remove any remaining containers that might conflict
-echo "Checking for conflicting containers..."
-
-# Remove all containers matching cancerbot project pattern
-echo "Removing all cancerbot-related containers..."
-docker ps -a --format '{{.Names}}' | grep -E '^cancerbot' | while read container; do
-  echo "  Removing: $container"
-  docker rm -f "$container" 2>/dev/null || true
+# Force remove any remaining containers
+echo "Stopping and removing containers..."
+docker ps -a -q | while read container_id; do
+  docker stop "$container_id" 2>/dev/null || true
 done
-
-# Also remove opensearch containers
-for container in opensearch-node1 opensearch-node2 opensearch-dashboards; do
-  if docker ps -a --format '{{.Names}}' | grep -q "^${container}"; then
-    echo "  Removing: $container"
-    docker ps -a --format '{{.Names}}' | grep "^${container}" | while read c; do
-      docker rm -f "$c" 2>/dev/null || true
-    done
-  fi
+docker ps -a -q | while read container_id; do
+  docker rm -f "$container_id" 2>/dev/null || true
 done
-
-echo "✓ Containers stopped and removed"
+echo "✓ Containers removed"
 
 # Remove any dangling networks and wait for port release
 echo ""
