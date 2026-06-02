@@ -429,10 +429,10 @@ echo "Running Alembic migrations..."
 if docker run --rm \
   --network cancerbot_osnet \
   --env-file "$PROJECT_DIR/.env" \
-  -e POSTGRES_URL="postgresql+asyncpg://cancerbot:${POSTGRES_PASSWORD}@cancerbot-postgres:5432/cancerbot" \
+  -e POSTGRES_URL="postgresql+psycopg://cancerbot:${POSTGRES_PASSWORD}@cancerbot-postgres:5432/cancerbot" \
   -v "$(pwd):/app" -w /app \
   python:3.12-slim bash -c \
-  "pip install alembic psycopg2-binary sqlalchemy python-dotenv -q && alembic upgrade head"; then
+  "pip install alembic psycopg sqlalchemy python-dotenv -q && alembic upgrade head"; then
   echo "✓ Alembic migrations completed"
 else
   echo "✗ Alembic migrations failed"
