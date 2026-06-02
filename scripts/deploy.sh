@@ -191,6 +191,17 @@ fi
 echo ""
 echo "Building frontend..."
 cd "$PROJECT_DIR/client"
+
+# Check if npm is available
+if ! command -v npm &> /dev/null; then
+  echo "✗ Error: npm not found in PATH"
+  echo "Please install Node.js 20.19+ or 22.12+:"
+  echo "  sudo apt-get install -y nodejs npm"
+  echo "Or if using snap:"
+  echo "  sudo snap install node --classic"
+  exit 1
+fi
+
 if npm install; then
   echo "✓ npm dependencies installed"
 else
