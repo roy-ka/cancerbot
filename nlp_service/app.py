@@ -49,22 +49,6 @@ async def lifespan(_: FastAPI):
     print(f"[lifespan] DATABASE_ENABLED={DATABASE_ENABLED}, DATABASE_URL={os.getenv('NLP_DATABASE_URL', 'NOT SET')[:50]}")
 
     if DATABASE_ENABLED:
-        print("[lifespan] Creating abbreviations table...")
-        try:
-            async with engine.begin() as conn:
-                await conn.execute(text("""
-                    CREATE TABLE IF NOT EXISTS abbreviations (
-                        short VARCHAR(100) PRIMARY KEY,
-                        long VARCHAR NOT NULL,
-                        source VARCHAR(50) NOT NULL DEFAULT 'manual',
-                        confidence FLOAT NOT NULL DEFAULT 1.0,
-                        updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
-                    )
-                """))
-            print("[lifespan] Table creation completed")
-        except Exception as e:
-            print(f"[lifespan] ERROR creating table: {type(e).__name__}: {e}")
-
         print("[lifespan] Skipping abbreviation cache on startup - will load on first request")
 
     print("[lifespan] Startup complete, yielding control")
