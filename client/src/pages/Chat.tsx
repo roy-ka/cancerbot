@@ -179,8 +179,8 @@ export default function Chat() {
         if (!res.ok) throw new Error(await res.text())
         return res.json()
       })
-      .catch((error) => console.log(error.detail))
       .then((res) => {
+        if (!res) return
         setMessages((prev) => {
           const withoutTemp = prev.slice(0, -1)
           return [...withoutTemp, ...res.messages]
