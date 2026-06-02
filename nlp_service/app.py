@@ -20,7 +20,9 @@ from starlette.concurrency import run_in_threadpool
 from models import Abbreviation, Base
 from db import get_session, SessionLocal, engine
 
+print("[NLP app] Module loading started")
 load_dotenv()
+print("[NLP app] .env loaded")
 # --- DB (SQLAlchemy) ---
 DATABASE_URL = os.getenv("NLP_DATABASE_URL")
     
@@ -43,13 +45,13 @@ _abbrev_refresher_task: Optional[asyncio.Task] = None
 async def lifespan(_: FastAPI):
     global _abbrev_refresher_task
 
-    print(f"[lifespan] DATABASE_ENABLED={DATABASE_ENABLED}")
+    print("[lifespan] Starting up...")
+    print(f"[lifespan] DATABASE_ENABLED={DATABASE_ENABLED}, DATABASE_URL={os.getenv('NLP_DATABASE_URL', 'NOT SET')[:50]}")
+
     if DATABASE_ENABLED:
-        print("[lifespan] Starting table creation...")
+        print("[lifespan] Creating abbreviations table...")
         try:
-            print("[lifespan] Creating engine connection...")
             async with engine.begin() as conn:
-                print("[lifespan] Connection created, executing CREATE TABLE...")
                 await conn.execute(text("""
                     CREATE TABLE IF NOT EXISTS abbreviations (
                         short VARCHAR(100) PRIMARY KEY,
@@ -59,30 +61,25 @@ async def lifespan(_: FastAPI):
                         updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
                     )
                 """))
-            print("abbreviations table created/verified")
+            print("[lifespan] Table creation completed")
         except Exception as e:
-            print(f"Error creating abbreviations table: {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"[lifespan] ERROR creating table: {type(e).__name__}: {e}")
 
+        print("[lifespan] Loading abbreviation cache...")
         try:
             count = await load_abbrev_cache()
-            # Refresh periodically so DB updates are picked up without restart
             _abbrev_refresher_task = start_abbrev_cache_refresher(
                 interval_seconds=int(os.getenv("ABBREV_REFRESH_SECONDS", "60"))
             )
-            print(f"abbrev cache loaded: {count} entries")
+            print(f"[lifespan] Cache loaded: {count} entries")
         except Exception as e:
-            print(f"Error loading abbrev cache: {e}")
-            import traceback
-            traceback.print_exc()
-            count = 0
-    else:
-        print("abbrev cache disabled: NLP_DATABASE_URL/DATABASE_URL/POSTGRES_URL not set")
+            print(f"[lifespan] ERROR loading cache: {type(e).__name__}: {e}")
 
+    print("[lifespan] Startup complete, yielding control")
     try:
         yield
     finally:
+        print("[lifespan] Shutting down...")
         if _abbrev_refresher_task:
             _abbrev_refresher_task.cancel()
             try:
