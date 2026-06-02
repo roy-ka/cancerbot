@@ -10,7 +10,7 @@ function App() {
     <BrowserRouter>
       <Routes>
         {/* Default */}
-        <Route path="/" element={<Navigate to="/chat" replace />} />
+        <Route path="/" element={<Navigate to="/login" replace />} />
 
         {/* Public */}
         <Route path="/login" element={<Login />} />

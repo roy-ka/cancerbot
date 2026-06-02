@@ -2,15 +2,41 @@ import { useState } from 'react'
 import { Box, Button, Container, Typography, Checkbox, FormControlLabel, Alert } from '@mui/material'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 
+const BASE_URL = import.meta.env.VITE_BASE_URL || ''
+
 export default function Terms() {
   const [accepted, setAccepted] = useState(false)
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const readonly = searchParams.get('readonly') === 'true'
 
-  const handleAccept = () => {
+  const handleAccept = async () => {
+    // If readonly mode (from registration), just close/go back
+    if (readonly) {
+      window.history.back()
+      return
+    }
+
+    // Check if authenticated before accepting
+    try {
+      const res = await fetch(`${BASE_URL}/auth/check/`, {
+        method: 'GET',
+        credentials: 'include',
+      })
+      if (!res.ok) {
+        // Not authenticated, redirect to login
+        navigate('/login', { replace: true })
+        return
+      }
+    } catch (e) {
+      console.error('Auth check failed:', e)
+      navigate('/login', { replace: true })
+      return
+    }
+
+    // User is authenticated, accept terms and go to chat
     localStorage.setItem('termsAccepted', 'true')
-    navigate('/chat')
+    navigate('/chat', { replace: true })
   }
 
   const handleDecline = () => {
