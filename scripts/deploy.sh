@@ -194,6 +194,7 @@ cd "$PROJECT_DIR/client"
 
 # Find npm in nvm or system
 NPM_PATH=""
+NPM_BIN_DIR=""
 
 # Determine the actual user (in case script was run with sudo)
 ACTUAL_USER="${SUDO_USER:-$(whoami)}"
@@ -207,6 +208,7 @@ if [ -d "$ACTUAL_HOME/.nvm" ]; then
   for node_dir in "$ACTUAL_HOME"/.nvm/versions/node/v*/bin; do
     if [ -f "$node_dir/npm" ]; then
       NPM_PATH="$node_dir/npm"
+      NPM_BIN_DIR="$node_dir"
       echo "Found npm at: $NPM_PATH"
       break
     fi
@@ -232,6 +234,12 @@ fi
 
 echo "✓ Using npm: $NPM_PATH"
 echo "✓ Node.js version: $("${NPM_PATH%/npm}/node" --version)"
+
+# Add npm bin directory to PATH if using nvm (so node is found)
+if [ -n "$NPM_BIN_DIR" ]; then
+  export PATH="$NPM_BIN_DIR:$PATH"
+  echo "✓ Added to PATH: $NPM_BIN_DIR"
+fi
 
 if "$NPM_PATH" install; then
   echo "✓ npm dependencies installed"
