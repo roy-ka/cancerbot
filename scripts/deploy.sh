@@ -297,18 +297,34 @@ fi
 
 # Force remove any remaining containers that might conflict
 echo "Checking for conflicting containers..."
-for container in cancerbot-postgres opensearch-node1 opensearch-node2 opensearch-dashboards cancerbot-backend cancerbot-nlp; do
-  if docker ps -a --format '{{.Names}}' | grep -q "^${container}$"; then
-    echo "Removing conflicting container: $container"
-    docker rm -f "$container" 2>/dev/null || true
+
+# Remove all containers matching cancerbot project pattern
+echo "Removing all cancerbot-related containers..."
+docker ps -a --format '{{.Names}}' | grep -E '^cancerbot' | while read container; do
+  echo "  Removing: $container"
+  docker rm -f "$container" 2>/dev/null || true
+done
+
+# Also remove opensearch containers
+for container in opensearch-node1 opensearch-node2 opensearch-dashboards; do
+  if docker ps -a --format '{{.Names}}' | grep -q "^${container}"; then
+    echo "  Removing: $container"
+    docker ps -a --format '{{.Names}}' | grep "^${container}" | while read c; do
+      docker rm -f "$c" 2>/dev/null || true
+    done
   fi
 done
+
 echo "✓ Containers stopped and removed"
 
 # Remove any dangling networks and wait for port release
 echo ""
 echo "Cleaning up networks and ports..."
 docker network prune -f 2>/dev/null || true
+
+# Full Docker cleanup if needed
+echo "Running full Docker system prune (removing unused images, volumes, networks)..."
+docker system prune -f --volumes 2>/dev/null || true
 
 # Kill any process using port 8000
 echo "Checking port 8000..."
