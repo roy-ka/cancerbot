@@ -44,14 +44,23 @@ async def lifespan(_: FastAPI):
     global _abbrev_refresher_task
 
     if DATABASE_ENABLED:
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        count = await load_abbrev_cache()
-        # Refresh periodically so DB updates are picked up without restart
-        _abbrev_refresher_task = start_abbrev_cache_refresher(
-            interval_seconds=int(os.getenv("ABBREV_REFRESH_SECONDS", "60"))
-        )
-        print(f"abbrev cache loaded: {count} entries")
+        try:
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+            print("abbreviations table created/verified")
+        except Exception as e:
+            print(f"Error creating abbreviations table: {e}")
+
+        try:
+            count = await load_abbrev_cache()
+            # Refresh periodically so DB updates are picked up without restart
+            _abbrev_refresher_task = start_abbrev_cache_refresher(
+                interval_seconds=int(os.getenv("ABBREV_REFRESH_SECONDS", "60"))
+            )
+            print(f"abbrev cache loaded: {count} entries")
+        except Exception as e:
+            print(f"Error loading abbrev cache: {e}")
+            count = 0
     else:
         print("abbrev cache disabled: NLP_DATABASE_URL/DATABASE_URL/POSTGRES_URL not set")
 
