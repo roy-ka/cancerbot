@@ -42,6 +42,10 @@ else
   echo "⚠ Warning: osnet network not found"
 fi
 
+# Allow PostgreSQL remote access on port 5432
+iptables -I INPUT -p tcp --dport 5432 -j ACCEPT
+echo "✓ Added rule for PostgreSQL port 5432"
+
 # Persist iptables rules
 if command -v netfilter-persistent &> /dev/null; then
   netfilter-persistent save

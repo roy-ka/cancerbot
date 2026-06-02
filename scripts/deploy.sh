@@ -6,6 +6,9 @@
 
 set -euo pipefail
 
+# Add Node.js snap to PATH for npm commands
+export PATH=$PATH:/snap/bin
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
@@ -248,6 +251,15 @@ if docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot up -d; then
 else
   echo "✗ Failed to start services"
   exit 1
+fi
+
+# Fix permissions on built frontend
+echo ""
+echo "Fixing permissions on frontend build..."
+if sudo chmod -R 755 "$PROJECT_DIR/client/dist" && sudo chmod -R 755 "$PROJECT_DIR"; then
+  echo "✓ Frontend permissions fixed"
+else
+  echo "⚠ Warning: Failed to fix frontend permissions (Nginx may have access issues)"
 fi
 
 # Wait for PostgreSQL to be healthy before running migrations
