@@ -6,8 +6,13 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, Asyn
 load_dotenv()
 DATABASE_URL = os.getenv("NLP_DATABASE_URL")
 
-if not DATABASE_URL:
-    raise RuntimeError("NLP_DATABASE_URL/DATABASE_URL/POSTGRES_URL is not set")
+if DATABASE_URL:
+    # Expand variable placeholders in the URL
+    for key, value in os.environ.items():
+        placeholder = "${" + key + "}"
+        DATABASE_URL = DATABASE_URL.replace(placeholder, value)
+else:
+    raise RuntimeError("NLP_DATABASE_URL not set")
 
 engine = create_async_engine(
     DATABASE_URL,
