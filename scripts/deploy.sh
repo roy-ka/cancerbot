@@ -9,6 +9,9 @@ set -euo pipefail
 # Add Node.js snap to PATH for npm commands
 export PATH=$PATH:/snap/bin
 
+# Load nvm if installed (for Node.js management)
+[ -s "$HOME/.nvm/nvm.sh" ] && source "$HOME/.nvm/nvm.sh"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
@@ -195,10 +198,10 @@ cd "$PROJECT_DIR/client"
 # Check if npm is available
 if ! command -v npm &> /dev/null; then
   echo "✗ Error: npm not found in PATH"
-  echo "Please install Node.js 20.19+ or 22.12+:"
-  echo "  sudo apt-get install -y nodejs npm"
-  echo "Or if using snap:"
-  echo "  sudo snap install node --classic"
+  echo "Install Node.js via nvm (recommended):"
+  echo "  curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash"
+  echo "  source ~/.bashrc"
+  echo "  nvm install 22"
   exit 1
 fi
 
