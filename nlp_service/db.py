@@ -15,6 +15,8 @@ engine = create_async_engine(
     pool_pre_ping=True,
 )
 
+__all__ = ["engine", "SessionLocal", "get_session"]
+
 SessionLocal = async_sessionmaker(
     bind=engine,
     autoflush=False,

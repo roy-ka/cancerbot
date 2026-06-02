@@ -17,8 +17,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
-from models import Abbreviation
-from db import get_session, SessionLocal
+from models import Abbreviation, Base
+from db import get_session, SessionLocal, engine
 
 load_dotenv()
 # --- DB (SQLAlchemy) ---
@@ -44,6 +44,8 @@ async def lifespan(_: FastAPI):
     global _abbrev_refresher_task
 
     if DATABASE_ENABLED:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
         count = await load_abbrev_cache()
         # Refresh periodically so DB updates are picked up without restart
         _abbrev_refresher_task = start_abbrev_cache_refresher(
