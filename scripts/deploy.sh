@@ -6,13 +6,8 @@
 
 set -euo pipefail
 
-# Add Node.js snap to PATH for npm commands
+# Add Node.js snap to PATH for npm commands (fallback if nvm not used)
 export PATH=$PATH:/snap/bin
-
-# Load nvm if installed (for Node.js management)
-if [ -s "$HOME/.nvm/nvm.sh" ]; then
-  source "$HOME/.nvm/nvm.sh"
-fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
@@ -197,15 +192,10 @@ echo ""
 echo "Building frontend..."
 cd "$PROJECT_DIR/client"
 
-# Check if npm is available, try nvm if not
-if ! command -v npm &> /dev/null; then
-  # Try to use nvm's Node.js directly
-  if [ -s "$HOME/.nvm/nvm.sh" ]; then
-    source "$HOME/.nvm/nvm.sh"
-    nvm use 22 2>/dev/null || nvm use default 2>/dev/null || true
-  fi
+# Run npm commands in interactive bash to load nvm properly
+bash -i -c '
+  set -euo pipefail
 
-  # If npm still not found, error
   if ! command -v npm &> /dev/null; then
     echo "✗ Error: npm not found in PATH"
     echo "Please install Node.js 22 via nvm on your server:"
@@ -214,25 +204,19 @@ if ! command -v npm &> /dev/null; then
     echo "  nvm install 22"
     exit 1
   fi
-fi
 
-echo "✓ Using Node.js: $(node --version)"
-echo "✓ Using npm: $(npm --version)"
+  echo "✓ Using Node.js: $(node --version)"
+  echo "✓ Using npm: $(npm --version)"
 
-if npm install; then
-  echo "✓ npm dependencies installed"
-else
-  echo "✗ npm install failed"
-  exit 1
-fi
+  echo "Running npm install..."
+  npm install
 
-if npm run build; then
-  echo "✓ Frontend build completed"
-else
-  echo "✗ Frontend build failed"
-  exit 1
-fi
+  echo "Running npm build..."
+  npm run build
+'
+
 cd "$PROJECT_DIR"
+echo "✓ Frontend build completed"
 
 # Build Docker images
 echo ""
