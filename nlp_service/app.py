@@ -27,12 +27,7 @@ print("[NLP app] .env loaded")
 DATABASE_URL = os.getenv("NLP_DATABASE_URL")
     
 
-if not DATABASE_URL:
-    # Keep the service running for /health even if DB isn't configured,
-    # but abbreviation expansion from DB will be disabled.
-    DATABASE_ENABLED = False
-else:
-    DATABASE_ENABLED = True
+DATABASE_ENABLED = False  # Disabled for now due to table migration issues
 
 
 # In-memory cache: short_lower -> long
