@@ -194,19 +194,31 @@ cd "$PROJECT_DIR/client"
 
 # Find npm in nvm or system
 NPM_PATH=""
+echo "Debug: HOME=$HOME"
+echo "Debug: Looking for nvm in: $HOME/.nvm"
+
 if [ -d "$HOME/.nvm" ]; then
+  echo "Debug: nvm directory found"
   # Find the latest Node.js version installed by nvm
   for node_dir in "$HOME"/.nvm/versions/node/v*/bin; do
+    echo "Debug: Checking $node_dir"
     if [ -f "$node_dir/npm" ]; then
       NPM_PATH="$node_dir/npm"
+      echo "Debug: Found npm at $NPM_PATH"
       break
     fi
   done
+else
+  echo "Debug: nvm directory NOT found at $HOME/.nvm"
 fi
 
 # Fall back to system npm if not found in nvm
 if [ -z "$NPM_PATH" ]; then
+  echo "Debug: npm not found in nvm, trying system"
   NPM_PATH=$(command -v npm || echo "")
+  if [ -n "$NPM_PATH" ]; then
+    echo "Debug: Found system npm at $NPM_PATH"
+  fi
 fi
 
 if [ -z "$NPM_PATH" ] || [ ! -f "$NPM_PATH" ]; then
