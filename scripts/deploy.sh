@@ -431,8 +431,8 @@ if docker run --rm \
   --env-file "$PROJECT_DIR/.env" \
   -e POSTGRES_URL="postgresql+psycopg://cancerbot:${POSTGRES_PASSWORD}@cancerbot-postgres:5432/cancerbot" \
   -v "$(pwd):/app" -w /app \
-  python:3.12-slim bash -c \
-  "pip install alembic psycopg sqlalchemy python-dotenv -q && alembic upgrade head"; then
+  python:3.12 bash -c \
+  "pip install --quiet alembic 'psycopg[binary]' sqlalchemy python-dotenv && alembic upgrade head"; then
   echo "✓ Alembic migrations completed"
 else
   echo "✗ Alembic migrations failed"
