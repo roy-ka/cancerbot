@@ -192,6 +192,10 @@ echo ""
 echo "Building frontend..."
 cd "$PROJECT_DIR/client"
 
+# Clean up old node_modules/package-lock that might have permission issues
+echo "Cleaning up old dependencies..."
+rm -rf node_modules package-lock.json 2>/dev/null || true
+
 # Find npm in nvm or system
 NPM_PATH=""
 NPM_BIN_DIR=""
