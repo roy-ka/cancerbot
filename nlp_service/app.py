@@ -97,8 +97,29 @@ async def load_abbrev_cache() -> int:
         return 0
 
     async with SessionLocal() as session:
-        res = await session.execute(select(Abbreviation.short, Abbreviation.long))
-        rows = res.all()
+        try:
+            # Ensure table exists before querying
+            await session.execute(text("""
+                CREATE TABLE IF NOT EXISTS abbreviations (
+                    short VARCHAR(100) PRIMARY KEY,
+                    long VARCHAR NOT NULL,
+                    source VARCHAR(50) NOT NULL DEFAULT 'manual',
+                    confidence FLOAT NOT NULL DEFAULT 1.0,
+                    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+                )
+            """))
+            await session.commit()
+        except Exception as e:
+            print(f"[load_abbrev_cache] Failed to ensure table exists: {e}")
+            await session.rollback()
+            return 0
+
+        try:
+            res = await session.execute(select(Abbreviation.short, Abbreviation.long))
+            rows = res.all()
+        except Exception as e:
+            print(f"[load_abbrev_cache] Failed to load abbreviations: {e}")
+            return 0
 
     new_cache: dict[str, str] = {}
     for short, long in rows:
