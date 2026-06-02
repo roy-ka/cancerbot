@@ -287,12 +287,23 @@ fi
 # Stop and remove existing containers
 echo ""
 echo "Stopping and removing existing containers..."
-if docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot down --remove-orphans; then
-  echo "✓ Containers stopped and removed"
+
+# First try docker compose down
+if docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot down --remove-orphans 2>&1; then
+  echo "✓ Docker compose down completed"
 else
-  echo "✗ Failed to stop containers"
-  exit 1
+  echo "⚠ Warning: docker compose down had issues, continuing with manual cleanup"
 fi
+
+# Force remove any remaining containers that might conflict
+echo "Checking for conflicting containers..."
+for container in cancerbot-postgres opensearch-node1 opensearch-node2 cancerbot-backend cancerbot-nlp; do
+  if docker ps -a --format '{{.Names}}' | grep -q "^${container}$"; then
+    echo "Removing conflicting container: $container"
+    docker rm -f "$container" 2>/dev/null || true
+  fi
+done
+echo "✓ Containers stopped and removed"
 
 # Start services
 echo ""
