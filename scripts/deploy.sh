@@ -192,31 +192,50 @@ echo ""
 echo "Building frontend..."
 cd "$PROJECT_DIR/client"
 
-# Run npm commands in interactive bash to load nvm properly
-bash -i -c '
-  set -euo pipefail
+# Find npm in nvm or system
+NPM_PATH=""
+if [ -d "$HOME/.nvm" ]; then
+  # Find the latest Node.js version installed by nvm
+  for node_dir in "$HOME"/.nvm/versions/node/v*/bin; do
+    if [ -f "$node_dir/npm" ]; then
+      NPM_PATH="$node_dir/npm"
+      break
+    fi
+  done
+fi
 
-  if ! command -v npm &> /dev/null; then
-    echo "✗ Error: npm not found in PATH"
-    echo "Please install Node.js 22 via nvm on your server:"
-    echo "  curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash"
-    echo "  source ~/.bashrc"
-    echo "  nvm install 22"
-    exit 1
-  fi
+# Fall back to system npm if not found in nvm
+if [ -z "$NPM_PATH" ]; then
+  NPM_PATH=$(command -v npm || echo "")
+fi
 
-  echo "✓ Using Node.js: $(node --version)"
-  echo "✓ Using npm: $(npm --version)"
+if [ -z "$NPM_PATH" ] || [ ! -f "$NPM_PATH" ]; then
+  echo "✗ Error: npm not found"
+  echo "Please install Node.js 22 via nvm:"
+  echo "  curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash"
+  echo "  source ~/.bashrc"
+  echo "  nvm install 22"
+  exit 1
+fi
 
-  echo "Running npm install..."
-  npm install
+echo "✓ Using npm: $NPM_PATH"
+echo "✓ Node.js version: $("${NPM_PATH%/npm}/node" --version)"
 
-  echo "Running npm build..."
-  npm run build
-'
+if "$NPM_PATH" install; then
+  echo "✓ npm dependencies installed"
+else
+  echo "✗ npm install failed"
+  exit 1
+fi
+
+if "$NPM_PATH" run build; then
+  echo "✓ Frontend build completed"
+else
+  echo "✗ Frontend build failed"
+  exit 1
+fi
 
 cd "$PROJECT_DIR"
-echo "✓ Frontend build completed"
 
 # Build Docker images
 echo ""
