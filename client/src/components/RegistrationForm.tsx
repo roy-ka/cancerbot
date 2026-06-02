@@ -22,7 +22,7 @@ export default function RegistrationForm({
   }
 
   const verifyPassword = (password: string) => {
-    return password.length >= 6 || password === ''
+    return password.length >= 8 || password === ''
   }
 
   const register = async (payload: RegistrationPayload) => {
