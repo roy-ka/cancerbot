@@ -4,15 +4,18 @@ import os
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 
 load_dotenv()
-DATABASE_URL = os.getenv("NLP_DATABASE_URL")
 
-if DATABASE_URL:
-    # Expand variable placeholders in the URL
-    for key, value in os.environ.items():
-        placeholder = "${" + key + "}"
-        DATABASE_URL = DATABASE_URL.replace(placeholder, value)
-else:
-    raise RuntimeError("NLP_DATABASE_URL not set")
+# Build DATABASE_URL from individual environment variables
+postgres_user = os.getenv("POSTGRES_USER", "cancerbot")
+postgres_password = os.getenv("POSTGRES_PASSWORD", "")
+postgres_host = os.getenv("POSTGRES_HOST", "localhost")
+postgres_port = os.getenv("POSTGRES_PORT", "5432")
+postgres_db = os.getenv("POSTGRES_DB", "cancerbot")
+
+DATABASE_URL = f"postgresql+asyncpg://{postgres_user}:{postgres_password}@{postgres_host}:{postgres_port}/{postgres_db}"
+
+if not postgres_password:
+    raise RuntimeError("POSTGRES_PASSWORD is not set")
 
 engine = create_async_engine(
     DATABASE_URL,
