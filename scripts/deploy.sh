@@ -305,6 +305,22 @@ for container in cancerbot-postgres opensearch-node1 opensearch-node2 opensearch
 done
 echo "✓ Containers stopped and removed"
 
+# Remove any dangling networks and wait for port release
+echo ""
+echo "Cleaning up networks and waiting for ports to be released..."
+docker network prune -f 2>/dev/null || true
+
+# Wait for port 8000 to be released (up to 10 seconds)
+echo "Waiting for port 8000 to be released..."
+for i in $(seq 1 10); do
+  if ! lsof -i :8000 &>/dev/null && ! netstat -tuln 2>/dev/null | grep -q ':8000 '; then
+    echo "✓ Port 8000 is free"
+    break
+  fi
+  echo "  Port 8000 still in use, waiting... ($i/10)"
+  sleep 1
+done
+
 # Start services
 echo ""
 echo "Starting services..."
