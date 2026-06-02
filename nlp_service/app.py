@@ -65,15 +65,7 @@ async def lifespan(_: FastAPI):
         except Exception as e:
             print(f"[lifespan] ERROR creating table: {type(e).__name__}: {e}")
 
-        print("[lifespan] Loading abbreviation cache...")
-        try:
-            count = await load_abbrev_cache()
-            _abbrev_refresher_task = start_abbrev_cache_refresher(
-                interval_seconds=int(os.getenv("ABBREV_REFRESH_SECONDS", "60"))
-            )
-            print(f"[lifespan] Cache loaded: {count} entries")
-        except Exception as e:
-            print(f"[lifespan] ERROR loading cache: {type(e).__name__}: {e}")
+        print("[lifespan] Skipping abbreviation cache on startup - will load on first request")
 
     print("[lifespan] Startup complete, yielding control")
     try:
@@ -96,42 +88,42 @@ async def load_abbrev_cache() -> int:
     if not DATABASE_ENABLED:
         return 0
 
-    async with SessionLocal() as session:
-        try:
-            # Ensure table exists before querying
-            await session.execute(text("""
-                CREATE TABLE IF NOT EXISTS abbreviations (
-                    short VARCHAR(100) PRIMARY KEY,
-                    long VARCHAR NOT NULL,
-                    source VARCHAR(50) NOT NULL DEFAULT 'manual',
-                    confidence FLOAT NOT NULL DEFAULT 1.0,
-                    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
-                )
-            """))
-            await session.commit()
-        except Exception as e:
-            print(f"[load_abbrev_cache] Failed to ensure table exists: {e}")
-            await session.rollback()
-            return 0
+    try:
+        async with SessionLocal() as session:
+            # Try to create table, but don't fail if it already exists
+            try:
+                await session.execute(text("""
+                    CREATE TABLE IF NOT EXISTS abbreviations (
+                        short VARCHAR(100) PRIMARY KEY,
+                        long VARCHAR NOT NULL,
+                        source VARCHAR(50) NOT NULL DEFAULT 'manual',
+                        confidence FLOAT NOT NULL DEFAULT 1.0,
+                        updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+                    )
+                """))
+                await session.commit()
+            except Exception:
+                await session.rollback()
 
-        try:
+            # Load abbreviations from DB
             res = await session.execute(select(Abbreviation.short, Abbreviation.long))
             rows = res.all()
-        except Exception as e:
-            print(f"[load_abbrev_cache] Failed to load abbreviations: {e}")
-            return 0
 
-    new_cache: dict[str, str] = {}
-    for short, long in rows:
-        if not short or not long:
-            continue
-        new_cache[short.strip().lower()] = long
+        new_cache: dict[str, str] = {}
+        for short, long in rows:
+            if not short or not long:
+                continue
+            new_cache[short.strip().lower()] = long
 
-    async with _abbrev_cache_lock:
-        abbrev_cache.clear()
-        abbrev_cache.update(new_cache)
+        async with _abbrev_cache_lock:
+            abbrev_cache.clear()
+            abbrev_cache.update(new_cache)
 
-    return len(new_cache)
+        return len(new_cache)
+    except Exception as e:
+        print(f"[load_abbrev_cache] Error: {type(e).__name__}: {e}")
+        # Return 0 but don't crash - abbreviations are optional
+        return 0
 
 
 async def get_abbrev_long(short: str) -> Optional[str]:
