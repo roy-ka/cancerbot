@@ -43,9 +43,13 @@ _abbrev_refresher_task: Optional[asyncio.Task] = None
 async def lifespan(_: FastAPI):
     global _abbrev_refresher_task
 
+    print(f"[lifespan] DATABASE_ENABLED={DATABASE_ENABLED}")
     if DATABASE_ENABLED:
+        print("[lifespan] Starting table creation...")
         try:
+            print("[lifespan] Creating engine connection...")
             async with engine.begin() as conn:
+                print("[lifespan] Connection created, executing CREATE TABLE...")
                 await conn.execute(text("""
                     CREATE TABLE IF NOT EXISTS abbreviations (
                         short VARCHAR(100) PRIMARY KEY,
