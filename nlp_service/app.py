@@ -69,45 +69,9 @@ app = FastAPI(title="Cancerbot NLP Service", lifespan=lifespan)
 
 async def load_abbrev_cache() -> int:
     """Load all abbreviations from DB into memory. Returns number of entries."""
-    if not DATABASE_ENABLED:
-        return 0
-
-    try:
-        async with SessionLocal() as session:
-            # Try to create table, but don't fail if it already exists
-            try:
-                await session.execute(text("""
-                    CREATE TABLE IF NOT EXISTS abbreviations (
-                        short VARCHAR(100) PRIMARY KEY,
-                        long VARCHAR NOT NULL,
-                        source VARCHAR(50) NOT NULL DEFAULT 'manual',
-                        confidence FLOAT NOT NULL DEFAULT 1.0,
-                        updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
-                    )
-                """))
-                await session.commit()
-            except Exception:
-                await session.rollback()
-
-            # Load abbreviations from DB
-            res = await session.execute(select(Abbreviation.short, Abbreviation.long))
-            rows = res.all()
-
-        new_cache: dict[str, str] = {}
-        for short, long in rows:
-            if not short or not long:
-                continue
-            new_cache[short.strip().lower()] = long
-
-        async with _abbrev_cache_lock:
-            abbrev_cache.clear()
-            abbrev_cache.update(new_cache)
-
-        return len(new_cache)
-    except Exception as e:
-        print(f"[load_abbrev_cache] Error: {type(e).__name__}: {e}")
-        # Return 0 but don't crash - abbreviations are optional
-        return 0
+    # TODO: Temporarily disabled due to table creation issues
+    # Will be re-enabled once database schema is properly migrated
+    return 0
 
 
 async def get_abbrev_long(short: str) -> Optional[str]:
