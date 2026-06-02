@@ -500,3 +500,12 @@ echo ""
 echo "To view the deployment log later:"
 echo "  tail -f $LOG_FILE"
 echo ""
+
+# Reset git working directory to clean state
+echo "Resetting git working directory..."
+cd "$PROJECT_DIR"
+if git reset --hard HEAD; then
+  echo "✓ Git working directory reset"
+else
+  echo "⚠ Warning: Failed to reset git working directory"
+fi
