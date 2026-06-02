@@ -239,9 +239,29 @@ echo "✓ Node.js version: $("${NPM_PATH%/npm}/node" --version)"
 if [ -n "$NPM_BIN_DIR" ]; then
   export PATH="$NPM_BIN_DIR:$PATH"
   echo "✓ Added to PATH: $NPM_BIN_DIR"
+
+  # Create symlinks in /usr/local/bin if they don't exist (for system-wide access)
+  if [ ! -f "/usr/local/bin/node" ]; then
+    ln -sf "$NPM_BIN_DIR/node" /usr/local/bin/node 2>/dev/null || true
+  fi
+  if [ ! -f "/usr/local/bin/npm" ]; then
+    ln -sf "$NPM_PATH" /usr/local/bin/npm 2>/dev/null || true
+  fi
 fi
 
-if "$NPM_PATH" install; then
+# Use node with explicit path to ensure it's found
+NODE_PATH="${NPM_BIN_DIR}/node"
+if [ ! -x "$NODE_PATH" ]; then
+  NODE_PATH=$(command -v node || echo "")
+fi
+
+if [ -z "$NODE_PATH" ]; then
+  echo "✗ Error: node binary not found"
+  exit 1
+fi
+
+# Run npm with explicit node path
+if "$NPM_PATH" --node-gyp="$NODE_PATH" install; then
   echo "✓ npm dependencies installed"
 else
   echo "✗ npm install failed"
