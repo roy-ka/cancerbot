@@ -195,14 +195,44 @@ echo ""
 echo "Building frontend..."
 cd "$PROJECT_DIR/client"
 
-# Check if npm is available
+# Check and install Node.js via nvm if needed
 if ! command -v npm &> /dev/null; then
-  echo "✗ Error: npm not found in PATH"
-  echo "Install Node.js via nvm (recommended):"
-  echo "  curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash"
-  echo "  source ~/.bashrc"
-  echo "  nvm install 22"
-  exit 1
+  echo "npm not found, installing Node.js via nvm..."
+
+  # Check if nvm is installed
+  if ! command -v nvm &> /dev/null && [ ! -s "$HOME/.nvm/nvm.sh" ]; then
+    echo "Installing nvm..."
+    if curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash; then
+      echo "✓ nvm installed"
+      source "$HOME/.nvm/nvm.sh"
+    else
+      echo "✗ Error: Failed to install nvm"
+      exit 1
+    fi
+  fi
+
+  # Load nvm if not already loaded
+  [ -s "$HOME/.nvm/nvm.sh" ] && source "$HOME/.nvm/nvm.sh"
+
+  # Install Node.js 22 if not already installed
+  if ! nvm list | grep -q "v22"; then
+    echo "Installing Node.js 22 via nvm..."
+    if nvm install 22; then
+      echo "✓ Node.js 22 installed"
+    else
+      echo "✗ Error: Failed to install Node.js 22"
+      exit 1
+    fi
+  fi
+
+  nvm use 22
+
+  # Verify npm is now available
+  if ! command -v npm &> /dev/null; then
+    echo "✗ Error: npm still not found after nvm installation"
+    exit 1
+  fi
+  echo "✓ Node.js and npm ready"
 fi
 
 if npm install; then
