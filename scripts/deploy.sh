@@ -260,19 +260,37 @@ if [ -z "$NODE_PATH" ]; then
   exit 1
 fi
 
-# Run npm with explicit node path
-if "$NPM_PATH" --node-gyp="$NODE_PATH" install; then
-  echo "✓ npm dependencies installed"
-else
-  echo "✗ npm install failed"
-  exit 1
-fi
+# Run npm as the actual user (not root) to avoid permission issues
+if [ "$(whoami)" = "root" ] && [ -n "$SUDO_USER" ]; then
+  echo "Running npm as user: $SUDO_USER"
+  if sudo -u "$SUDO_USER" "$NPM_PATH" install; then
+    echo "✓ npm dependencies installed"
+  else
+    echo "✗ npm install failed"
+    exit 1
+  fi
 
-if "$NPM_PATH" run build; then
-  echo "✓ Frontend build completed"
+  if sudo -u "$SUDO_USER" "$NPM_PATH" run build; then
+    echo "✓ Frontend build completed"
+  else
+    echo "✗ Frontend build failed"
+    exit 1
+  fi
 else
-  echo "✗ Frontend build failed"
-  exit 1
+  # Running as regular user
+  if "$NPM_PATH" install; then
+    echo "✓ npm dependencies installed"
+  else
+    echo "✗ npm install failed"
+    exit 1
+  fi
+
+  if "$NPM_PATH" run build; then
+    echo "✓ Frontend build completed"
+  else
+    echo "✗ Frontend build failed"
+    exit 1
+  fi
 fi
 
 cd "$PROJECT_DIR"
