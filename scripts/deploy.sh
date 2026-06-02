@@ -10,7 +10,9 @@ set -euo pipefail
 export PATH=$PATH:/snap/bin
 
 # Load nvm if installed (for Node.js management)
-[ -s "$HOME/.nvm/nvm.sh" ] && source "$HOME/.nvm/nvm.sh"
+if [ -s "$HOME/.nvm/nvm.sh" ]; then
+  source "$HOME/.nvm/nvm.sh"
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
@@ -195,45 +197,27 @@ echo ""
 echo "Building frontend..."
 cd "$PROJECT_DIR/client"
 
-# Check and install Node.js via nvm if needed
+# Check if npm is available, try nvm if not
 if ! command -v npm &> /dev/null; then
-  echo "npm not found, installing Node.js via nvm..."
-
-  # Check if nvm is installed
-  if ! command -v nvm &> /dev/null && [ ! -s "$HOME/.nvm/nvm.sh" ]; then
-    echo "Installing nvm..."
-    if curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash; then
-      echo "✓ nvm installed"
-      source "$HOME/.nvm/nvm.sh"
-    else
-      echo "✗ Error: Failed to install nvm"
-      exit 1
-    fi
+  # Try to use nvm's Node.js directly
+  if [ -s "$HOME/.nvm/nvm.sh" ]; then
+    source "$HOME/.nvm/nvm.sh"
+    nvm use 22 2>/dev/null || nvm use default 2>/dev/null || true
   fi
 
-  # Load nvm if not already loaded
-  [ -s "$HOME/.nvm/nvm.sh" ] && source "$HOME/.nvm/nvm.sh"
-
-  # Install Node.js 22 if not already installed
-  if ! nvm list | grep -q "v22"; then
-    echo "Installing Node.js 22 via nvm..."
-    if nvm install 22; then
-      echo "✓ Node.js 22 installed"
-    else
-      echo "✗ Error: Failed to install Node.js 22"
-      exit 1
-    fi
-  fi
-
-  nvm use 22
-
-  # Verify npm is now available
+  # If npm still not found, error
   if ! command -v npm &> /dev/null; then
-    echo "✗ Error: npm still not found after nvm installation"
+    echo "✗ Error: npm not found in PATH"
+    echo "Please install Node.js 22 via nvm on your server:"
+    echo "  curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash"
+    echo "  source ~/.bashrc"
+    echo "  nvm install 22"
     exit 1
   fi
-  echo "✓ Node.js and npm ready"
 fi
+
+echo "✓ Using Node.js: $(node --version)"
+echo "✓ Using npm: $(npm --version)"
 
 if npm install; then
   echo "✓ npm dependencies installed"
