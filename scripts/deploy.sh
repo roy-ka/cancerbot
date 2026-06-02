@@ -307,19 +307,34 @@ echo "✓ Containers stopped and removed"
 
 # Remove any dangling networks and wait for port release
 echo ""
-echo "Cleaning up networks and waiting for ports to be released..."
+echo "Cleaning up networks and ports..."
 docker network prune -f 2>/dev/null || true
+
+# Kill any process using port 8000
+echo "Checking port 8000..."
+if lsof -i :8000 &>/dev/null; then
+  echo "Killing processes using port 8000..."
+  lsof -ti :8000 | xargs kill -9 2>/dev/null || true
+  sleep 2
+elif netstat -tuln 2>/dev/null | grep -q ':8000 '; then
+  echo "Port 8000 appears in use but no process found, waiting..."
+  sleep 3
+fi
 
 # Wait for port 8000 to be released (up to 10 seconds)
 echo "Waiting for port 8000 to be released..."
 for i in $(seq 1 10); do
-  if ! lsof -i :8000 &>/dev/null && ! netstat -tuln 2>/dev/null | grep -q ':8000 '; then
+  if ! lsof -i :8000 &>/dev/null 2>&1 && ! netstat -tuln 2>/dev/null | grep -q ':8000 '; then
     echo "✓ Port 8000 is free"
     break
   fi
   echo "  Port 8000 still in use, waiting... ($i/10)"
   sleep 1
 done
+
+if lsof -i :8000 &>/dev/null 2>&1; then
+  echo "⚠ Warning: Port 8000 still in use, but proceeding anyway"
+fi
 
 # Start services
 echo ""
