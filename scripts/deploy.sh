@@ -397,7 +397,7 @@ POSTGRES_PASSWORD=$(grep -E '^POSTGRES_PASSWORD=' "$PROJECT_DIR/.env" | cut -d'=
 echo ""
 echo "Running Alembic migrations..."
 if docker run --rm \
-  --network cancerbot-private_osnet \
+  --network cancerbot_osnet \
   --env-file "$PROJECT_DIR/.env" \
   -e POSTGRES_URL="postgresql+asyncpg://cancerbot:${POSTGRES_PASSWORD}@cancerbot-postgres:5432/cancerbot" \
   -v "$(pwd):/app" -w /app \
