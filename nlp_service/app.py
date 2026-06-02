@@ -12,7 +12,7 @@ import scispacy  # required to register scispaCy pipeline components
 import scispacy.abbreviation  # registers abbreviation_detector factory
 from spellchecker import SpellChecker
 
-from sqlalchemy import select, or_
+from sqlalchemy import select, or_, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
@@ -46,10 +46,20 @@ async def lifespan(_: FastAPI):
     if DATABASE_ENABLED:
         try:
             async with engine.begin() as conn:
-                await conn.run_sync(Base.metadata.create_all)
+                await conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS abbreviations (
+                        short VARCHAR(100) PRIMARY KEY,
+                        long VARCHAR NOT NULL,
+                        source VARCHAR(50) NOT NULL DEFAULT 'manual',
+                        confidence FLOAT NOT NULL DEFAULT 1.0,
+                        updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+                    )
+                """))
             print("abbreviations table created/verified")
         except Exception as e:
             print(f"Error creating abbreviations table: {e}")
+            import traceback
+            traceback.print_exc()
 
         try:
             count = await load_abbrev_cache()
@@ -60,6 +70,8 @@ async def lifespan(_: FastAPI):
             print(f"abbrev cache loaded: {count} entries")
         except Exception as e:
             print(f"Error loading abbrev cache: {e}")
+            import traceback
+            traceback.print_exc()
             count = 0
     else:
         print("abbrev cache disabled: NLP_DATABASE_URL/DATABASE_URL/POSTGRES_URL not set")
