@@ -297,7 +297,7 @@ fi
 
 # Force remove any remaining containers that might conflict
 echo "Checking for conflicting containers..."
-for container in cancerbot-postgres opensearch-node1 opensearch-node2 cancerbot-backend cancerbot-nlp; do
+for container in cancerbot-postgres opensearch-node1 opensearch-node2 opensearch-dashboards cancerbot-backend cancerbot-nlp; do
   if docker ps -a --format '{{.Names}}' | grep -q "^${container}$"; then
     echo "Removing conflicting container: $container"
     docker rm -f "$container" 2>/dev/null || true
