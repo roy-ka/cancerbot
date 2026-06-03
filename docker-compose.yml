@@ -90,6 +90,7 @@ services:
   #   networks: [osnet]
 
   backend:
+    profiles: ['prod']
     build:
       context: .
       dockerfile: Dockerfile

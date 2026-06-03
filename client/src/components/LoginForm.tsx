@@ -41,6 +41,9 @@ export default function LoginForm({
       const err = await res.json()
       const errorMessage = err?.detail ?? 'Login failed'
       setError(errorMessage)
+      if (res.status === 429) {
+        console.error('Account locked:', errorMessage)
+      }
       throw new Error(errorMessage)
     }
   }

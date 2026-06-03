@@ -12,6 +12,12 @@ from src.db.repositories.users import (
     update_last_login,
 )
 from src.db.repositories.password_resets import create_reset_code, verify_and_consume_code
+from src.db.repositories.login_attempts import (
+    increment_failed_attempts,
+    reset_failed_attempts,
+    is_account_locked,
+    get_remaining_attempts,
+)
 from src.utils.email import send_password_reset_email
 import logging
 
@@ -52,12 +58,36 @@ async def register_user(req: CreateUserRequest, db: Session = Depends(get_db)):
 
 @router.post("/login/")
 async def generate_token(req: LoginRequest, response: Response, db: Session = Depends(get_db)):
+    # Check if account is locked due to too many failed attempts
+    if is_account_locked(db, req.email):
+        raise HTTPException(
+            status_code=429,
+            detail="Account locked due to too many failed login attempts. Please reset your password."
+        )
+
     user = get_user_by_email(db=db, email=req.email)
     logging.info(f"Login attempt for user_id: {user.id if user else 'unknown'}")
+
     if not user:
+        increment_failed_attempts(db, req.email)
+        remaining = get_remaining_attempts(db, req.email)
+        if remaining == 0:
+            raise HTTPException(
+                status_code=429,
+                detail="Too many failed login attempts. Account locked. Please reset your password."
+            )
         raise HTTPException(status_code=401, detail="Wrong email")
+
     if not SecurityUtils.verify_password(req.password, user.password_hash):
+        increment_failed_attempts(db, req.email)
+        remaining = get_remaining_attempts(db, req.email)
+        if remaining == 0:
+            raise HTTPException(
+                status_code=429,
+                detail="Too many failed login attempts. Account locked. Please reset your password."
+            )
         raise HTTPException(status_code=401, detail="Incorrect password")
+    reset_failed_attempts(db, req.email)
     update_last_login(db=db, user=user)
     if req.rememberMe:
         max_age = 2592000  # 30 days
