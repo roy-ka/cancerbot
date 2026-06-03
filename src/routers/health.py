@@ -26,7 +26,8 @@ async def health_check(db: Session = Depends(get_db)):
 
     try:
         from src.classes.ollama_connector import OllamaConnector
-        models = OllamaConnector._available_models()
+        response = OllamaConnector.ollama.list()
+        models = response.get('models', []) if hasattr(response, 'get') else getattr(response, 'models', [])
         if models:
             checks["ollama"] = {"status": "ok", "models": len(models)}
         else:

@@ -1,7 +1,64 @@
-import React, { useState } from 'react'
-import { Stack, TextField, FormControl, Button, Checkbox, FormControlLabel, Link, Box, Alert } from '@mui/material'
+import React, { useState, useMemo } from 'react'
+import { Stack, TextField, FormControl, Button, Checkbox, FormControlLabel, Link, Box, Alert, Typography } from '@mui/material'
 import { Link as RouterLink } from 'react-router-dom'
 import type { RegistrationPayload } from '../types'
+
+interface PasswordRequirement {
+  label: string
+  met: boolean
+}
+
+function PasswordRequirements({ password }: { password: string }) {
+  const requirements: PasswordRequirement[] = useMemo(
+    () => [
+      { label: 'At least 8 characters', met: password.length >= 8 },
+    ],
+    [password]
+  )
+
+  return (
+    <Box sx={{ mt: 1, p: 2, borderRadius: 1, bgcolor: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.1)' }}>
+      <Typography variant="subtitle2" sx={{ mb: 1, color: 'rgba(255, 255, 255, 0.7)', fontSize: '0.85rem', fontWeight: 600 }}>
+        Password Requirements
+      </Typography>
+      <Stack spacing={0.75}>
+        {requirements.map((req) => (
+          <Box
+            key={req.label}
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 1,
+              color: req.met ? 'rgba(47, 227, 198, 0.9)' : 'rgba(255, 255, 255, 0.5)',
+              fontSize: '0.875rem',
+              transition: 'color 0.2s ease',
+            }}
+          >
+            <Box
+              sx={{
+                width: 16,
+                height: 16,
+                borderRadius: '50%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '0.7rem',
+                fontWeight: 'bold',
+                flexShrink: 0,
+                ...(req.met
+                  ? { bgcolor: 'rgba(47, 227, 198, 0.3)', color: 'rgba(47, 227, 198, 0.9)', border: '1px solid rgba(47, 227, 198, 0.6)' }
+                  : { bgcolor: 'transparent', color: 'rgba(255, 255, 255, 0.4)', border: '1px solid rgba(255, 255, 255, 0.2)' }),
+              }}
+            >
+              {req.met ? '✓' : '○'}
+            </Box>
+            {req.label}
+          </Box>
+        ))}
+      </Stack>
+    </Box>
+  )
+}
 
 export default function RegistrationForm({
   changeToLogin,
@@ -116,6 +173,8 @@ export default function RegistrationForm({
             onChange={changePassword}
             error={passwordError}
           />
+
+          {password && <PasswordRequirements password={password} />}
 
           <Box>
             <FormControlLabel
