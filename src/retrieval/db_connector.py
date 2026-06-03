@@ -20,6 +20,7 @@ class dbConnector:
       'dimensions': 768,
       'description': 'A general-purpose text embedding model by Nomic AI, suitable for various NLP tasks including semantic search, clustering, and classification.',
       'sources_index': 'v1.5_en_nomic-embed-text_index',
+      'claims_index': 'v1.5_claims_nomic-embed-text_index',
     },
   }
 
@@ -72,6 +73,30 @@ class dbConnector:
       refresh=True
     )
     return response
+
+  @classmethod
+  def ensure_all_indexes(cls):
+    """Ensure all required indexes exist. Create them if they don't."""
+    cls._initialize()
+    if not cls.db_client or not cls._model:
+      cls.logger.warning("OpenSearch not available, skipping index initialization")
+      return False
+
+    indexes_to_create = ['sources_index', 'claims_index']
+    all_created = True
+
+    for index_key in indexes_to_create:
+      if index_key not in cls._model:
+        cls.logger.warning(f"Index key '{index_key}' not found in model configuration")
+        continue
+
+      try:
+        cls.create_index(index_key)
+      except Exception as e:
+        cls.logger.error(f"Failed to ensure index {index_key}: {e}")
+        all_created = False
+
+    return all_created
 
   @classmethod
   def create_index(cls, index_name):

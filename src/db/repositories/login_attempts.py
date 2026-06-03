@@ -1,6 +1,7 @@
 from datetime import datetime, timezone, timedelta
 from sqlalchemy.orm import Session
 from src.db.models import LoginAttempt
+import logging
 
 MAX_LOGIN_ATTEMPTS = 5
 LOCKOUT_DURATION_MINUTES = 30
@@ -37,6 +38,7 @@ def reset_failed_attempts(db: Session, email: str) -> None:
 def is_account_locked(db: Session, email: str) -> bool:
     """Check if account is locked due to too many failed attempts."""
     attempt = db.query(LoginAttempt).filter(LoginAttempt.email == email).first()
+    logging.info(f"Checking lock status for {email}: {attempt.failed_attempts if attempt else 'no record'} failed attempts")
     if not attempt or not attempt.locked_until:
         return False
 
