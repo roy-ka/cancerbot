@@ -5,6 +5,7 @@ import {
   Button,
   FormControlLabel,
   Checkbox,
+  Alert,
 } from '@mui/material'
 import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
@@ -18,6 +19,7 @@ export default function LoginForm({
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [rememberMe, setRememberMe] = useState(false)
+  const [error, setError] = useState('')
   const navigate = useNavigate()
 
   const login = async (payload: LoginPayload) => {
@@ -33,11 +35,13 @@ export default function LoginForm({
     })
     if (res.ok) {
       console.log('Login successful, redirecting to dashboard...')
+      setError('')
       navigate('/chat')
     } else {
-      res.json().then((err) => {
-        throw new Error(err?.message ?? 'Login failed')
-      })
+      const err = await res.json()
+      const errorMessage = err?.detail ?? 'Login failed'
+      setError(errorMessage)
+      throw new Error(errorMessage)
     }
   }
 
@@ -64,6 +68,11 @@ export default function LoginForm({
   return (
     <FormControl component="form" onSubmit={onSubmit} sx={{ width: '100%' }}>
       <Stack spacing={2} sx={{ width: '100%' }}>
+        {error && (
+          <Alert severity="error" onClose={() => setError('')}>
+            {error}
+          </Alert>
+        )}
         <TextField
           fullWidth
           required

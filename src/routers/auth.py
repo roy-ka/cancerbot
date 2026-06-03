@@ -54,8 +54,10 @@ async def register_user(req: CreateUserRequest, db: Session = Depends(get_db)):
 async def generate_token(req: LoginRequest, response: Response, db: Session = Depends(get_db)):
     user = get_user_by_email(db=db, email=req.email)
     logging.info(f"Login attempt for user_id: {user.id if user else 'unknown'}")
-    if not user or not SecurityUtils.verify_password(req.password, user.password_hash):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+    if not user:
+        raise HTTPException(status_code=401, detail="Wrong email")
+    if not SecurityUtils.verify_password(req.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Incorrect password")
     update_last_login(db=db, user=user)
     if req.rememberMe:
         max_age = 2592000  # 30 days
