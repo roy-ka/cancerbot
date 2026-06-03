@@ -6,6 +6,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 CancerBot is a Retrieval-Augmented Generation (RAG) chatbot for cancer-related medical information. It uses a hybrid search approach (BM25 + KNN vector search) over a corpus of medical claims and source documents, with a local LLM (Ollama) for generation.
 
+## Code Review Workflow
+
+**Before committing changes, always:**
+
+1. **Review** - Examine all changed code for correctness
+2. **Fix Security** - Check for vulnerabilities (SQL injection, XSS, command injection, etc.)
+3. **Optimize** - Improve performance, remove unnecessary code, simplify logic
+4. **Verify** - Test changes work as intended (TypeScript/Python compilation, runtime behavior)
+
+This applies to all commits: features, bug fixes, refactoring, migrations, etc.
+
 ## Commands
 
 ### Backend API
