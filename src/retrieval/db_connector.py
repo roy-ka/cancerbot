@@ -67,12 +67,22 @@ class dbConnector:
     cls._initialize()
     if not cls.db_client:
       raise RuntimeError("OpenSearch client not available")
-    response = cls.db_client.index(
-      index=cls._model[index_name],
-      body=document,
-      refresh=True
-    )
-    return response
+
+    index_name_mapped = cls._model[index_name]
+    doc_id = document.get('id', 'unknown')
+    cls.logger.debug(f"[OpenSearch] Indexing document '{doc_id}' to index '{index_name_mapped}'")
+
+    try:
+      response = cls.db_client.index(
+        index=index_name_mapped,
+        body=document,
+        refresh=True
+      )
+      cls.logger.debug(f"[OpenSearch] Successfully indexed '{doc_id}': {response.get('_id')}")
+      return response
+    except Exception as e:
+      cls.logger.error(f"[OpenSearch] Failed to index '{doc_id}': {e}")
+      raise
 
   @classmethod
   def ensure_all_indexes(cls):
@@ -149,11 +159,29 @@ class dbConnector:
     cls._initialize()
     if not cls.db_client:
       raise RuntimeError("OpenSearch client not available")
-    res = cls.db_client.search(
-      index=cls._model[index_type],
-      body=body
-    )
-    return res
+
+    index_name = cls._model[index_type]
+    query = body.get('query', {})
+    cls.logger.debug(f"[OpenSearch] Searching index '{index_name}' with query: {query}")
+
+    try:
+      res = cls.db_client.search(
+        index=index_name,
+        body=body
+      )
+      hit_count = len(res.get('hits', {}).get('hits', []))
+      total_hits = res.get('hits', {}).get('total', {}).get('value', 0)
+      cls.logger.debug(f"[OpenSearch] Search returned {hit_count} results (total: {total_hits})")
+
+      # Log document IDs found
+      if hit_count > 0:
+        doc_ids = [hit.get('_source', {}).get('id', hit.get('_id')) for hit in res['hits']['hits']]
+        cls.logger.debug(f"[OpenSearch] Found document IDs: {doc_ids}")
+
+      return res
+    except Exception as e:
+      cls.logger.error(f"[OpenSearch] Search failed: {e}")
+      raise
 
   @classmethod
   def existing_source_ids(cls, ids: list) -> set:

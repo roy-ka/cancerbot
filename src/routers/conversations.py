@@ -149,16 +149,24 @@ async def post_message(
         db.rollback()
         raise
     # Retrieval + generation outside DB tx
+    logging.info(f"[conversation] Running retrieval for query: '{req.content}'")
     context = run_retrieval(req.content)
+    logging.debug(f"[conversation] Retrieval context: {len(context.get('generation_context', []))} items, sources_ids={context.get('sources_ids')}")
+
+    logging.info(f"[conversation] Generating response with {len(context.get('generation_context', []))} context items")
     response = OllamaConnector.generate_text(
         context=context["generation_context"],
         question=req.content,
         conversation = conversation
-        
+
     )
+    logging.debug(f"[conversation] Generated response ({len(response)} chars)")
 
     # Store assistant message
     try:
+        sources_ids = context.get('sources_ids')
+        logging.info(f"[conversation] Storing assistant message with sources_ids={sources_ids}")
+
         asistent_message = add_message(
             db=db,
             conversation_id=conversation.id,
@@ -166,8 +174,9 @@ async def post_message(
             content=response,
             intent=context.get("intent"),
             claim_ids= context.get('claims_ids'),
-            sources_ids= context.get('sources_ids')
+            sources_ids= sources_ids
         )
+        logging.debug(f"[conversation] Message stored with ID={asistent_message.id}, sources_ids from DB={asistent_message.sources_ids}")
 
         db.commit()
         db.refresh(asistent_message)
