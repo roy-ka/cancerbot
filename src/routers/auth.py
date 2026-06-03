@@ -39,9 +39,19 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 @router.post("/register/", status_code=201)
 async def register_user(req: CreateUserRequest, db: Session = Depends(get_db)):
-    # Validate password length
+    # Validate password requirements
+    import re
     if len(req.password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    if not re.search(r'[a-z]', req.password):
+        raise HTTPException(status_code=400, detail="Password must contain lowercase letters")
+    if not re.search(r'[A-Z]', req.password):
+        raise HTTPException(status_code=400, detail="Password must contain uppercase letters")
+    if not re.search(r'[0-9]', req.password):
+        raise HTTPException(status_code=400, detail="Password must contain numbers")
+    if not re.search(r'[!@#$%^&*()_+\-=\[\]{};\':"\\|,.<>\/?]', req.password):
+        raise HTTPException(status_code=400, detail="Password must contain special characters")
+
     # Check for existing email first to return a clean error
     existing = get_user_by_email(db=db, email=req.email)
     if existing:

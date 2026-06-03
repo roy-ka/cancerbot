@@ -12,6 +12,10 @@ function PasswordRequirements({ password }: { password: string }) {
   const requirements: PasswordRequirement[] = useMemo(
     () => [
       { label: 'At least 8 characters', met: password.length >= 8 },
+      { label: 'Lowercase letters (a-z)', met: /[a-z]/.test(password) },
+      { label: 'Uppercase letters (A-Z)', met: /[A-Z]/.test(password) },
+      { label: 'Numbers (0-9)', met: /[0-9]/.test(password) },
+      { label: 'Special characters (!@#$%^&*)', met: /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password) },
     ],
     [password]
   )
