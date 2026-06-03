@@ -9,7 +9,7 @@ class TestRegister:
             json={
                 "name": "New User",
                 "email": "newuser@example.com",
-                "password": "SecurePass123",
+                "password": "SecurePass123!",
             },
         )
         assert response.status_code == 201
@@ -22,7 +22,7 @@ class TestRegister:
             json={
                 "name": "Another User",
                 "email": test_user.email,
-                "password": "AnotherPass123",
+                "password": "AnotherPass123!",
             },
         )
         assert response.status_code == 400
@@ -49,7 +49,7 @@ class TestLogin:
             "/auth/login/",
             json={
                 "email": test_user.email,
-                "password": "TestPass123",
+                "password": "TestPass123!",
                 "rememberMe": False,
             },
         )
@@ -128,7 +128,7 @@ class TestResetPassword:
                 json={
                     "email": test_user.email,
                     "code": "123456",
-                    "new_password": "NewSecurePass123",
+                    "new_password": "NewSecurePass123!",
                 },
             )
             assert response.status_code == 200
@@ -142,7 +142,7 @@ class TestResetPassword:
                 json={
                     "email": test_user.email,
                     "code": "999999",
-                    "new_password": "NewPassword123",
+                    "new_password": "NewPassword123!",
                 },
             )
             assert response.status_code == 400
@@ -153,7 +153,7 @@ class TestResetPassword:
             json={
                 "email": "unknown@example.com",
                 "code": "123456",
-                "new_password": "NewPassword123",
+                "new_password": "NewPassword123!",
             },
         )
         assert response.status_code == 400

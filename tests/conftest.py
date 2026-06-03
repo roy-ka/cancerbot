@@ -52,7 +52,7 @@ def test_user(db_session):
         db_session,
         name="Test User",
         email="testuser@example.com",
-        password_hash=SecurityUtils.hash_password("TestPass123"),
+        password_hash=SecurityUtils.hash_password("TestPass123!"),
     )
     return user
 
