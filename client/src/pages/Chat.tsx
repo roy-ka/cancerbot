@@ -16,6 +16,12 @@ export default function Chat() {
   const [selectedConversationId, setSelectedConversationId] =
     useState<string>('new')
   const [inputValue, setInputValue] = useState<string>('')
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+
+  const setSelectedConversationIdWithClose = (id: string | React.SetStateAction<string>) => {
+    setSelectedConversationId(id)
+    setSidebarOpen(false)
+  }
 
   const textToMessage = (text: string): Message => ({
     id: `temp-${Date.now()}`,
@@ -194,14 +200,31 @@ export default function Chat() {
   }
 
   return (
-    <Box className="chat-root">
+    <Box className={`chat-root ${sidebarOpen ? 'sidebar-open' : ''}`}>
+      <button
+        className="chat-sidebar-toggle"
+        onClick={() => setSidebarOpen(!sidebarOpen)}
+        aria-label="Toggle conversations"
+      >
+        ☰
+      </button>
+      {sidebarOpen && (
+        <div
+          className="chat-sidebar-backdrop"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
       <Grid container className="chat-grid" spacing={0}>
-        <Grid size={3} className="chat-conversations">
+        <Grid
+          size={3}
+          className={`chat-conversations ${sidebarOpen ? 'open' : ''}`}
+        >
           <ConversationList
-            setSelectedConversationId={setSelectedConversationId}
+            setSelectedConversationId={setSelectedConversationIdWithClose}
             selectedConversationId={selectedConversationId}
             conversations={conversations}
             onLogout={handleLogout}
+            onCloseSidebar={() => setSidebarOpen(false)}
           />
         </Grid>
         <Grid size={9} className="chat-messages">

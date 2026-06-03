@@ -16,11 +16,13 @@ export default function ConversationList({
   selectedConversationId,
   setSelectedConversationId,
   onLogout,
+  onCloseSidebar,
 }: {
   conversations?: Conversation[]
   selectedConversationId?: string
   setSelectedConversationId: React.Dispatch<React.SetStateAction<string>>
   onLogout?: () => void
+  onCloseSidebar?: () => void
 }) {
   const onclick = (id: string) => {
     setSelectedConversationId(id)
@@ -32,11 +34,18 @@ export default function ConversationList({
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
           <PersonOutlineIcon fontSize="small" sx={{ color: 'rgba(255,255,255,0.6)' }} />
         </Box>
-        <Tooltip title="Logout">
-          <IconButton size="small" onClick={onLogout} sx={{ color: 'rgba(255,255,255,0.6)' }}>
-            <LogoutIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
+        <Box sx={{ display: 'flex', gap: 1 }}>
+          {onCloseSidebar && (
+            <button className="conversation-list-close-btn" onClick={onCloseSidebar}>
+              ✕
+            </button>
+          )}
+          <Tooltip title="Logout">
+            <IconButton size="small" onClick={onLogout} sx={{ color: 'rgba(255,255,255,0.6)' }}>
+              <LogoutIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        </Box>
       </Box>
       <Typography className="conversation-title" pb={2}>
         Conversations
