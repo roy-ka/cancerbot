@@ -1,10 +1,12 @@
-from fastapi import APIRouter, Depends, Response,HTTPException, status
+from fastapi import APIRouter, Depends, Response, HTTPException, status
 from sqlalchemy.orm import Session
 from src.deps.db import get_db
 from src.auth.security import SecurityUtils
 from src.deps.auth import get_current_user
 from pydantic import BaseModel
-from datetime import timedelta,datetime,timezone
+from datetime import timedelta, datetime, timezone
+import re
+import logging
 from src.utils.utils import is_prod
 from src.db.repositories.users import (
     create_user,
@@ -16,10 +18,15 @@ from src.db.repositories.login_attempts import (
     increment_failed_attempts,
     reset_failed_attempts,
     is_account_locked,
-    get_remaining_attempts,
 )
 from src.utils.email import send_password_reset_email
-import logging
+
+PASSWORD_REGEX_PATTERNS = {
+    'lowercase': r'[a-z]',
+    'uppercase': r'[A-Z]',
+    'digit': r'[0-9]',
+    'special': r'[!@#$%^&*()_+\-=\[\]{};\':"\\|,.<>\/?]',
+}
 
 
 
@@ -35,22 +42,28 @@ class LoginRequest(BaseModel):
 
 
 
+def validate_password(password: str) -> str:
+    """Validate password strength. Returns error message or empty string if valid."""
+    if len(password) < 8:
+        return "Password must be at least 8 characters"
+    if not re.search(PASSWORD_REGEX_PATTERNS['lowercase'], password):
+        return "Password must contain lowercase letters"
+    if not re.search(PASSWORD_REGEX_PATTERNS['uppercase'], password):
+        return "Password must contain uppercase letters"
+    if not re.search(PASSWORD_REGEX_PATTERNS['digit'], password):
+        return "Password must contain numbers"
+    if not re.search(PASSWORD_REGEX_PATTERNS['special'], password):
+        return "Password must contain special characters"
+    return ""
+
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 @router.post("/register/", status_code=201)
 async def register_user(req: CreateUserRequest, db: Session = Depends(get_db)):
     # Validate password requirements
-    import re
-    if len(req.password) < 8:
-        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
-    if not re.search(r'[a-z]', req.password):
-        raise HTTPException(status_code=400, detail="Password must contain lowercase letters")
-    if not re.search(r'[A-Z]', req.password):
-        raise HTTPException(status_code=400, detail="Password must contain uppercase letters")
-    if not re.search(r'[0-9]', req.password):
-        raise HTTPException(status_code=400, detail="Password must contain numbers")
-    if not re.search(r'[!@#$%^&*()_+\-=\[\]{};\':"\\|,.<>\/?]', req.password):
-        raise HTTPException(status_code=400, detail="Password must contain special characters")
+    password_error = validate_password(req.password)
+    if password_error:
+        raise HTTPException(status_code=400, detail=password_error)
 
     # Check for existing email first to return a clean error
     existing = get_user_by_email(db=db, email=req.email)
@@ -76,12 +89,11 @@ async def generate_token(req: LoginRequest, response: Response, db: Session = De
         )
 
     user = get_user_by_email(db=db, email=req.email)
-    logging.info(f"Login attempt for user_id: {user.id if user else 'unknown'}")
+    logging.info(f"Login attempt for email: {req.email}")
 
     if not user:
-        increment_failed_attempts(db, req.email)
-        remaining = get_remaining_attempts(db, req.email)
-        if remaining == 0:
+        attempt = increment_failed_attempts(db, req.email)
+        if attempt.failed_attempts >= 5:
             raise HTTPException(
                 status_code=429,
                 detail="Too many failed login attempts. Account locked. Please reset your password."
@@ -89,14 +101,14 @@ async def generate_token(req: LoginRequest, response: Response, db: Session = De
         raise HTTPException(status_code=401, detail="Wrong email")
 
     if not SecurityUtils.verify_password(req.password, user.password_hash):
-        increment_failed_attempts(db, req.email)
-        remaining = get_remaining_attempts(db, req.email)
-        if remaining == 0:
+        attempt = increment_failed_attempts(db, req.email)
+        if attempt.failed_attempts >= 5:
             raise HTTPException(
                 status_code=429,
                 detail="Too many failed login attempts. Account locked. Please reset your password."
             )
         raise HTTPException(status_code=401, detail="Incorrect password")
+
     reset_failed_attempts(db, req.email)
     update_last_login(db=db, user=user)
     if req.rememberMe:
