@@ -52,9 +52,6 @@ services:
       - opensearch-node2
     networks: [osnet]
 
-  # ollama runs natively on Mac for Metal (GPU) acceleration — not in Docker
-  # brew install ollama && ollama serve
-
   postgres:
     image: postgres:16
     container_name: cancerbot-postgres
@@ -73,12 +70,14 @@ services:
       retries: 20
     networks: [osnet]
 
+  # NLP service disabled - nmslib-metabrainz fails to compile on this architecture
   cancerbot-nlp:
     build:
       context: ./nlp_service
       dockerfile: Dockerfile
     image: cancerbot-nlp:latest
     container_name: cancerbot-nlp
+    env_file: .env
     environment:
       NLP_DATABASE_URL: ${NLP_DATABASE_URL}
     ports:
@@ -95,7 +94,7 @@ services:
       dockerfile: Dockerfile
     env_file: .env
     ports:
-      - "8000:8000"
+      - '8000:8000'
     depends_on:
       - postgres
     healthcheck:
