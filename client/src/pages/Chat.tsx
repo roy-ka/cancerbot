@@ -173,30 +173,81 @@ export default function Chat() {
     // Add optimistic message immediately (functional update avoids stale state)
     setMessages((prev) => [...prev, optimisticMessage])
     setInputValue('')
-    const url = `${import.meta.env.VITE_BASE_URL}/conversations/${selectedConversationId === 'new' ? 'new' : `${selectedConversationId}/add_message`}`
 
-    fetch(url, {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(optimisticMessage),
-    })
-      .then(async (res) => {
-        if (!res.ok) throw new Error(await res.text())
-        return res.json()
+    if (selectedConversationId === 'new') {
+      // For new conversations, use POST /conversations/new
+      const url = `${import.meta.env.VITE_BASE_URL}/conversations/new`
+      fetch(url, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(optimisticMessage),
       })
-      .then((res) => {
-        if (!res) return
-        setMessages((prev) => {
-          const withoutTemp = prev.slice(0, -1)
-          return [...withoutTemp, ...res.messages]
+        .then(async (res) => {
+          if (!res.ok) throw new Error(await res.text())
+          return res.json()
         })
-        if (selectedConversationId === 'new') {
+        .then((res) => {
+          if (!res) return
+          setMessages((prev) => {
+            const withoutTemp = prev.slice(0, -1)
+            return [...withoutTemp, ...res.messages]
+          })
           setConversations((prev) => [res.conversation, ...prev])
           setSelectedConversationId(res.conversation.id)
+        })
+        .catch((e) => console.error('message submit failed:', e))
+    } else {
+      // For existing conversations, use WebSocket
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+      const wsUrl = `${protocol}//${window.location.host}${import.meta.env.VITE_BASE_URL.replace(/^https?:\/\/[^/]+/, '')}/conversations/${selectedConversationId}/add_message/ws`
+
+      const ws = new WebSocket(wsUrl)
+
+      ws.onopen = () => {
+        ws.send(JSON.stringify(optimisticMessage))
+      }
+
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data)
+
+          if (msg.type === 'stage') {
+            // Just log stage updates; UI will show "generating" state
+            console.debug('WebSocket stage:', msg.stage, msg.data)
+          } else if (msg.type === 'final') {
+            // Replace optimistic message with real messages
+            setMessages((prev) => {
+              const withoutTemp = prev.slice(0, -1)
+              return [...withoutTemp, ...msg.messages]
+            })
+            // Update conversation in list
+            if (msg.conversation?.id) {
+              setConversations((prev) => {
+                const idx = prev.findIndex((c) => c.id === msg.conversation.id)
+                if (idx === -1) return prev
+                const updated = [...prev]
+                updated[idx] = { ...updated[idx], ...msg.conversation }
+                return updated
+              })
+            }
+          } else if (msg.type === 'error') {
+            console.error('WebSocket error:', msg.message)
+            // Optionally show error to user
+          }
+        } catch (e) {
+          console.error('Failed to parse WebSocket message:', e)
         }
-      })
-      .catch((e) => console.error('message submit failed:', e))
+      }
+
+      ws.onerror = (event) => {
+        console.error('WebSocket error:', event)
+      }
+
+      ws.onclose = () => {
+        console.debug('WebSocket closed')
+      }
+    }
   }
 
   return (

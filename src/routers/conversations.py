@@ -1,9 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from sqlalchemy.orm import Session
-from typing import Literal, Optional
+from typing import Literal, Optional, Dict, Any, Awaitable, Callable
 from src.deps.db import get_db
 from src.deps.auth import get_current_user
 import logging
+import time
+import asyncio
+import os
 from pydantic import BaseModel
 from src.db.repositories.conversations import (
     get_conversation_by_id,
@@ -13,10 +16,11 @@ from src.db.repositories.conversations import (
     format_last_msg_time,
     soft_delete_conversation,
 )
-from src.db.repositories.messeges import add_message, get_messages_by_conversation_id
+from src.db.repositories.messeges import add_message, add_claims_and_sources, get_messages_by_conversation_id, get_recent_messages
 from uuid import UUID
 from src.retrieval import run_retrieval
 from src.classes.ollama_connector import OllamaConnector
+from src.routers.conversation_helper import _emit_noop, search_and_embed
 
 ROLLS = Literal['user', 'assistant']
 
@@ -26,7 +30,138 @@ class Message(BaseModel):
     timestamp: str | None = None  # Optional timestamp for retrieval context (e.g. "2024-01-01T00:00:00Z")
     role: ROLLS = 'user'  # Role of the message sender, default to 'user'
 
+StageEmitter = Callable[[str, Dict[str, Any] | None], Awaitable[None]]
+
+async def _emit_stage_noop(stage: str, data: Dict[str, Any] | None = None) -> None:
+    pass
+
 router = APIRouter(prefix="/conversations", tags=["conversations"])
+
+
+async def _process_post_message(
+    *,
+    conversation_id: UUID,
+    req: Message,
+    db: Session,
+    current_user,
+    conversation=None,
+    emit: StageEmitter = _emit_stage_noop,
+):
+    t0 = time.time()
+
+    await emit('loading_conversation', {'conversation_id': str(conversation_id)})
+
+    conversation = conversation or get_conversation_by_id(
+        db=db,
+        conversation_id=conversation_id,
+        current_user=current_user,
+    )
+
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    if str(conversation.user_id) != str(current_user.id):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    await emit('saving_user_message', {})
+
+    try:
+        user_message = add_message(
+            db=db,
+            conversation_id=conversation.id,
+            role="user",
+            content=req.content,
+        )
+        db.commit()
+        db.refresh(user_message)
+    except Exception:
+        db.rollback()
+        raise
+
+    await emit('retrieving_context', {})
+    context = await asyncio.to_thread(run_retrieval, req.content)
+    max_history = int(os.getenv('PROMPT_MAX_HISTORY', '8'))
+    history = get_recent_messages(db, conversation.id, limit=max_history)
+    await emit('building_prompt', {'history_messages': len(history)})
+    await emit('generating_answer', {})
+
+    response = await asyncio.to_thread(
+        OllamaConnector.generate_text,
+        context=context["generation_context"],
+        question=req.content,
+        history=history,
+    )
+    if response == 'Insufficient evidence in provided context.':
+        await emit('fallback_triggered', {'reason': 'insufficient_evidence'})
+        fallback_meta = await search_and_embed(conversation, emit=emit)
+
+        await emit(
+            're_retrieving_context',
+            {
+                'indexed': fallback_meta.get('indexed', 0),
+                'terms_count': len(fallback_meta.get('terms') or []),
+            },
+        )
+        context = await asyncio.to_thread(run_retrieval, req.content)
+        await emit('rebuilding_prompt', {'history_messages': len(history)})
+        await emit('re_generating_answer', {})
+        response = await asyncio.to_thread(
+            OllamaConnector.generate_text,
+            context=context["generation_context"],
+            question=req.content,
+            history=history,
+        )
+        if response == 'Insufficient evidence in provided context.':
+            response = (
+                "Insufficient evidence in provided context. "
+                f"Fallback indexing completed with {fallback_meta.get('indexed', 0)} new sources "
+                f"(skipped {fallback_meta.get('skipped', 0)})."
+            )
+    await emit('saving_assistant_message', {'intent': context.get('intent')})
+
+    try:
+        assistant_message = add_message(
+            db=db,
+            conversation_id=conversation.id,
+            role="assistant",
+            content=response,
+            intent=context.get("intent"),
+            claim_ids=context.get('claims_ids'),
+            sources_ids=context.get('sources_ids'),
+        )
+
+        db.commit()
+        db.refresh(assistant_message)
+    except Exception:
+        db.rollback()
+        raise
+
+    add_claims_and_sources(assistant_message)
+
+    took_ms = int((time.time() - t0) * 1000)
+    await emit('done', {'took_ms': took_ms})
+
+    def _msg_to_dict(m):
+        return {
+            "id": str(m.id),
+            "role": m.role,
+            "content": m.content,
+            "created_at": m.created_at.isoformat() if getattr(m, 'created_at', None) else None,
+            "intent": getattr(m, 'intent', None),
+            "claims": getattr(m, 'claims', None),
+            "sources": getattr(m, 'sources', None),
+        }
+
+    return {
+        "messages": [_msg_to_dict(user_message), _msg_to_dict(assistant_message)],
+        "conversation": {
+            "id": str(conversation.id),
+            "title": conversation.title,
+            "updatedAt": assistant_message.created_at.isoformat() if getattr(assistant_message, 'created_at', None) else None,
+            "lastMessage": user_message.content,
+            "lastMessageTime": format_last_msg_time(user_message.created_at),
+        },
+    }
 
 
 @router.get("/")
@@ -128,71 +263,65 @@ async def post_message(
     current_user = Depends(get_current_user),
     conversation=None,
 ):
-    if conversation is None:
-        conversation = get_conversation_by_id_no_auth(db=db, conversation_id=conversation_id)
-        if conversation is None:
-            raise HTTPException(status_code=404, detail="Conversation not found")
-        if str(conversation.user_id) != str(current_user.id):
-            raise HTTPException(status_code=403, detail="Forbidden")
-
-    try:
-        user_message = add_message(
-            db=db,
-            conversation_id=conversation.id,
-            role="user",
-            content=req.content,
-        )
-        db.commit()
-        db.refresh(user_message)
-        
-    except Exception:
-        db.rollback()
-        raise
-    # Retrieval + generation outside DB tx
-    logging.info(f"[conversation] Running retrieval for query: '{req.content}'")
-    context = run_retrieval(req.content)
-    logging.debug(f"[conversation] Retrieval context: {len(context.get('generation_context', []))} items, sources_ids={context.get('sources_ids')}")
-
-    logging.info(f"[conversation] Generating response with {len(context.get('generation_context', []))} context items")
-    response = OllamaConnector.generate_text(
-        context=context["generation_context"],
-        question=req.content,
-        conversation = conversation
-
+    return await _process_post_message(
+        conversation_id=conversation_id,
+        req=req,
+        db=db,
+        current_user=current_user,
+        conversation=conversation,
     )
-    logging.debug(f"[conversation] Generated response ({len(response)} chars)")
 
-    # Store assistant message
+
+@router.websocket('/{conversation_id}/add_message/ws')
+async def post_message_ws(
+    websocket: WebSocket,
+    conversation_id: UUID,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    await websocket.accept()
+
+    async def emit(stage: str, data: Dict[str, Any] | None = None) -> None:
+        await websocket.send_json({
+            'type': 'stage',
+            'stage': stage,
+            'data': data or {},
+        })
+
     try:
-        sources_ids = context.get('sources_ids')
-        logging.info(f"[conversation] Storing assistant message with sources_ids={sources_ids}")
+        payload = await websocket.receive_json()
+        req = Message(**payload)
 
-        asistent_message = add_message(
+        await emit('received', {'conversation_id': str(conversation_id)})
+
+        result = await _process_post_message(
+            conversation_id=conversation_id,
+            req=req,
             db=db,
-            conversation_id=conversation.id,
-            role="assistant",
-            content=response,
-            intent=context.get("intent"),
-            claim_ids= context.get('claims_ids'),
-            sources_ids= sources_ids
+            current_user=current_user,
+            conversation=None,
+            emit=emit,
         )
-        logging.debug(f"[conversation] Message stored with ID={asistent_message.id}, sources_ids from DB={asistent_message.sources_ids}")
 
-        db.commit()
-        db.refresh(asistent_message)
-    except Exception:
-        db.rollback()
-        raise
-    return {
-        "messages": [user_message, asistent_message], 
-        "conversation": {
-            "id": str(conversation.id), 
-            "title": conversation.title,
-            "updatedAt": asistent_message.created_at,
-            'lastMessage': user_message.content,
-            'lastMessageTime':  format_last_msg_time(user_message.created_at),
-            }
-        }
+        await websocket.send_json({'type': 'final', **result})
+        # Wait for client to close — avoids racing a CLOSE frame against the final message
+        try:
+            await websocket.receive()
+        except WebSocketDisconnect:
+            pass
+
+    except WebSocketDisconnect:
+        return
+    except Exception as e:
+        logging.getLogger(__name__).exception("WebSocket error for conversation %s", conversation_id)
+        try:
+            await websocket.send_json({'type': 'error', 'message': 'An internal error occurred'})
+        except Exception:
+            pass
+        try:
+            await websocket.close()
+        except Exception:
+            pass
 
 @router.post("/new")
 async def new_conversation(

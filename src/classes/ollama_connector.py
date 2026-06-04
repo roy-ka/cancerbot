@@ -3,26 +3,26 @@ from dotenv import load_dotenv
 import os
 import json
 from typing import Any, Mapping, Sequence
-from src.db.models import Conversation, Message
+from src.db.models import Message
 
-class OllamaConnector:  
+class OllamaConnector:
   __name__='Ollama_connector'
-  
+
   load_dotenv()
   ollama_host = os.getenv('OLLAMA_URL', 'http://localhost:11434')
   embed_model = os.getenv('EMBED_MODEL_NAME', os.getenv('MODEL_NAME'))
   gen_model = os.getenv('GEN_MODEL_NAME')
   ollama = Client(
-      host=ollama_host  
+      host=ollama_host
   )
-  
+
   @classmethod
   def embed_text(cls, text):
     response = cls.ollama.embed(model=cls.embed_model, input=text)
     return response.embeddings[0]
 
   @classmethod
-  def generate_text(cls, context: Sequence[Any], question: str, conversation: Conversation) -> str:
+  def generate_text(cls, context: Sequence[Any], question: str, history: Sequence[Message]) -> str:
     
     """Generate an answer grounded in the provided context.
 
@@ -67,7 +67,7 @@ class OllamaConnector:
 
     # Keep only the most recent messages to avoid token bloat
     max_history = int(os.getenv('PROMPT_MAX_HISTORY', '8'))
-    recent_msgs = list(conversation.messages)[-max_history:]
+    recent_msgs = list(history)[-max_history:]
 
     # Drop assistant messages that are purely tool output (e.g., raw JSON blobs)
     def _is_tool_output(msg: Message) -> bool:
