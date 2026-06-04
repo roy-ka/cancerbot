@@ -200,7 +200,8 @@ export default function Chat() {
     } else {
       // For existing conversations, use WebSocket
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-      const wsUrl = `${protocol}//${window.location.host}${import.meta.env.VITE_BASE_URL.replace(/^https?:\/\/[^/]+/, '')}/conversations/${selectedConversationId}/add_message/ws`
+      const baseUrl = new URL(BASE_URL)
+      const wsUrl = `${protocol}//${baseUrl.host}/conversations/${selectedConversationId}/add_message/ws`
 
       const ws = new WebSocket(wsUrl)
 
