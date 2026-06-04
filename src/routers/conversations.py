@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from sqlalchemy.orm import Session
 from typing import Literal, Optional
+import json
 from src.deps.db import get_db
 from src.deps.auth import get_current_user
 import logging
@@ -208,6 +209,153 @@ async def new_conversation(
         current_user=current_user,
         conversation=conversation,
     )
+
+
+@router.websocket("/{conversation_id}/add_message/ws")
+async def websocket_add_message(websocket: WebSocket, conversation_id: UUID):
+    """WebSocket endpoint for real-time message generation with status updates."""
+    await websocket.accept()
+    logging.info(f"[websocket] Connected for conversation {conversation_id}")
+
+    try:
+        # Receive the message
+        data = await websocket.receive_text()
+        req = Message(**json.loads(data))
+        logging.debug(f"[websocket] Received message: {req.content}")
+
+        # Get database session (need to create it manually for WebSocket)
+        from src.deps.db import SessionLocal
+        db = SessionLocal()
+
+        try:
+            # Get current user from token (WebSocket auth)
+            from src.auth.security import SecurityUtils
+            from jose import JWTError
+            from src.db.repositories.users import get_user_by_id
+
+            token = None
+            auth_header = websocket.headers.get("authorization", "")
+            if auth_header.lower().startswith("bearer "):
+                token = auth_header.split(" ", 1)[1].strip()
+            else:
+                # Try to get from query params (common in WebSocket)
+                token = websocket.query_params.get("token")
+
+            if not token:
+                await websocket.send_json({"status": "error", "detail": "No authentication token"})
+                await websocket.close(code=1008)
+                return
+
+            try:
+                payload = SecurityUtils.decode_jwt_token(token)
+                user_id = payload.get("sub")
+                if not user_id:
+                    raise JWTError("Invalid token payload")
+                current_user = get_user_by_id(db=db, user_id=user_id)
+                if not current_user:
+                    raise JWTError("User not found")
+            except JWTError as e:
+                logging.warning(f"[websocket] Auth failed: {e}")
+                await websocket.send_json({"status": "error", "detail": "Unauthorized"})
+                await websocket.close(code=1008)
+                return
+
+            if not current_user:
+                await websocket.send_json({"status": "error", "detail": "Unauthorized"})
+                await websocket.close(code=1008)
+                return
+
+            # Get conversation
+            conversation = get_conversation_by_id_no_auth(db=db, conversation_id=conversation_id)
+            if not conversation or str(conversation.user_id) != str(current_user.id):
+                await websocket.send_json({"status": "error", "detail": "Conversation not found"})
+                await websocket.close(code=1008)
+                return
+
+            # Send loading status
+            await websocket.send_json({"status": "loading"})
+
+            # Save user message
+            await websocket.send_json({"status": "saving_user_message"})
+            user_message = add_message(
+                db=db,
+                conversation_id=conversation.id,
+                role="user",
+                content=req.content,
+            )
+            db.commit()
+            db.refresh(user_message)
+            logging.debug(f"[websocket] User message saved: {user_message.id}")
+
+            # Retrieval
+            await websocket.send_json({"status": "retrieving_context"})
+            logging.debug(f"[websocket] Running retrieval...")
+            context = run_retrieval(req.content)
+
+            # Generation
+            await websocket.send_json({"status": "generating_answer"})
+            logging.debug(f"[websocket] Generating answer with {len(context.get('generation_context', []))} context items...")
+            response = OllamaConnector.generate_text(
+                context=context["generation_context"],
+                question=req.content,
+                conversation=conversation,
+            )
+
+            # Save assistant message
+            sources_ids = context.get('sources_ids')
+            assistant_message = add_message(
+                db=db,
+                conversation_id=conversation.id,
+                role="assistant",
+                content=response,
+                intent=context.get("intent"),
+                claim_ids=context.get('claims_ids'),
+                sources_ids=sources_ids
+            )
+            db.commit()
+            db.refresh(assistant_message)
+            logging.debug(f"[websocket] Assistant message saved: {assistant_message.id}")
+
+            # Send complete message
+            await websocket.send_json({
+                "status": "done",
+                "messages": [
+                    {
+                        "id": str(user_message.id),
+                        "role": "user",
+                        "content": user_message.content,
+                        "sources": [],
+                        "claims": [],
+                    },
+                    {
+                        "id": str(assistant_message.id),
+                        "role": "assistant",
+                        "content": assistant_message.content,
+                        "sources": sources_ids or [],
+                        "claims": context.get('claims_ids') or [],
+                    }
+                ],
+                "conversation": {
+                    "id": str(conversation.id),
+                    "title": conversation.title,
+                    "updatedAt": assistant_message.created_at.isoformat(),
+                    "lastMessage": user_message.content,
+                    "lastMessageTime": format_last_msg_time(user_message.created_at),
+                }
+            })
+
+        finally:
+            db.close()
+
+    except WebSocketDisconnect:
+        logging.info(f"[websocket] Client disconnected from conversation {conversation_id}")
+    except Exception as e:
+        logging.exception(f"[websocket] Error in conversation {conversation_id}: {e}")
+        try:
+            await websocket.send_json({"status": "error", "detail": str(e)})
+        except Exception:
+            pass
+        await websocket.close(code=1011)
 
 
 @router.delete("/{conversation_id}")
