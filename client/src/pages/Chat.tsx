@@ -170,33 +170,108 @@ export default function Chat() {
 
     const optimisticMessage = textToMessage(messageText)
 
-    // Add optimistic message immediately (functional update avoids stale state)
+    // Add optimistic message immediately
     setMessages((prev) => [...prev, optimisticMessage])
     setInputValue('')
-    const url = `${import.meta.env.VITE_BASE_URL}/conversations/${selectedConversationId === 'new' ? 'new' : `${selectedConversationId}/add_message`}`
 
-    fetch(url, {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(optimisticMessage),
-    })
-      .then(async (res) => {
-        if (!res.ok) throw new Error(await res.text())
-        return res.json()
+    // For new conversations, create first then send message
+    if (selectedConversationId === 'new') {
+      const url = `${import.meta.env.VITE_BASE_URL}/conversations/new`
+      fetch(url, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(optimisticMessage),
       })
-      .then((res) => {
-        if (!res) return
-        setMessages((prev) => {
-          const withoutTemp = prev.slice(0, -1)
-          return [...withoutTemp, ...res.messages]
+        .then(async (res) => {
+          if (!res.ok) throw new Error(await res.text())
+          return res.json()
         })
-        if (selectedConversationId === 'new') {
+        .then((res) => {
+          if (!res) return
+          setMessages((prev) => {
+            const withoutTemp = prev.slice(0, -1)
+            return [...withoutTemp, ...res.messages]
+          })
           setConversations((prev) => [res.conversation, ...prev])
           setSelectedConversationId(res.conversation.id)
+        })
+        .catch((e) => console.error('new conversation failed:', e))
+    } else {
+      // Use WebSocket for existing conversations
+      connectAndSendMessage(selectedConversationId, optimisticMessage)
+    }
+  }
+
+  const connectAndSendMessage = (conversationId: string, message: any) => {
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    const wsUrl = `${wsProtocol}//${window.location.host}${import.meta.env.VITE_BASE_URL}/conversations/${conversationId}/add_message/ws`
+
+    const ws = new WebSocket(wsUrl)
+
+    ws.onopen = () => {
+      console.log('[ws] Connected, sending message...')
+      ws.send(JSON.stringify(message))
+    }
+
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data)
+        console.log('[ws] Status:', data.status)
+
+        switch (data.status) {
+          case 'loading':
+            console.log('[ws] Loading...')
+            break
+          case 'saving_user_message':
+            console.log('[ws] Saving user message...')
+            break
+          case 'retrieving_context':
+            console.log('[ws] Retrieving context from OpenSearch...')
+            break
+          case 'generating_answer':
+            console.log('[ws] Generating answer with LLM...')
+            break
+          case 'done':
+            console.log('[ws] Done! Received messages:', data.messages)
+            setMessages((prev) => {
+              const withoutTemp = prev.slice(0, -1)
+              return [...withoutTemp, ...data.messages]
+            })
+            if (data.conversation) {
+              setConversations((prev) => {
+                const idx = prev.findIndex((c) => c.id === data.conversation.id)
+                if (idx === -1) {
+                  return [data.conversation, ...prev]
+                }
+                const updated = [...prev]
+                updated[idx] = data.conversation
+                return updated
+              })
+            }
+            ws.close()
+            break
+          case 'error':
+            console.error('[ws] Error:', data.detail)
+            ws.close(1000)
+            break
         }
+      } catch (e) {
+        console.error('[ws] Failed to parse message:', e)
+      }
+    }
+
+    ws.onerror = (event) => {
+      console.error('[ws] Error:', event)
+      setMessages((prev) => {
+        const withoutTemp = prev.slice(0, -1)
+        return withoutTemp
       })
-      .catch((e) => console.error('message submit failed:', e))
+    }
+
+    ws.onclose = () => {
+      console.log('[ws] Connection closed')
+    }
   }
 
   return (
