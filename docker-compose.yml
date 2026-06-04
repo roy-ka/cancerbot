@@ -73,21 +73,20 @@ services:
       retries: 20
     networks: [osnet]
 
-  # NLP service temporarily disabled due to build issues
-  # cancerbot-nlp:
-  #   build:
-  #     context: ./nlp_service
-  #     dockerfile: Dockerfile
-  #   image: cancerbot-nlp:latest
-  #   container_name: cancerbot-nlp
-  #   environment:
-  #     NLP_DATABASE_URL: ${NLP_DATABASE_URL}
-  #   ports:
-  #     - '8011:8011'
-  #   depends_on:
-  #     postgres:
-  #       condition: service_healthy
-  #   networks: [osnet]
+  cancerbot-nlp:
+    build:
+      context: ./nlp_service
+      dockerfile: Dockerfile
+    image: cancerbot-nlp:latest
+    container_name: cancerbot-nlp
+    environment:
+      NLP_DATABASE_URL: ${NLP_DATABASE_URL}
+    ports:
+      - '8011:8011'
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [osnet]
 
   backend:
     profiles: ['prod']
