@@ -176,10 +176,20 @@ rollback() {
 # Set trap for errors
 trap rollback ERR
 
+# Reset git to clean state before pulling
+echo ""
+echo "Resetting git working directory to HEAD..."
+cd "$PROJECT_DIR"
+if git reset --hard HEAD; then
+  echo "✓ Git working directory reset"
+else
+  echo "✗ Git reset failed"
+  exit 1
+fi
+
 # Pull latest code
 echo ""
 echo "Pulling latest code from git..."
-cd "$PROJECT_DIR"
 if git pull; then
   echo "✓ Git pull completed"
 else
