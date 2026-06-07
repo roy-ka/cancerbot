@@ -471,18 +471,31 @@ echo ""
 echo "Running health checks (up to 30 attempts, 5 seconds apart)..."
 HEALTHY=false
 for i in $(seq 1 30); do
-  response=$(curl -sf http://localhost:8000/health/ 2>/dev/null || echo "")
+  # Use curl with verbose error output
+  response=$(curl -sf http://localhost:8000/health/ 2>&1)
+  curl_exit=$?
+
   if echo "$response" | grep -q '"status":"ok"'; then
     HEALTHY=true
     echo "✓ Health check passed (attempt $i/30)"
+    echo "  Response: $response"
     break
   fi
-  echo "  Attempt $i/30 - health check not ready, waiting..."
+
+  if [ $curl_exit -ne 0 ]; then
+    echo "  Attempt $i/30 - connection error, waiting..."
+    echo "  Error: $(echo "$response" | head -1)"
+  else
+    echo "  Attempt $i/30 - API not ready, waiting..."
+    echo "  Response: $response"
+  fi
   sleep 5
 done
 
 if [ "$HEALTHY" = false ]; then
   echo "✗ Health check failed after 30 attempts"
+  echo "Debug: Check if backend container is running:"
+  docker ps --format '{{.Names}}: {{.Status}}' | grep -E 'backend|cancerbot'
   exit 1
 fi
 
