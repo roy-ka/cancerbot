@@ -97,19 +97,25 @@ fi
 # Capture current image IDs for rollback
 echo ""
 echo "Capturing current images for rollback..."
-BACKEND_IMAGE=$(docker inspect --format='{{.Image}}' cancerbot-backend-1 2>/dev/null || echo "")
-NLP_IMAGE=$(docker inspect --format='{{.Image}}' cancerbot-nlp 2>/dev/null || echo "")
+BACKEND_IMAGE=$(docker ps --filter "name=cancerbot-backend" --format "{{.Image}}" 2>/dev/null | head -1 || echo "")
+NLP_IMAGE=$(docker ps --filter "name=cancerbot-nlp" --format "{{.Image}}" 2>/dev/null | head -1 || echo "")
 BACKEND_IMAGE_TAG="cancerbot-backend:rollback_$TIMESTAMP"
 NLP_IMAGE_TAG="cancerbot-nlp:rollback_$TIMESTAMP"
 
 if [ -n "$BACKEND_IMAGE" ]; then
-  docker tag "$BACKEND_IMAGE" "$BACKEND_IMAGE_TAG"
-  echo "✓ Saved backend image: $BACKEND_IMAGE_TAG"
+  if docker tag "$BACKEND_IMAGE" "$BACKEND_IMAGE_TAG" 2>/dev/null; then
+    echo "✓ Saved backend image: $BACKEND_IMAGE_TAG"
+  else
+    echo "⚠ Warning: Could not tag backend image for rollback"
+  fi
 fi
 
 if [ -n "$NLP_IMAGE" ]; then
-  docker tag "$NLP_IMAGE" "$NLP_IMAGE_TAG"
-  echo "✓ Saved NLP image: $NLP_IMAGE_TAG"
+  if docker tag "$NLP_IMAGE" "$NLP_IMAGE_TAG" 2>/dev/null; then
+    echo "✓ Saved NLP image: $NLP_IMAGE_TAG"
+  else
+    echo "⚠ Warning: Could not tag NLP image for rollback"
+  fi
 fi
 
 # Initialize backup file variable (may remain empty if not created)
