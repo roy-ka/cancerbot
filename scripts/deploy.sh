@@ -123,6 +123,15 @@ rollback() {
   echo "✗ DEPLOYMENT FAILED - INITIATING ROLLBACK"
   echo "========================================="
 
+  # Reset git to previous state in case pull succeeded but deploy failed
+  echo "Resetting git to previous state..."
+  cd "$PROJECT_DIR"
+  if git reset --hard HEAD; then
+    echo "✓ Git reset to previous state"
+  else
+    echo "⚠ Warning: Failed to reset git state"
+  fi
+
   if [ -f "$BACKUP_FILE" ]; then
     echo "Restoring database from backup: $BACKUP_FILE"
     # Bring down services first
