@@ -481,7 +481,10 @@ async def search_and_embed(
                 fallback_terms = []
                 for text in message_texts:
                     words = text.split()
-                    meaningful = [w.lower() for w in words if len(w) >= 3 and w.lower() not in {
+                    # Strip punctuation from words
+                    meaningful = [w.lower().strip('?.,!;:').strip() for w in words if len(w) >= 3]
+                    # Filter out stop words and empty strings
+                    meaningful = [w for w in meaningful if w and w.lower() not in {
                         'the', 'and', 'or', 'is', 'are', 'was', 'what', 'that', 'this', 'from',
                         'with', 'for', 'but', 'has', 'have', 'had', 'can', 'could', 'will', 'would'
                     }]

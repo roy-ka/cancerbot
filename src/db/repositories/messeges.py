@@ -21,14 +21,11 @@ def _decode_cursor(cursor: str) -> Tuple[datetime, uuid.UUID]:
 
 def add_claims_and_sources(message: Message):
   src = message.sources_ids or []
-  clm = message.claim_ids or []
 
   if isinstance(src, str):
     src = [s.strip() for s in src.split(',') if s.strip()]
-  if isinstance(clm, str):
-    clm = [s.strip() for s in clm.split(',') if s.strip()]
 
-  ids = [*src, *clm]
+  ids = src
   if not ids:
     return
 
