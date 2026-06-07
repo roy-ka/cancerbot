@@ -30,6 +30,7 @@ done
 # Setup logging
 TIMESTAMP=$(date '+%Y%m%d_%H%M%S')
 mkdir -p "$PROJECT_DIR/logs" "$PROJECT_DIR/backups"
+sudo chmod 755 "$PROJECT_DIR/logs" "$PROJECT_DIR/backups" 2>/dev/null || true
 LOG_FILE="$PROJECT_DIR/logs/deploy_$TIMESTAMP.log"
 
 # Redirect all output to log file and stdout
@@ -324,7 +325,12 @@ echo ""
 if docker ps --format '{{.Names}}' | grep -q 'cancerbot-postgres'; then
   echo "Creating PostgreSQL backup..."
   BACKUP_FILE="$PROJECT_DIR/backups/backup_$TIMESTAMP.sql"
-  if docker exec cancerbot-postgres pg_dump -U cancerbot cancerbot > "$BACKUP_FILE"; then
+  TEMP_BACKUP="/tmp/backup_$TIMESTAMP.sql"
+
+  # Backup to temp location first, then move with sudo
+  if docker exec cancerbot-postgres pg_dump -U cancerbot cancerbot > "$TEMP_BACKUP"; then
+    sudo mv "$TEMP_BACKUP" "$BACKUP_FILE" 2>/dev/null || mv "$TEMP_BACKUP" "$BACKUP_FILE"
+    sudo chmod 644 "$BACKUP_FILE" 2>/dev/null || true
     BACKUP_SIZE=$(du -h "$BACKUP_FILE" | cut -f1)
     echo "✓ Database backup created: $BACKUP_FILE ($BACKUP_SIZE)"
   else
