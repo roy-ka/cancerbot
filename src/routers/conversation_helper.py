@@ -409,6 +409,9 @@ async def search_and_embed(
 
     # Get the last 4 messages
     last_messages = messages[-4:]
+    # Extract text content from messages for later use
+    message_texts = [str(getattr(m, "content", "") or "").strip() for m in last_messages]
+    message_texts = [t for t in message_texts if t]
 
     await emit("analyzing_recent_messages", {"messages_considered": len(last_messages)})
     if not last_messages:
@@ -434,15 +437,13 @@ async def search_and_embed(
     stored_terms = _dedupe_terms(stored_terms)
     logger.info(f"[search_and_embed] Loaded {len(stored_terms)} stored terms from recent messages: {stored_terms[:10]}")
 
-    # Use stored terms if available
+    # Use stored terms if available, otherwise extract them
     if stored_terms:
         terms = stored_terms
         logger.info(f"[search_and_embed] Using {len(terms)} stored terms for search")
     else:
         # Fallback: extract terms from recent messages if no stored terms
         logger.warning(f"[search_and_embed] No stored terms found, falling back to extraction")
-        message_texts = [str(getattr(m, "content", "") or "").strip() for m in last_messages]
-        message_texts = [t for t in message_texts if t]
 
         nlp_url = (os.getenv("NLP_URL", "http://127.0.0.1:8011") or "").strip().strip("\"'")
         logger.info(f"[nlp] Initialized NLP URL: {nlp_url}")
@@ -492,18 +493,20 @@ async def search_and_embed(
                 terms = _dedupe_terms(fallback_terms)
                 logger.info(f"[nlp] Using fallback terms: {len(terms)} terms extracted from text")
 
-        await emit("terms_ready", {"terms_count": len(terms), "terms": terms[:20]})
-        if not terms:
-            logger.warning(f"[nlp] Still no terms available even after fallback, aborting search")
-            return {
-                "terms": [],
-                "pubmed_found": 0,
-                "crossref_found": 0,
-                "wikipedia_found": 0,
-                "indexed": 0,
-                "skipped": 0,
-            }
+    await emit("terms_ready", {"terms_count": len(terms), "terms": terms[:20]})
+    if not terms:
+        logger.warning(f"[search_and_embed] No terms available, aborting search")
+        return {
+            "terms": [],
+            "pubmed_found": 0,
+            "crossref_found": 0,
+            "wikipedia_found": 0,
+            "indexed": 0,
+            "skipped": 0,
+        }
 
+    # Search for sources using the terms (whether stored or extracted)
+    async with httpx.AsyncClient(timeout=httpx.Timeout(20.0)) as client:
         await emit("searching_pubmed", {"limit": 4})
         await emit("searching_crossref", {"limit": 4})
         await emit("searching_wikipedia", {"limit": 3})
@@ -524,7 +527,7 @@ async def search_and_embed(
     )
 
     # Prepare data for external search recording (will be recorded in sync context by caller)
-    original_query = texts[-1] if texts else "unknown"
+    original_query = message_texts[-1] if message_texts else "unknown"
     conv_id = getattr(conversation, 'id', None)
     # Get the last message (user's message that triggered the search)
     last_msg = messages[-1] if messages else None
