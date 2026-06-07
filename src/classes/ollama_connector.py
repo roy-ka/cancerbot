@@ -5,6 +5,20 @@ import json
 from typing import Any, Mapping, Sequence
 from src.db.models import Message
 
+class _OllamaClientProxy:
+  """Lazy proxy for Ollama client initialization."""
+  _client = None
+
+  def _ensure_client(self):
+    if _OllamaClientProxy._client is None:
+      load_dotenv()
+      host = os.getenv('OLLAMA_URL', 'http://localhost:11434')
+      _OllamaClientProxy._client = Client(host=host)
+    return _OllamaClientProxy._client
+
+  def __getattr__(self, name):
+    return getattr(self._ensure_client(), name)
+
 class OllamaConnector:
   __name__='Ollama_connector'
 
@@ -12,9 +26,7 @@ class OllamaConnector:
   ollama_host = os.getenv('OLLAMA_URL', 'http://localhost:11434')
   embed_model = os.getenv('EMBED_MODEL_NAME', os.getenv('MODEL_NAME'))
   gen_model = os.getenv('GEN_MODEL_NAME')
-  ollama = Client(
-      host=ollama_host
-  )
+  ollama = _OllamaClientProxy()
 
   @classmethod
   def embed_text(cls, text):
