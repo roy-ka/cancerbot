@@ -79,20 +79,16 @@ def add_claims_and_sources(message: Message):
     message.sources = sources
 
 
-def add_message(db, conversation_id, role, content, sources_ids='', claim_ids='', intent=None):
-  # Convert string sources_ids/claim_ids to lists for JSON column compatibility
+def add_message(db, conversation_id, role, content, sources_ids=''):
+  # Convert string sources_ids to lists for JSON column compatibility
   if isinstance(sources_ids, str):
     sources_ids = [s.strip() for s in sources_ids.split(',') if s.strip()] if sources_ids else []
-  if isinstance(claim_ids, str):
-    claim_ids = [c.strip() for c in claim_ids.split(',') if c.strip()] if claim_ids else []
 
   new_message = Message(
     conversation_id=conversation_id,
     role=role,
     content=content,
     sources_ids=sources_ids if sources_ids else None,
-    claim_ids=claim_ids if claim_ids else None,
-    intent=intent,
   )
   logging.info(f"Adding message to conversation {conversation_id} with role {role}")
   db.add(new_message)

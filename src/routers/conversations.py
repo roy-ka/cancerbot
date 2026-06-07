@@ -191,7 +191,7 @@ async def _process_post_message(
         import traceback
         logging.error(f"[analytics] Traceback: {traceback.format_exc()}")
         db.rollback()
-    await emit('saving_assistant_message', {'intent': context.get('intent')})
+    await emit('saving_assistant_message', {})
 
     try:
         assistant_message = add_message(
@@ -199,8 +199,6 @@ async def _process_post_message(
             conversation_id=conversation.id,
             role="assistant",
             content=response,
-            intent=context.get("intent"),
-            claim_ids=context.get('claims_ids'),
             sources_ids=context.get('sources_ids'),
         )
 
@@ -221,8 +219,6 @@ async def _process_post_message(
             "role": m.role,
             "content": m.content,
             "created_at": m.created_at.isoformat() if getattr(m, 'created_at', None) else None,
-            "intent": getattr(m, 'intent', None),
-            "claims": getattr(m, 'claims', None),
             "sources": getattr(m, 'sources', None),
         }
 
@@ -312,8 +308,6 @@ async def get_conversation_messages(
             "role": msg.role,
             "content": msg.content,
             "created_at": msg.created_at.isoformat() if msg.created_at else None,
-            "intent": msg.intent,
-            "claims": msg.claims,
             "sources": msg.sources,
         }
         for msg in messages
