@@ -55,12 +55,17 @@ def add_claims_and_sources(message: Message):
     data = res['_source']
     url = data.get('url') or data.get('pmid') or data.get('doi')
 
+    # Use title for Wikipedia sources, otherwise use the stable id
+    name = data.get('title') if data.get('source_type') == 'wikipedia' else data.get('id')
+
     entry = {
       'evidence_score_0_5': data.get('evidence_score_0_5'),
       'text': data.get('content_for_embedding'),
       'id': data.get('id'),
       'url': url,
-      'name': _extract_source_name(url),
+      'name': name,
+      'title': data.get('title'),
+      'source_type': data.get('source_type'),
     }
     if data.get('index') == 'claims_index':
       claims.append(entry)

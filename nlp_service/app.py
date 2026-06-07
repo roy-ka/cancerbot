@@ -3,6 +3,8 @@ import asyncio
 from contextlib import asynccontextmanager
 from typing import Optional
 import re
+import logging
+import time
 
 from fastapi import FastAPI, Depends
 from pydantic import BaseModel
@@ -20,9 +22,16 @@ from starlette.concurrency import run_in_threadpool
 from models import Abbreviation, Base
 from db import get_session, SessionLocal, engine
 
-print("[NLP app] Module loading started")
+# Configure logging
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+logger.info("[NLP app] Module loading started")
 load_dotenv()
-print("[NLP app] .env loaded")
+logger.info("[NLP app] .env loaded")
 # --- DB (SQLAlchemy) ---
 DATABASE_URL = os.getenv("NLP_DATABASE_URL")
     
@@ -40,17 +49,17 @@ _abbrev_refresher_task: Optional[asyncio.Task] = None
 async def lifespan(_: FastAPI):
     global _abbrev_refresher_task
 
-    print("[lifespan] Starting up...")
-    print(f"[lifespan] DATABASE_ENABLED={DATABASE_ENABLED}, DATABASE_URL={os.getenv('NLP_DATABASE_URL', 'NOT SET')[:50]}")
+    logger.info("[lifespan] Starting up...")
+    logger.info(f"[lifespan] DATABASE_ENABLED={DATABASE_ENABLED}, DATABASE_URL={os.getenv('NLP_DATABASE_URL', 'NOT SET')[:50]}")
 
     if DATABASE_ENABLED:
-        print("[lifespan] Skipping abbreviation cache on startup - will load on first request")
+        logger.info("[lifespan] Skipping abbreviation cache on startup - will load on first request")
 
-    print("[lifespan] Startup complete, yielding control")
+    logger.info("[lifespan] Startup complete, yielding control")
     try:
         yield
     finally:
-        print("[lifespan] Shutting down...")
+        logger.info("[lifespan] Shutting down...")
         if _abbrev_refresher_task:
             _abbrev_refresher_task.cancel()
             try:
@@ -66,6 +75,7 @@ async def load_abbrev_cache() -> int:
     """Load all abbreviations from DB into memory. Returns number of entries."""
     # TODO: Temporarily disabled due to table creation issues
     # Will be re-enabled once database schema is properly migrated
+    logger.debug("[load_abbrev_cache] Database disabled, skipping load")
     return 0
 
 
@@ -80,7 +90,9 @@ async def get_abbrev_long(short: str) -> Optional[str]:
 
 async def save_new_abbreviations(abbr_found: dict[str, str]) -> int:
     """Persist newly discovered abbreviations and refresh in-memory cache entries."""
+    logger.debug(f"[save_new_abbreviations] Called with {len(abbr_found)} abbreviations")
     if not DATABASE_ENABLED or not abbr_found:
+        logger.debug(f"[save_new_abbreviations] Skipping: DATABASE_ENABLED={DATABASE_ENABLED}, abbr_found={bool(abbr_found)}")
         return 0
 
     to_insert: list[tuple[str, str, str]] = []
@@ -91,16 +103,20 @@ async def save_new_abbreviations(abbr_found: dict[str, str]) -> int:
         if not short or not long:
             continue
         if await get_abbrev_long(key):
+            logger.debug(f"[save_new_abbreviations] Already cached: {short}")
             continue
         to_insert.append((short, long, key))
 
     if not to_insert:
+        logger.debug(f"[save_new_abbreviations] No new abbreviations to insert")
         return 0
 
+    logger.info(f"[save_new_abbreviations] Inserting {len(to_insert)} new abbreviations")
     saved = 0
     async with SessionLocal() as session:
         for short, long, key in to_insert:
             if await session.get(Abbreviation, short):
+                logger.debug(f"[save_new_abbreviations] Skipping duplicate: {short}")
                 continue
             session.add(
                 Abbreviation(
@@ -117,7 +133,9 @@ async def save_new_abbreviations(abbr_found: dict[str, str]) -> int:
         if saved:
             try:
                 await session.commit()
-            except IntegrityError:
+                logger.info(f"[save_new_abbreviations] Saved {saved} abbreviations to DB")
+            except IntegrityError as e:
+                logger.error(f"[save_new_abbreviations] IntegrityError while saving: {e}")
                 await session.rollback()
                 return 0
 
@@ -135,17 +153,25 @@ def start_abbrev_cache_refresher(interval_seconds: int = 60) -> Optional[asyncio
                 await load_abbrev_cache()
             except Exception as e:
                 # Don't crash the service if DB hiccups
-                print("abbrev cache refresh failed:", e)
+                logger.error(f"[abbrev_cache_refresher] Refresh failed: {e}", exc_info=True)
             await asyncio.sleep(max(5, interval_seconds))
 
     return asyncio.create_task(_run())
 # Load once on startup (important for speed)
+logger.info("[startup] Loading spacy model 'en_core_sci_sm'...")
 nlp = spacy.load("en_core_sci_sm")
+logger.info(f"[startup] Spacy model loaded. Pipeline: {nlp.pipe_names}")
 
 # Explicitly add scispaCy abbreviation detector
 if "abbreviation_detector" not in nlp.pipe_names:
+    logger.info("[startup] Adding abbreviation_detector to pipeline")
     nlp.add_pipe("abbreviation_detector", last=True)
+else:
+    logger.info("[startup] abbreviation_detector already in pipeline")
+
+logger.info("[startup] Loading SpellChecker...")
 spell_checker = SpellChecker(distance=1)
+logger.info("[startup] SpellChecker loaded")
 
 STOP_ENTS = {"cancer", "tumor"}  # optional: cut overly generic entities
 
@@ -179,7 +205,9 @@ def _preserve_case(original: str, corrected: str) -> str:
 
 
 async def _correct_spelling_text(text: str) -> tuple[str, list[dict]]:
+    logger.debug(f"[_correct_spelling_text] Processing text of length {len(text)}")
     doc = await run_in_threadpool(nlp, text)
+    logger.debug(f"[_correct_spelling_text] NLP processed, found {len(doc.ents)} entities, {len(doc._.abbreviations)} abbreviations")
 
     protected_terms = {
         tok.text.strip().lower()
@@ -203,6 +231,8 @@ async def _correct_spelling_text(text: str) -> tuple[str, list[dict]]:
     )
     async with _abbrev_cache_lock:
         protected_terms.update(abbrev_cache.keys())
+
+    logger.debug(f"[_correct_spelling_text] Protected {len(protected_terms)} terms")
 
     parts: list[str] = []
     changes: list[dict] = []
@@ -230,66 +260,100 @@ async def _correct_spelling_text(text: str) -> tuple[str, list[dict]]:
             ):
                 fixed = _preserve_case(raw, suggestion)
                 changes.append({"from": raw, "to": fixed})
+                logger.debug(f"[_correct_spelling_text] Corrected: {raw} -> {fixed}")
 
         parts.append(f"{fixed}{tok.whitespace_}")
 
+    logger.debug(f"[_correct_spelling_text] Made {len(changes)} corrections")
     return "".join(parts), changes
 
 
 @app.post("/spelling/correct")
 async def spelling_correct(req: SpellingReq):
-    corrected, changes = await _correct_spelling_text(req.text or "")
-    return {
-        "text": req.text,
-        "corrected": corrected,
-        "changes": changes,
-    }
+    start_time = time.time()
+    logger.info(f"[spelling/correct] Input text length: {len(req.text or '')}")
+    try:
+        corrected, changes = await _correct_spelling_text(req.text or "")
+        elapsed = time.time() - start_time
+        logger.info(f"[spelling/correct] Processed in {elapsed:.3f}s, {len(changes)} changes made")
+        return {
+            "text": req.text,
+            "corrected": corrected,
+            "changes": changes,
+        }
+    except Exception as e:
+        logger.error(f"[spelling/correct] Error: {e}", exc_info=True)
+        raise
 
 
 @app.post("/extract")
 async def extract(req: ExtractReq):
-    doc = await run_in_threadpool(nlp, req.text)
+    start_time = time.time()
+    text_len = len(req.text or '')
+    logger.info(f"[extract] Starting extraction for text length: {text_len}")
 
-    entities = [ent.text.strip() for ent in doc.ents if ent.text.strip()]
-    entities = [e for e in entities if e.lower() not in STOP_ENTS]
-
-    # Abbreviations detected from text forms like "glioblastoma (GBM)"
-    abbr_found = {str(a): str(a._.long_form) for a in doc._.abbreviations}
-    saved_abbreviations = 0
     try:
-        saved_abbreviations = await save_new_abbreviations(abbr_found)
+        doc = await run_in_threadpool(nlp, req.text)
+        logger.debug(f"[extract] NLP processing complete, found {len(doc.ents)} raw entities")
+
+        entities = [ent.text.strip() for ent in doc.ents if ent.text.strip()]
+        logger.debug(f"[extract] After filtering empty: {len(entities)} entities")
+
+        entities = [e for e in entities if e.lower() not in STOP_ENTS]
+        logger.debug(f"[extract] After filtering stop entities: {len(entities)} entities: {entities[:5]}")
+
+        # Abbreviations detected from text forms like "glioblastoma (GBM)"
+        abbr_found = {str(a): str(a._.long_form) for a in doc._.abbreviations}
+        logger.info(f"[extract] Found {len(abbr_found)} abbreviations: {abbr_found}")
+
+        saved_abbreviations = 0
+        try:
+            saved_abbreviations = await save_new_abbreviations(abbr_found)
+            logger.info(f"[extract] Saved {saved_abbreviations} new abbreviations to DB")
+        except Exception as e:
+            # Extraction should still succeed even if DB write fails.
+            logger.warning(f"[extract] Save abbreviations failed: {e}", exc_info=True)
+
+        # Expand entities using: detected abbreviations first, then DB-backed cache
+        expanded = []
+        for e in entities:
+            key = e.lower()
+            if key in abbr_found:
+                expanded.append(abbr_found[key])
+            else:
+                expanded.append((await get_abbrev_long(key)) or e)
+
+        result = {
+            "entities": _dedupe_keep_order(entities),
+            "expanded_entities": _dedupe_keep_order(expanded),
+            "abbreviations_found": abbr_found,
+            "saved_abbreviations": saved_abbreviations,
+        }
+
+        elapsed = time.time() - start_time
+        logger.info(f"[extract] Complete in {elapsed:.3f}s - {len(result['entities'])} entities, {len(result['expanded_entities'])} expanded")
+
+        return result
     except Exception as e:
-        # Extraction should still succeed even if DB write fails.
-        print("save abbreviations failed:", e)
-
-    # Expand entities using: detected abbreviations first, then DB-backed cache
-    expanded = []
-    for e in entities:
-        key = e.lower()
-        if key in abbr_found:
-            expanded.append(abbr_found[key])
-        else:
-            expanded.append((await get_abbrev_long(key)) or e)
-
-    return {
-        "entities": _dedupe_keep_order(entities),
-        "expanded_entities": _dedupe_keep_order(expanded),
-        "abbreviations_found": abbr_found,
-        "saved_abbreviations": saved_abbreviations,
-    }
+        logger.error(f"[extract] Error: {e}", exc_info=True)
+        raise
 
 
 # --- Abbreviation DB endpoints ---
 @app.get("/abbrev/{short}")
 async def get_abbrev(short: str, session: AsyncSession = Depends(get_session)):
     """Return a single abbreviation mapping (from DB)."""
+    logger.debug(f"[get_abbrev] Looking up abbreviation: {short}")
     if not DATABASE_ENABLED:
+        logger.warning(f"[get_abbrev] Database not enabled")
         return {"ok": False, "error": "DB not configured (set NLP_DATABASE_URL)"}
 
     row = await session.get(Abbreviation, short)
     if not row:
+        logger.debug(f"[get_abbrev] Abbreviation not found: {short}")
         return {"ok": True, "found": False}
 
+    logger.debug(f"[get_abbrev] Found: {short} -> {row.long}")
     return {
         "ok": True,
         "found": True,
@@ -353,4 +417,5 @@ async def reload_abbrev_cache():
 
 @app.get("/health")
 def health():
+    logger.debug("[health] Health check called")
     return {"ok": True}

@@ -49,6 +49,9 @@ async def _process_post_message(
 ):
     t0 = time.time()
 
+    logging.info(f"[conversation] Processing message for conversation {conversation_id}, user {current_user.id}")
+    logging.info(f"[conversation] Message content: {req.content[:100]}")
+
     await emit('loading_conversation', {'conversation_id': str(conversation_id)})
 
     conversation = conversation or get_conversation_by_id(
@@ -63,6 +66,7 @@ async def _process_post_message(
     if str(conversation.user_id) != str(current_user.id):
         raise HTTPException(status_code=403, detail="Forbidden")
 
+    logging.info(f"[conversation] Conversation verified, conversation_id={conversation.id}")
     await emit('saving_user_message', {})
 
     try:
@@ -74,49 +78,119 @@ async def _process_post_message(
         )
         db.commit()
         db.refresh(user_message)
+        db.refresh(conversation)
     except Exception:
         db.rollback()
         raise
 
+    # Extract and save scientific terms for the new message
+    try:
+        nlp_url = os.getenv("NLP_URL", "http://127.0.0.1:8011").strip().strip("\"'")
+        import httpx
+        async with httpx.AsyncClient(timeout=httpx.Timeout(20.0)) as client:
+            from src.routers.conversation_helper import _extract_terms_from_message
+            extracted_terms = await _extract_terms_from_message(client, nlp_url, req.content)
+            user_message.extracted_terms = extracted_terms if extracted_terms else None
+            db.add(user_message)
+            db.commit()
+            logging.info(f"[conversation] Extracted and saved {len(extracted_terms)} terms for message {user_message.id}")
+    except Exception as e:
+        logging.warning(f"[conversation] Failed to extract terms for message: {type(e).__name__}: {e}")
+        db.rollback()
+
+    await emit('fallback_triggered', {'reason': 'always_search_external'})
+    search_meta = await search_and_embed(conversation, emit=emit)
+    logging.info(f"[conversation] External search and indexing complete: indexed={search_meta.get('indexed')}, skipped={search_meta.get('skipped')}")
+
+    # Record external search results using the current db session
+    external_data = search_meta.get('external_search_data', {})
+    if external_data:
+        try:
+            from src.db.models import ExternalSearchResult
+            original_query = external_data.get('original_query', '')
+            conv_id = external_data.get('conversation_id')
+            msg_id = external_data.get('message_id')
+            extracted_terms = external_data.get('extracted_terms', [])
+
+            for source_type in ['pubmed', 'crossref', 'wikipedia']:
+                results = external_data.get(f'{source_type}_sources', [])
+                logging.info(f"[conversation] Recording external search: {source_type}={len(results)} results")
+
+                top_title = None
+                top_url = None
+                if results:
+                    first = results[0]
+                    top_title = first.get("title") or first.get("pmid") or first.get("doi")
+                    top_url = first.get("url")
+
+                record = ExternalSearchResult(
+                    conversation_id=conv_id,
+                    message_id=msg_id,
+                    search_query=original_query[:500],
+                    source=source_type,
+                    extracted_terms=",".join(extracted_terms) if extracted_terms else None,
+                    result_count=len(results),
+                    indexed_count=len(results),
+                    skipped_count=0,
+                    top_result_title=str(top_title)[:500] if top_title else None,
+                    top_result_url=str(top_url)[:500] if top_url else None,
+                )
+                db.add(record)
+            db.commit()
+            logging.info(f"[conversation] Successfully recorded external search results")
+        except Exception as e:
+            logging.error(f"[conversation] Failed to record external search results: {type(e).__name__}: {e}")
+            import traceback
+            logging.error(f"[conversation] Traceback: {traceback.format_exc()}")
+            db.rollback()
+
     await emit('retrieving_context', {})
+    logging.info(f"[conversation] Retrieving context for query: {req.content[:100]}")
     context = await asyncio.to_thread(run_retrieval, req.content)
+    logging.info(f"[conversation] Retrieved {len(context.get('sources_ids', []))} sources, {len(context.get('claims_ids', []))} claims")
+
     max_history = int(os.getenv('PROMPT_MAX_HISTORY', '8'))
     history = get_recent_messages(db, conversation.id, limit=max_history)
+    logging.info(f"[conversation] Loaded {len(history)} history messages")
+
     await emit('building_prompt', {'history_messages': len(history)})
     await emit('generating_answer', {})
 
+    logging.info(f"[conversation] Generating answer with {len(context.get('generation_context', ''))} chars of context")
     response = await asyncio.to_thread(
         OllamaConnector.generate_text,
         context=context["generation_context"],
         question=req.content,
         history=history,
     )
-    if response == 'Insufficient evidence in provided context.':
-        await emit('fallback_triggered', {'reason': 'insufficient_evidence'})
-        fallback_meta = await search_and_embed(conversation, emit=emit)
+    logging.info(f"[conversation] Generated response: {response[:100]}")
 
-        await emit(
-            're_retrieving_context',
-            {
-                'indexed': fallback_meta.get('indexed', 0),
-                'terms_count': len(fallback_meta.get('terms') or []),
-            },
+    # Record analytics for search
+    try:
+        from src.db.models import SearchAnalytic
+        metrics = context.get('search_metrics', {})
+        logging.info(f"[analytics] Recording search analytics: conversation_id={conversation.id}, message_id={user_message.id}")
+        logging.info(f"[analytics] Metrics from context: {metrics}")
+        analytic = SearchAnalytic(
+            conversation_id=conversation.id,
+            message_id=user_message.id,
+            search_query=req.content[:500],
+            result_count=metrics.get('result_count', 0),
+            top_score=metrics.get('top_score'),
+            avg_score=metrics.get('avg_score'),
+            min_score=metrics.get('min_score'),
+            sufficient_evidence=1 if not response.startswith('Insufficient evidence in provided context.') else 0,
+            fallback_triggered=0,
         )
-        context = await asyncio.to_thread(run_retrieval, req.content)
-        await emit('rebuilding_prompt', {'history_messages': len(history)})
-        await emit('re_generating_answer', {})
-        response = await asyncio.to_thread(
-            OllamaConnector.generate_text,
-            context=context["generation_context"],
-            question=req.content,
-            history=history,
-        )
-        if response == 'Insufficient evidence in provided context.':
-            response = (
-                "Insufficient evidence in provided context. "
-                f"Fallback indexing completed with {fallback_meta.get('indexed', 0)} new sources "
-                f"(skipped {fallback_meta.get('skipped', 0)})."
-            )
+        logging.info(f"[analytics] Created SearchAnalytic: result_count={analytic.result_count}, top_score={analytic.top_score}")
+        db.add(analytic)
+        db.commit()
+        logging.info(f"[analytics] Successfully recorded search analytics")
+    except Exception as e:
+        logging.error(f"[analytics] Failed to record analytics: {type(e).__name__}: {e}")
+        import traceback
+        logging.error(f"[analytics] Traceback: {traceback.format_exc()}")
+        db.rollback()
     await emit('saving_assistant_message', {'intent': context.get('intent')})
 
     try:

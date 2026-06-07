@@ -5,6 +5,7 @@ import re
 import xml.etree.ElementTree as ET
 from typing import Any, Awaitable, Callable, Dict, Optional
 from urllib.parse import quote_plus
+from uuid import uuid4
 
 import httpx
 import logging
@@ -62,13 +63,19 @@ def _stable_source_id(source: dict) -> str:
 async def _spelling_correction(client: httpx.AsyncClient, nlp_url: str, text: str) -> str:
     text = " ".join((text or "").split()).strip()
     if not text:
+        logger.debug("[nlp] spelling_correction: empty text, skipping")
         return ""
 
+    logger.info(f"[nlp] spelling_correction: text_len={len(text)}, url={nlp_url}")
     candidate_paths = ("/spelling/correct", "/correct", "/spell")
     for path in candidate_paths:
+        full_url = f"{nlp_url}{path}"
         try:
-            resp = await client.post(f"{nlp_url}{path}", json={"text": text})
+            logger.info(f"[nlp] spelling_correction: POST {full_url} (timeout=20s)")
+            resp = await client.post(full_url, json={"text": text}, timeout=20.0)
+            logger.info(f"[nlp] spelling_correction: status={resp.status_code}, content_len={len(resp.content)}")
             if resp.status_code >= 400:
+                logger.warning(f"[nlp] spelling_correction: status {resp.status_code}, trying next path")
                 continue
             payload = resp.json() if resp.content else {}
             corrected = (
@@ -77,26 +84,40 @@ async def _spelling_correction(client: httpx.AsyncClient, nlp_url: str, text: st
                 or payload.get("corrected_text")
             )
             if isinstance(corrected, str) and corrected.strip():
+                logger.info(f"[nlp] spelling_correction: success, corrected_len={len(corrected)}")
                 return corrected.strip()
-        except Exception:
+        except Exception as e:
+            logger.error(f"[nlp] spelling_correction: connection error on {full_url}: {type(e).__name__}: {e}")
             continue
+    logger.warning(f"[nlp] spelling_correction: failed all paths, returning original")
     return text
 
 
 async def _extract_terms_from_message(client: httpx.AsyncClient, nlp_url: str, text: str) -> list[str]:
+    logger.info(f"[nlp] extract_terms_from_message: starting, text_len={len(text or '')}, nlp_url={nlp_url}")
     corrected = await _spelling_correction(client, nlp_url, text)
     if not corrected:
+        logger.warning("[nlp] extract_terms_from_message: no corrected text after spelling correction")
         return []
+
     try:
-        resp = await client.post(f"{nlp_url}/extract", json={"text": corrected})
+        extract_url = f"{nlp_url}/extract"
+        logger.info(f"[nlp] extract_terms_from_message: POST {extract_url} (timeout=20s)")
+        resp = await client.post(extract_url, json={"text": corrected}, timeout=20.0)
+        logger.info(f"[nlp] extract_terms_from_message: status={resp.status_code}, content_len={len(resp.content)}")
         resp.raise_for_status()
         payload = resp.json()
-    except Exception:
+        logger.debug(f"[nlp] extract_terms_from_message: response keys={list(payload.keys())}")
+    except Exception as e:
+        logger.error(f"[nlp] extract_terms_from_message: failed to call /extract at {extract_url}: {type(e).__name__}: {e}")
         return []
 
     expanded = payload.get("expanded_entities") or []
     entities = payload.get("entities") or []
-    return _dedupe_terms([*expanded, *entities])
+    logger.info(f"[nlp] extract_terms_from_message: found {len(entities)} entities, {len(expanded)} expanded")
+    result = _dedupe_terms([*expanded, *entities])
+    logger.info(f"[nlp] extract_terms_from_message: deduped to {len(result)} terms: {result[:10]}")
+    return result
 
 
 async def _search_pubmed_sources(client: httpx.AsyncClient, terms: list[str], max_results: int = 4) -> list[dict]:
@@ -324,17 +345,74 @@ def _embed_and_index_sources(sources: list[dict]) -> tuple[int, int]:
     return indexed, skipped
 
 
+def _record_external_search(source_type: str, search_query: str, extracted_terms: list[str],
+                           results: list, conversation_id=None, message_id=None,
+                           indexed_count: int = 0, skipped_count: int = 0, error: str = None):
+    """Record external search results to database."""
+    try:
+        from sqlalchemy.orm import sessionmaker
+        from sqlalchemy import create_engine
+        from src.db.models import ExternalSearchResult
+        import os
+
+        logger.info(f"[external_search_record] Starting to record {source_type}: conv_id={conversation_id}, msg_id={message_id}, results={len(results)}")
+
+        db_url = os.getenv("POSTGRES_URL")
+        if not db_url:
+            logger.warning(f"[external_search_record] POSTGRES_URL not set, skipping recording")
+            return
+
+        logger.debug(f"[external_search_record] Creating database connection for {source_type}")
+        engine = create_engine(db_url, echo=False)
+        Session = sessionmaker(bind=engine)
+        session = Session()
+
+        top_title = None
+        top_url = None
+        if results:
+            first = results[0]
+            top_title = first.get("title") or first.get("pmid") or first.get("doi")
+            top_url = first.get("url")
+
+        record = ExternalSearchResult(
+            id=uuid4(),
+            conversation_id=conversation_id,
+            message_id=message_id,
+            search_query=search_query[:500],
+            source=source_type,
+            extracted_terms=",".join(extracted_terms) if extracted_terms else None,
+            result_count=len(results),
+            indexed_count=indexed_count,
+            skipped_count=skipped_count,
+            top_result_title=str(top_title)[:500] if top_title else None,
+            top_result_url=str(top_url)[:500] if top_url else None,
+            error_message=error,
+        )
+        logger.debug(f"[external_search_record] Created ExternalSearchResult record for {source_type}: top_title={top_title}, result_count={len(results)}")
+        session.add(record)
+        session.commit()
+        logger.info(f"[external_search_record] Successfully recorded {source_type}: {len(results)} results, indexed={indexed_count}, skipped={skipped_count}")
+        session.close()
+    except Exception as e:
+        logger.error(f"[external_search_record] Failed to record {source_type} results: {type(e).__name__}: {e}")
+        import traceback
+        logger.error(f"[external_search_record] Traceback: {traceback.format_exc()}")
+
+
 async def search_and_embed(
     conversation,
     emit: StageEmitter = _emit_noop,
 ) -> dict[str, Any]:
+    logger.info(f"[search_and_embed] Starting search_and_embed for conversation")
     messages = list(getattr(conversation, "messages", []) or [])
-    last_messages = messages[-4:]
-    texts = [str(getattr(m, "content", "") or "").strip() for m in last_messages]
-    texts = [t for t in texts if t]
+    logger.info(f"[search_and_embed] Loaded {len(messages)} messages from conversation")
 
-    await emit("analyzing_recent_messages", {"messages_considered": len(texts)})
-    if not texts:
+    # Get the last 4 messages
+    last_messages = messages[-4:]
+
+    await emit("analyzing_recent_messages", {"messages_considered": len(last_messages)})
+    if not last_messages:
+        logger.warning(f"[search_and_embed] No messages found, returning empty")
         return {
             "terms": [],
             "pubmed_found": 0,
@@ -343,22 +421,77 @@ async def search_and_embed(
             "skipped": 0,
         }
 
-    nlp_url = (os.getenv("NLP_URL", "http://127.0.0.1:8011") or "").strip().strip("\"'")
-    async with httpx.AsyncClient(timeout=httpx.Timeout(20.0)) as client:
-        await emit("extracting_search_terms", {"source": "cancerbot-nlp"})
-        term_batches = await asyncio.gather(
-            *[_extract_terms_from_message(client, nlp_url, t) for t in texts],
-            return_exceptions=True,
-        )
+    # Collect stored terms from recent messages
+    stored_terms: list[str] = []
+    for msg in last_messages:
+        msg_terms = getattr(msg, 'extracted_terms', None)
+        if msg_terms and isinstance(msg_terms, list):
+            stored_terms.extend(msg_terms)
+            logger.debug(f"[search_and_embed] Message {msg.id}: found {len(msg_terms)} stored terms")
+        else:
+            logger.debug(f"[search_and_embed] Message {msg.id}: no stored terms")
 
-        terms: list[str] = []
-        for batch in term_batches:
-            if isinstance(batch, Exception):
-                continue
-            terms.extend(batch)
-        terms = _dedupe_terms(terms)
+    stored_terms = _dedupe_terms(stored_terms)
+    logger.info(f"[search_and_embed] Loaded {len(stored_terms)} stored terms from recent messages: {stored_terms[:10]}")
+
+    # Use stored terms if available
+    if stored_terms:
+        terms = stored_terms
+        logger.info(f"[search_and_embed] Using {len(terms)} stored terms for search")
+    else:
+        # Fallback: extract terms from recent messages if no stored terms
+        logger.warning(f"[search_and_embed] No stored terms found, falling back to extraction")
+        message_texts = [str(getattr(m, "content", "") or "").strip() for m in last_messages]
+        message_texts = [t for t in message_texts if t]
+
+        nlp_url = (os.getenv("NLP_URL", "http://127.0.0.1:8011") or "").strip().strip("\"'")
+        logger.info(f"[nlp] Initialized NLP URL: {nlp_url}")
+
+        async with httpx.AsyncClient(timeout=httpx.Timeout(20.0)) as client:
+            logger.info(f"[nlp] Testing NLP service health at {nlp_url}/health...")
+            try:
+                health_resp = await client.get(f"{nlp_url}/health", timeout=5.0)
+                logger.info(f"[nlp] Health check: status={health_resp.status_code}")
+            except Exception as e:
+                logger.error(f"[nlp] Health check FAILED: {type(e).__name__}: {e}")
+
+            await emit("extracting_search_terms", {"source": "cancerbot-nlp"})
+            logger.info(f"[nlp] Extracting scientific terms from {len(message_texts)} messages using NLP service")
+
+            # Extract scientific terms from each message and combine them
+            term_results = await asyncio.gather(
+                *[_extract_terms_from_message(client, nlp_url, text) for text in message_texts],
+                return_exceptions=True,
+            )
+
+            terms: list[str] = []
+            for i, result in enumerate(term_results):
+                if isinstance(result, Exception):
+                    logger.warning(f"[nlp] Term extraction for message {i} failed: {result}")
+                else:
+                    logger.info(f"[nlp] Message {i}: extracted {len(result)} terms: {result[:5]}")
+                    terms.extend(result)
+
+            terms = _dedupe_terms(terms)
+            logger.info(f"[nlp] Combined and deduped: {len(terms)} total unique terms: {terms[:10]}")
+
+            # Fallback: if NLP extraction failed, use word-based extraction
+            if not terms:
+                logger.warning(f"[nlp] No terms extracted from NLP service, falling back to simple word extraction")
+                fallback_terms = []
+                for text in message_texts:
+                    words = text.split()
+                    meaningful = [w.lower() for w in words if len(w) >= 3 and w.lower() not in {
+                        'the', 'and', 'or', 'is', 'are', 'was', 'what', 'that', 'this', 'from',
+                        'with', 'for', 'but', 'has', 'have', 'had', 'can', 'could', 'will', 'would'
+                    }]
+                    fallback_terms.extend(meaningful)
+                terms = _dedupe_terms(fallback_terms)
+                logger.info(f"[nlp] Using fallback terms: {len(terms)} terms extracted from text")
+
         await emit("terms_ready", {"terms_count": len(terms), "terms": terms[:20]})
         if not terms:
+            logger.warning(f"[nlp] Still no terms available even after fallback, aborting search")
             return {
                 "terms": [],
                 "pubmed_found": 0,
@@ -387,6 +520,18 @@ async def search_and_embed(
         },
     )
 
+    # Prepare data for external search recording (will be recorded in sync context by caller)
+    original_query = texts[-1] if texts else "unknown"
+    conv_id = getattr(conversation, 'id', None)
+    # Get the last message (user's message that triggered the search)
+    last_msg = messages[-1] if messages else None
+    msg_id = getattr(last_msg, 'id', None) if last_msg else None
+
+    logger.info(f"[external_search] About to index search results")
+    logger.info(f"[external_search] conversation_id={conv_id}, message_id={msg_id}")
+    logger.info(f"[external_search] original_query={original_query[:100]}")
+    logger.info(f"[external_search] pubmed={len(pubmed_sources)}, crossref={len(crossref_sources)}, wikipedia={len(wikipedia_sources)}")
+
     merged_sources = [*pubmed_sources, *crossref_sources, *wikipedia_sources]
     await emit("embedding_and_indexing_sources", {"total_sources": len(merged_sources)})
     indexed, skipped = await asyncio.to_thread(_embed_and_index_sources, merged_sources)
@@ -395,6 +540,8 @@ async def search_and_embed(
         {"indexed": indexed, "skipped": skipped},
     )
 
+    logger.info(f"[external_search] Indexed: total_indexed={indexed}, total_skipped={skipped}")
+
     return {
         "terms": terms,
         "pubmed_found": len(pubmed_sources),
@@ -402,4 +549,13 @@ async def search_and_embed(
         "wikipedia_found": len(wikipedia_sources),
         "indexed": indexed,
         "skipped": skipped,
+        "external_search_data": {
+            "original_query": original_query,
+            "conversation_id": conv_id,
+            "message_id": msg_id,
+            "pubmed_sources": pubmed_sources,
+            "crossref_sources": crossref_sources,
+            "wikipedia_sources": wikipedia_sources,
+            "extracted_terms": terms,
+        },
     }

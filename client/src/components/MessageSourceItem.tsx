@@ -8,22 +8,28 @@ import {
   Typography,
 } from '@mui/material'
 import CloseIcon from '@mui/icons-material/Close'
-import type { SourceAndClaim } from '../types'
+import type { Source } from '../types'
 
 export default function MessageSourceItem({
   text,
   source,
 }: {
   text: string
-  source: SourceAndClaim
+  source: Source
 }) {
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null)
   const open = Boolean(anchorEl)
   const popupText = source.text
   console.log(source)
   const url = source.url ?? ''
-  const name = source.name === 'unknown' ? text : source.name
+  const name =
+    source.name === 'unknown'
+      ? text
+      : source.source_type === 'wikipedia'
+        ? `wiki: ${source.name}`
+        : source.name
 
+  console.log({ name, url, popupText })
   const handleClick = (e: React.MouseEvent<HTMLElement>) => {
     // Prevent navigating when later you swap to a link component.
     e.preventDefault()

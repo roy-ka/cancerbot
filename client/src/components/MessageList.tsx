@@ -3,16 +3,42 @@ import type { Message } from '../types'
 import MessageItem from './MessageItem'
 import { useCallback, useRef, useState } from 'react'
 
+const getStageMessage = (stage: string): string => {
+  const messages: Record<string, string> = {
+    loading_conversation: 'Loading conversation...',
+    saving_user_message: 'Saving your message...',
+    retrieving_context: 'Retrieving context...',
+    building_prompt: 'Building prompt...',
+    generating_answer: 'Generating answer...',
+    re_retrieving_context: 'Re-retrieving context...',
+    rebuilding_prompt: 'Rebuilding prompt...',
+    re_generating_answer: 'Re-generating answer...',
+    fallback_triggered: 'Searching for additional sources...',
+    analyzing_recent_messages: 'Analyzing recent messages...',
+    extracting_search_terms: 'Extracting search terms...',
+    terms_ready: 'Search terms ready...',
+    searching_pubmed: 'Searching PubMed...',
+    searching_crossref: 'Searching CrossRef...',
+    searching_wikipedia: 'Searching Wikipedia...',
+    found_sources: 'Found sources...',
+    embedding_and_indexing_sources: 'Indexing sources...',
+    sources_indexed: 'Sources indexed...',
+  }
+  return messages[stage] || stage
+}
+
 export default function MessageList({
   messages,
   onLoadOlder,
   hasOlder = false,
   isLoadingOlder = false,
+  currentStage = null,
 }: {
   messages: Message[]
   onLoadOlder?: () => Promise<boolean> | boolean
   hasOlder?: boolean
   isLoadingOlder?: boolean
+  currentStage?: string | null
 }) {
   const [noOlderOpen, setNoOlderOpen] = useState(false)
   const lastTriggerRef = useRef<number>(0)
@@ -96,6 +122,21 @@ export default function MessageList({
       {messages.map((message) => (
         <MessageItem message={message} key={message.id || 'new'} />
       ))}
+      {currentStage && (
+        <Box
+          sx={{
+            mt: 2,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 1.5,
+            color: 'rgba(255,255,255,0.6)',
+            fontSize: '0.85rem',
+          }}
+        >
+          <CircularProgress size={14} />
+          <span>{getStageMessage(currentStage)}</span>
+        </Box>
+      )}
     </Box>
   )
 }

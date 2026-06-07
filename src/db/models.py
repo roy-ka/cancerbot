@@ -70,9 +70,10 @@ class Message(Base):
     role = Column(String(20), nullable=False)
     content = Column(Text, nullable=False)
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
-    sources_ids = Column(JSON, nullable=True) 
+    sources_ids = Column(JSON, nullable=True)
     claim_ids = Column(JSON, nullable=True)
     intent = Column(String(20), nullable=True)
+    extracted_terms = Column(JSON, nullable=True)
 
     # --- Virtual fields (not stored as separate DB columns) ---
     # Stored in DB: sources_ids / claim_ids (JSON)
@@ -186,3 +187,38 @@ class LoginAttempt(Base):
     failed_attempts = Column(Integer, default=0, nullable=False)
     locked_until = Column(DateTime(timezone=True), nullable=True)
     last_attempt_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class SearchAnalytic(Base):
+    __tablename__ = "search_analytics"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    conversation_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+    message_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+    search_query = Column(String(500), nullable=False, index=True)
+    result_count = Column(Integer, nullable=False, default=0)
+    top_score = Column(Integer, nullable=True)  # Highest relevance score from OpenSearch (0-100)
+    avg_score = Column(Integer, nullable=True)  # Average relevance score
+    min_score = Column(Integer, nullable=True)  # Lowest relevance score
+    sufficient_evidence = Column(Integer, default=0, nullable=False)  # 1 if LLM had enough context, 0 otherwise
+    fallback_triggered = Column(Integer, default=0, nullable=False)  # 1 if fallback NLP search was triggered
+    notes = Column(Text, nullable=True)  # Any additional notes (e.g., error messages)
+    created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False, index=True)
+
+
+class ExternalSearchResult(Base):
+    __tablename__ = "external_search_results"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    conversation_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+    message_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+    search_query = Column(String(500), nullable=False, index=True)
+    source = Column(String(50), nullable=False, index=True)  # 'pubmed', 'crossref', 'wikipedia'
+    extracted_terms = Column(Text, nullable=True)  # The terms extracted by NLP (comma-separated)
+    result_count = Column(Integer, nullable=False, default=0)  # Total results returned from API
+    indexed_count = Column(Integer, nullable=False, default=0)  # How many were actually indexed
+    skipped_count = Column(Integer, nullable=False, default=0)  # How many were skipped
+    top_result_title = Column(String(500), nullable=True)  # Title of the best result
+    top_result_url = Column(String(500), nullable=True)  # URL of the best result
+    error_message = Column(Text, nullable=True)  # If search failed, the error
+    created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False, index=True)

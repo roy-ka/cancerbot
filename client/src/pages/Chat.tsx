@@ -17,6 +17,7 @@ export default function Chat() {
     useState<string>('new')
   const [inputValue, setInputValue] = useState<string>('')
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [currentStage, setCurrentStage] = useState<string | null>(null)
 
   const setSelectedConversationIdWithClose = (id: string | React.SetStateAction<string>) => {
     setSelectedConversationId(id)
@@ -31,7 +32,6 @@ export default function Chat() {
     conversationId:
       selectedConversationId === 'new' ? undefined : selectedConversationId,
     sources: [],
-    claims: [],
   })
 
   useEffect(() => {
@@ -177,6 +177,7 @@ export default function Chat() {
     if (selectedConversationId === 'new') {
       // For new conversations, use POST /conversations/new
       const url = `${import.meta.env.VITE_BASE_URL}/conversations/new`
+      setCurrentStage('loading_conversation')
       fetch(url, {
         method: 'POST',
         credentials: 'include',
@@ -189,6 +190,7 @@ export default function Chat() {
         })
         .then((res) => {
           if (!res) return
+          setCurrentStage(null)
           setMessages((prev) => {
             const withoutTemp = prev.slice(0, -1)
             return [...withoutTemp, ...res.messages]
@@ -196,7 +198,10 @@ export default function Chat() {
           setConversations((prev) => [res.conversation, ...prev])
           setSelectedConversationId(res.conversation.id)
         })
-        .catch((e) => console.error('message submit failed:', e))
+        .catch((e) => {
+          console.error('message submit failed:', e)
+          setCurrentStage(null)
+        })
     } else {
       // For existing conversations, use WebSocket
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
@@ -214,9 +219,9 @@ export default function Chat() {
           const msg = JSON.parse(event.data)
 
           if (msg.type === 'stage') {
-            // Just log stage updates; UI will show "generating" state
-            console.debug('WebSocket stage:', msg.stage, msg.data)
+            setCurrentStage(msg.stage)
           } else if (msg.type === 'final') {
+            setCurrentStage(null)
             // Replace optimistic message with real messages
             setMessages((prev) => {
               const withoutTemp = prev.slice(0, -1)
@@ -234,7 +239,7 @@ export default function Chat() {
             }
           } else if (msg.type === 'error') {
             console.error('WebSocket error:', msg.message)
-            // Optionally show error to user
+            setCurrentStage(null)
           }
         } catch (e) {
           console.error('Failed to parse WebSocket message:', e)
@@ -286,6 +291,7 @@ export default function Chat() {
               onLoadOlder={loadOlderMessages}
               hasOlder={!!nextBefore}
               isLoadingOlder={isLoadingOlder}
+              currentStage={currentStage}
             />
           </Box>
           <Box className="chat-input">

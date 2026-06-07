@@ -1,7 +1,8 @@
 import { Box, Typography } from '@mui/material'
 import React, { useMemo } from 'react'
-import type { Message, SourceAndClaim } from '../types'
+import type { Message, Source } from '../types'
 import MessageSourceItem from './MessageSourceItem'
+import GroupedMessageSourceItem from './GroupedMessageSourceItem'
 
 export default function MessageItem({ message }: { message: Message }) {
   const normalizeRefId = (raw: string) => {
@@ -36,8 +37,8 @@ export default function MessageItem({ message }: { message: Message }) {
     return id
   }
 
-  const mergedSourcesAndClaims: Record<string, SourceAndClaim> = useMemo(() => {
-    return [...(message.sources ?? []), ...(message.claims ?? [])].reduce(
+  const mergedSources: Record<string, Source> = useMemo(() => {
+    return (message.sources ?? []).reduce(
       (h, item) => {
         const k = normalizeRefId(item.id)
         h[k] = item
@@ -45,51 +46,116 @@ export default function MessageItem({ message }: { message: Message }) {
         h[normalizeRefId(String(item.id))] = item
         return h
       },
-      {} as Record<string, SourceAndClaim>,
+      {} as Record<string, Source>,
     )
-  }, [message.sources, message.claims])
+  }, [message.sources])
   // Build a Typography node that contains text + clickable citation tokens like [C1], [pmid:...]
   const mesegeEnrichedText = useMemo(() => {
     const text = message.content ?? ''
     const parts: React.ReactNode[] = []
 
-    // Capture anything inside brackets: [ ... ]
+    // First, find all citations and their positions
     const re = /\[([^\]\s]+)\]/g
-    let lastIndex = 0
+    const citations: Array<{ id: string; start: number; end: number; full: string }> = []
     let match: RegExpExecArray | null
 
-    const addText = (chunk: string) => {
-      if (!chunk) return
-      parts.push(chunk)
+    while ((match = re.exec(text)) !== null) {
+      const full = match[0]
+      const id = normalizeRefId(match[1])
+      citations.push({
+        id,
+        start: match.index,
+        end: match.index + full.length,
+        full,
+      })
     }
 
-    const addLink = (id: string, token: string, key: string) => {
-      const source = mergedSourcesAndClaims[normalizeRefId(id)]
-      const safeSource: SourceAndClaim = source ?? {
-        id,
-        url: null,
-        text: 'Source details not loaded yet.',
+    // Group consecutive citations
+    const groups: Array<{ citations: typeof citations; start: number; end: number }> = []
+    let currentGroup: typeof citations = []
+    let groupStart = 0
+
+    for (let i = 0; i < citations.length; i++) {
+      const citation = citations[i]
+      if (i === 0) {
+        currentGroup = [citation]
+        groupStart = citation.start
+      } else {
+        // Check if consecutive (no text between previous citation end and this start)
+        if (citation.start === citations[i - 1].end) {
+          currentGroup.push(citation)
+        } else {
+          groups.push({
+            citations: currentGroup,
+            start: groupStart,
+            end: citations[i - 1].end,
+          })
+          currentGroup = [citation]
+          groupStart = citation.start
+        }
+      }
+    }
+    if (currentGroup.length > 0) {
+      groups.push({
+        citations: currentGroup,
+        start: groupStart,
+        end: citations[citations.length - 1].end,
+      })
+    }
+
+    // Build parts with groups surrounded by brackets
+    let lastIndex = 0
+    for (const group of groups) {
+      // Add text before group
+      if (group.start > lastIndex) {
+        parts.push(text.slice(lastIndex, group.start))
       }
 
-      parts.push(
-        <MessageSourceItem key={key} source={safeSource} text={token} />,
-      )
+      // Add opening bracket (not clickable)
+      parts.push('[')
+
+      // Add citations in group
+      const groupSources: Source[] = []
+      const displayTexts: string[] = []
+
+      for (const citation of group.citations) {
+        const source = mergedSources[normalizeRefId(citation.id)]
+        if (source) {
+          groupSources.push(source)
+          displayTexts.push(citation.full.slice(1, -1)) // Remove brackets from display
+        }
+      }
+
+      if (groupSources.length === 1) {
+        parts.push(
+          <MessageSourceItem
+            key={`${message.id}-${group.start}`}
+            source={groupSources[0]}
+            text={displayTexts[0]}
+          />,
+        )
+      } else if (groupSources.length > 1) {
+        parts.push(
+          <GroupedMessageSourceItem
+            key={`${message.id}-${group.start}`}
+            sources={groupSources}
+            displayTexts={displayTexts}
+          />,
+        )
+      }
+
+      // Add closing bracket (not clickable)
+      parts.push(']')
+      lastIndex = group.end
     }
 
-    while ((match = re.exec(text)) !== null) {
-      const full = match[0] // e.g. "[C1]"
-      const id = normalizeRefId(match[1])
-      const start = match.index
-      const end = start + full.length
-      addText(text.slice(lastIndex, start))
-      addLink(id, full, `${message.id}-${start}-${id}`)
-      lastIndex = end
+    // Add remaining text
+    if (lastIndex < text.length) {
+      parts.push(text.slice(lastIndex))
     }
-
-    addText(text.slice(lastIndex))
 
     return <Typography sx={{ whiteSpace: 'pre-wrap' }}>{parts}</Typography>
-  }, [message.content, mergedSourcesAndClaims, message.id])
+  }, [message.content, mergedSources, message.id])
 
   return (
     <Box

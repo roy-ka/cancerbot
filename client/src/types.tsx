@@ -21,11 +21,13 @@ export type Conversation = {
   lastMessage: string
   lastMessageTime: string
 }
-export type SourceAndClaim = {
+export type Source = {
   id: string
   url: string | null
   text: string
   name: string
+  title?: string
+  source_type?: string
 }
 
 export type Message = {
@@ -34,6 +36,5 @@ export type Message = {
   conversationId?: string
   role: 'user' | 'assistant'
   timestamp: string
-  sources: SourceAndClaim[]
-  claims: SourceAndClaim[]
+  sources: Source[]
 }
