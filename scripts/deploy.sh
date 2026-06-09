@@ -30,12 +30,12 @@ done
 # Setup logging
 TIMESTAMP=$(date '+%Y%m%d_%H%M%S')
 mkdir -p "$PROJECT_DIR/logs" "$PROJECT_DIR/backups"
-sudo chmod 755 "$PROJECT_DIR/logs" "$PROJECT_DIR/backups" 2>/dev/null || true
+chmod 755 "$PROJECT_DIR/logs" "$PROJECT_DIR/backups" 2>/dev/null || sudo chmod 755 "$PROJECT_DIR/logs" "$PROJECT_DIR/backups" 2>/dev/null || true
 LOG_FILE="$PROJECT_DIR/logs/deploy_$TIMESTAMP.log"
 
-# Redirect all output to log file and stdout
-exec > >(tee -a "$LOG_FILE")
-exec 2>&1
+# Create log file and redirect all output to it and stdout
+touch "$LOG_FILE" && chmod 666 "$LOG_FILE" 2>/dev/null || true
+exec > >(tee -a "$LOG_FILE") 2>&1
 
 echo "========================================="
 echo "CancerBot Deploy Started at $(date '+%Y-%m-%d %H:%M:%S')"
@@ -157,7 +157,7 @@ rollback() {
 
     # Bring services back up
     echo "Starting services with previous images..."
-    docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot up -d || true
+    docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot --profile prod up -d || true
 
     # Wait for postgres to be ready
     echo "Waiting for PostgreSQL to be ready..."
@@ -328,7 +328,7 @@ cd "$PROJECT_DIR"
 # Build Docker images
 echo ""
 echo "Building Docker images..."
-if docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot build; then
+if docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot --profile prod build; then
   echo "✓ Docker images built successfully"
 else
   echo "✗ Docker build failed"
@@ -416,7 +416,7 @@ fi
 # Start services
 echo ""
 echo "Starting services..."
-if docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot up -d; then
+if docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot --profile prod up -d; then
   echo "✓ Services started"
 else
   echo "✗ Failed to start services"
