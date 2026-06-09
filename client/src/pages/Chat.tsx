@@ -199,9 +199,9 @@ export default function Chat() {
           setConversations((prev) => [res.conversation, ...prev])
           setSelectedConversationId(res.conversation.id)
         })
-        .catch((e) => {
+        .catch(() => {
           setCurrentStage(null)
-          setMessages((prev) => prev.filter((m) => !m.id.startsWith('temp-')))
+          setMessages((prev) => prev.filter((m) => !m.id?.startsWith('temp-')))
           setErrorMsg('Failed to send message. Please try again.')
         })
     } else {
@@ -241,7 +241,7 @@ export default function Chat() {
             }
           } else if (msg.type === 'error') {
             setCurrentStage(null)
-            setMessages((prev) => prev.filter((m) => !m.id.startsWith('temp-')))
+            setMessages((prev) => prev.filter((m) => !m.id?.startsWith('temp-')))
             setErrorMsg(msg.message || 'An error occurred. Please try again.')
           }
         } catch (e) {
@@ -251,7 +251,7 @@ export default function Chat() {
 
       ws.onerror = () => {
         setCurrentStage(null)
-        setMessages((prev) => prev.filter((m) => !m.id.startsWith('temp-')))
+        setMessages((prev) => prev.filter((m) => !m.id?.startsWith('temp-')))
         setErrorMsg('Connection error. Please try again.')
       }
 
