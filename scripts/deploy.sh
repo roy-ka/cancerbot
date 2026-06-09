@@ -78,8 +78,14 @@ fi
 # Check disk space (needs >2GB free)
 DISK_AVAILABLE=$(df -BG "$PROJECT_DIR" | awk 'NR==2 {print $(NF-2)}' | sed 's/G$//')
 if [ "$DISK_AVAILABLE" -lt 2 ]; then
-  echo "✗ Error: Not enough disk space. Required: 2GB, Available: ${DISK_AVAILABLE}GB"
-  exit 1
+  echo "⚠ Low disk space (${DISK_AVAILABLE}GB). Running Docker cleanup..."
+  docker system prune -a -f --volumes 2>/dev/null || true
+  DISK_AVAILABLE=$(df -BG "$PROJECT_DIR" | awk 'NR==2 {print $(NF-2)}' | sed 's/G$//')
+  if [ "$DISK_AVAILABLE" -lt 2 ]; then
+    echo "✗ Error: Still not enough disk space after cleanup. Required: 2GB, Available: ${DISK_AVAILABLE}GB"
+    exit 1
+  fi
+  echo "✓ Disk space recovered (${DISK_AVAILABLE}GB available)"
 fi
 echo "✓ Disk space check passed (${DISK_AVAILABLE}GB available)"
 
