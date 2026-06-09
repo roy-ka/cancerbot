@@ -129,10 +129,10 @@ rollback() {
   echo "✗ DEPLOYMENT FAILED - INITIATING ROLLBACK"
   echo "========================================="
 
-  # Reset git to previous state in case pull succeeded but deploy failed
-  echo "Resetting git to previous state..."
+  # Reset git to the commit that was live before this deploy
+  echo "Resetting git to pre-deploy commit: ${PREV_GIT_HEAD:-HEAD}..."
   cd "$PROJECT_DIR"
-  if git reset --hard HEAD; then
+  if git reset --hard "${PREV_GIT_HEAD:-HEAD}"; then
     echo "✓ Git reset to previous state"
   else
     echo "⚠ Warning: Failed to reset git state"
@@ -202,6 +202,10 @@ else
   echo "✗ Git reset failed"
   exit 1
 fi
+
+# Capture current commit so rollback can return to it if pull succeeds but deploy fails
+PREV_GIT_HEAD=$(git rev-parse HEAD)
+echo "✓ Saved pre-deploy commit: $PREV_GIT_HEAD"
 
 # Pull latest code
 echo ""
