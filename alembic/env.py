@@ -6,7 +6,6 @@ from sqlalchemy import pool
 from src.db.base import Base
 import src.db.models 
 from alembic import context
-from src.utils.utils import is_prod
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
