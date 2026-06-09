@@ -3,6 +3,7 @@ import Login from './pages/Login'
 import Chat from './pages/Chat'
 import Terms from './pages/Terms'
 import ProtectedRoute from './components/ProtectedRoute'
+import PublicRoute from './components/PublicRoute'
 import './App.css'
 
 function App() {
@@ -12,8 +13,8 @@ function App() {
         {/* Default */}
         <Route path="/" element={<Navigate to="/login" replace />} />
 
-        {/* Public */}
-        <Route path="/login" element={<Login />} />
+        {/* Public — redirect to /chat if already authenticated */}
+        <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
         <Route path="/terms" element={<Terms />} />
 
         {/* Protected App */}

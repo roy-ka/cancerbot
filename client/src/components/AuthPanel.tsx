@@ -1,9 +1,8 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { Box, Button, Typography } from '@mui/material'
 import LoginForm from './LoginForm'
 import RegistrationForm from './RegistrationForm'
 import ForgotPasswordForm from './ForgotPasswordForm'
-import { useNavigate } from 'react-router-dom'
 import type { AuthButtonsProps } from '../types'
 
 function AuthButtons({ isLogin, setIsLogin }: AuthButtonsProps) {
@@ -32,25 +31,6 @@ type View = 'login' | 'register' | 'forgot'
 
 export default function AuthPanel() {
   const [view, setView] = useState<View>('login')
-  const navigate = useNavigate()
-
-  useEffect(() => {
-    const checkAuth = async () => {
-      try {
-        const baseUrl = import.meta.env.VITE_BASE_URL || ''
-        const res = await fetch(`${baseUrl}/auth/check/`, {
-          method: 'GET',
-          credentials: 'include',
-        })
-        if (res.ok) {
-          navigate('/chat', { replace: true })
-        }
-      } catch (e) {
-        // Not authenticated, stay on login page
-      }
-    }
-    checkAuth()
-  }, [])
 
   const titles: Record<View, string> = {
     login: 'Welcome back',
