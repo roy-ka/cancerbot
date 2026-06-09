@@ -6,6 +6,7 @@ from sqlalchemy import pool
 from src.db.base import Base
 import src.db.models 
 from alembic import context
+from src.utils.utils import is_prod
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -13,6 +14,9 @@ load_dotenv()
 config = context.config
 
 # Override the sqlalchemy.url from environment (.env) so Alembic uses the same DB as the app
+# POSTGRES_URL is set correctly for the current context:
+# - locally: points to localhost (from .env)
+# - in Docker: overridden by docker-compose to use the postgres service hostname
 db_url = os.getenv("POSTGRES_URL")
 if db_url:
     # Alembic requires a synchronous driver. Replace async drivers with psycopg (v3).

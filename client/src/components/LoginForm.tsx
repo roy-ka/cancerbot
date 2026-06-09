@@ -34,7 +34,6 @@ export default function LoginForm({
       credentials: 'include',
     })
     if (res.ok) {
-      console.log('Login successful, redirecting to dashboard...')
       setError('')
       navigate('/chat')
     } else {
@@ -50,13 +49,7 @@ export default function LoginForm({
 
   const onSubmit = (e: React.SubmitEvent<HTMLFormElement>) => {
     e.preventDefault()
-    login({ email, password, rememberMe })
-      .then((res) => {
-        console.log('Login successful:', res)
-      })
-      .catch((err) => {
-        console.error('Login error:', err)
-      })
+    login({ email, password, rememberMe }).catch(() => {})
   }
   const changeEmail = (e: React.ChangeEvent<HTMLInputElement>) => {
     const email = e.target.value

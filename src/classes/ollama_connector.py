@@ -40,7 +40,7 @@ class OllamaConnector:
 
     Context must be a list of dict / Mapping items with explicit IDs, e.g.
          {
-           "id": "SRC_193" or "pmid:12345678" or "C81" or "url:<sha1>",
+           "id": "SRC_193" or "pmid:12345678" or "url:<sha1>",
            "content_for_embedding": "...text chunk used for grounding..."
          }
 

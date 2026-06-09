@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Box, Grid } from '@mui/material'
+import { Alert, Box, Grid, Snackbar } from '@mui/material'
 import { useNavigate } from 'react-router-dom'
 import ConversationList from '../components/ConversationList'
 import MessageList from '../components/MessageList'
@@ -18,6 +18,7 @@ export default function Chat() {
   const [inputValue, setInputValue] = useState<string>('')
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [currentStage, setCurrentStage] = useState<string | null>(null)
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
   const setSelectedConversationIdWithClose = (id: string | React.SetStateAction<string>) => {
     setSelectedConversationId(id)
@@ -83,7 +84,7 @@ export default function Chat() {
         if (Array.isArray(apiMessages)) {
           setMessages((prev) => (prev === apiMessages ? prev : apiMessages))
         } else if (apiMessages) {
-          console.warn('Unexpected messages format:', apiMessages)
+  
           setMessages([])
         } else {
           setMessages([])
@@ -199,8 +200,9 @@ export default function Chat() {
           setSelectedConversationId(res.conversation.id)
         })
         .catch((e) => {
-          console.error('message submit failed:', e)
           setCurrentStage(null)
+          setMessages((prev) => prev.filter((m) => !m.id.startsWith('temp-')))
+          setErrorMsg('Failed to send message. Please try again.')
         })
     } else {
       // For existing conversations, use WebSocket
@@ -238,16 +240,19 @@ export default function Chat() {
               })
             }
           } else if (msg.type === 'error') {
-            console.error('WebSocket error:', msg.message)
             setCurrentStage(null)
+            setMessages((prev) => prev.filter((m) => !m.id.startsWith('temp-')))
+            setErrorMsg(msg.message || 'An error occurred. Please try again.')
           }
         } catch (e) {
           console.error('Failed to parse WebSocket message:', e)
         }
       }
 
-      ws.onerror = (event) => {
-        console.error('WebSocket error:', event)
+      ws.onerror = () => {
+        setCurrentStage(null)
+        setMessages((prev) => prev.filter((m) => !m.id.startsWith('temp-')))
+        setErrorMsg('Connection error. Please try again.')
       }
 
       ws.onclose = () => {
@@ -258,6 +263,16 @@ export default function Chat() {
 
   return (
     <Box className={`chat-root ${sidebarOpen ? 'sidebar-open' : ''}`}>
+      <Snackbar
+        open={!!errorMsg}
+        autoHideDuration={6000}
+        onClose={() => setErrorMsg(null)}
+        anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
+      >
+        <Alert severity="error" onClose={() => setErrorMsg(null)} sx={{ width: '100%' }}>
+          {errorMsg}
+        </Alert>
+      </Snackbar>
       <button
         className="chat-sidebar-toggle"
         onClick={() => setSidebarOpen(!sidebarOpen)}

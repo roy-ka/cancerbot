@@ -106,7 +106,6 @@ export default function RegistrationForm({
       const err = await res.json().catch(() => null)
       throw new Error(err?.detail ?? err?.message ?? 'Registration failed')
     }
-    console.log('Registration successful, redirecting to login...')
     changeToLogin()
   }
 
@@ -116,14 +115,10 @@ export default function RegistrationForm({
       return
     }
     setError('')
-    register({ email, password, name })
-      .then((res) => {
-        console.log('Registration successful:', res)
-      })
-      .catch((err) => {
-        console.error('Registration error:', err)
-        setError(err.message)
-      })
+    register({ email, password, name }).catch((err) => {
+      console.error('Registration error:', err)
+      setError(err.message)
+    })
   }
 
   const changeEmail = (e: React.ChangeEvent<HTMLInputElement>) => {

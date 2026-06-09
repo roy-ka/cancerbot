@@ -18,8 +18,11 @@ async def lifespan(app: FastAPI):
     # Startup: Initialize OpenSearch indexes
     logger.info("Initializing OpenSearch indexes...")
     try:
-        dbConnector.ensure_all_indexes()
-        logger.info("OpenSearch indexes initialized successfully")
+        ok = dbConnector.ensure_all_indexes()
+        if ok:
+            logger.info("OpenSearch indexes initialized successfully")
+        else:
+            logger.warning("OpenSearch indexes could not be initialized — cluster may still be starting")
     except Exception as e:
         logger.warning(f"Failed to initialize OpenSearch indexes: {e}")
 

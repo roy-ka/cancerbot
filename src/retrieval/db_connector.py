@@ -43,8 +43,10 @@ class dbConnector:
         raise KeyError(f"EMBED_MODEL_NAME='{model_name}' not found in MODELS. Valid models: {list(cls.MODELS.keys())}")
 
       cls._model = cls.MODELS[model_name]
-      host = 'localhost'
-      port = 9200
+      from urllib.parse import urlparse
+      _parsed = urlparse(os.getenv('OPENSEARCH_URL', 'https://localhost:9200'))
+      host = _parsed.hostname or 'localhost'
+      port = _parsed.port or 9200
       auth = ('admin', cls._PASS)
       cls.db_client = OpenSearch(
         hosts=[{'host': host, 'port': port}],

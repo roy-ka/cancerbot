@@ -20,7 +20,6 @@ export default function MessageSourceItem({
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null)
   const open = Boolean(anchorEl)
   const popupText = source.text
-  console.log(source)
   const url = source.url ?? ''
   const name =
     source.name === 'unknown'
@@ -29,7 +28,6 @@ export default function MessageSourceItem({
         ? `wiki: ${source.name}`
         : source.name
 
-  console.log({ name, url, popupText })
   const handleClick = (e: React.MouseEvent<HTMLElement>) => {
     // Prevent navigating when later you swap to a link component.
     e.preventDefault()
