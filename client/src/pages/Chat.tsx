@@ -6,7 +6,7 @@ import MessageList from '../components/MessageList'
 import type { Conversation, Message } from '../types'
 import InputField from '../components/InputField'
 export default function Chat() {
-  const BASE_URL = import.meta.env.VITE_BASE_URL
+  const BASE_URL = import.meta.env.VITE_BASE_URL || ''
   const navigate = useNavigate()
 
   const [conversations, setConversations] = useState<Conversation[]>([])
