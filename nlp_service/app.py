@@ -33,7 +33,7 @@ logger.info("[NLP app] Module loading started")
 load_dotenv()
 logger.info("[NLP app] .env loaded")
 # --- DB (SQLAlchemy) ---
-DATABASE_URL = os.getenv("NLP_DATABASE_URL")
+DATABASE_URL = os.getenv("DOCKER_POSTGRES_URL")
     
 
 DATABASE_ENABLED = False  # Disabled for now due to table migration issues
@@ -50,7 +50,7 @@ async def lifespan(_: FastAPI):
     global _abbrev_refresher_task
 
     logger.info("[lifespan] Starting up...")
-    logger.info(f"[lifespan] DATABASE_ENABLED={DATABASE_ENABLED}, DATABASE_URL={os.getenv('NLP_DATABASE_URL', 'NOT SET')[:50]}")
+    logger.info(f"[lifespan] DATABASE_ENABLED={DATABASE_ENABLED}, DATABASE_URL={os.getenv('DOCKER_POSTGRES_URL', 'NOT SET')[:50]}")
 
     if DATABASE_ENABLED:
         logger.info("[lifespan] Skipping abbreviation cache on startup - will load on first request")
@@ -346,7 +346,7 @@ async def get_abbrev(short: str, session: AsyncSession = Depends(get_session)):
     logger.debug(f"[get_abbrev] Looking up abbreviation: {short}")
     if not DATABASE_ENABLED:
         logger.warning(f"[get_abbrev] Database not enabled")
-        return {"ok": False, "error": "DB not configured (set NLP_DATABASE_URL)"}
+        return {"ok": False, "error": "DB not configured (set DOCKER_POSTGRES_URL)"}
 
     row = await session.get(Abbreviation, short)
     if not row:
@@ -369,7 +369,7 @@ async def get_abbrev(short: str, session: AsyncSession = Depends(get_session)):
 async def search_abbrev(q: str, limit: int = 20, session: AsyncSession = Depends(get_session)):
     """Simple search by short/long contains (case-insensitive)."""
     if not DATABASE_ENABLED:
-        return {"ok": False, "error": "DB not configured (set NLP_DATABASE_URL)"}
+        return {"ok": False, "error": "DB not configured (set DOCKER_POSTGRES_URL)"}
 
     q_norm = (q or "").strip()
     if not q_norm:
@@ -409,7 +409,7 @@ async def search_abbrev(q: str, limit: int = 20, session: AsyncSession = Depends
 async def reload_abbrev_cache():
     """Reload the in-memory cache immediately."""
     if not DATABASE_ENABLED:
-        return {"ok": False, "error": "DB not configured (set NLP_DATABASE_URL)"}
+        return {"ok": False, "error": "DB not configured (set DOCKER_POSTGRES_URL)"}
 
     count = await load_abbrev_cache()
     return {"ok": True, "count": count}

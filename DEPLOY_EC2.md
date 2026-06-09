@@ -3,6 +3,7 @@
 ## 1. EC2 Instance Setup
 
 **Launch instance:**
+
 - AMI: Ubuntu 24.04 LTS (t3.medium or larger for Ollama)
 - Storage: 30+ GB (for embeddings + backups)
 - Security group inbound rules:
@@ -11,6 +12,7 @@
   - Port 22: SSH (from your IP)
 
 **SSH in:**
+
 ```bash
 ssh -i your-key.pem ubuntu@your-instance-ip
 ```
@@ -43,6 +45,7 @@ nano .env  # Fill in all values (see below)
 ```
 
 **Required .env values for EC2:**
+
 ```
 # Database
 POSTGRES_PASSWORD=<generate-strong-password>
@@ -93,9 +96,9 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      - '5432:5432'
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER}"]
+      test: ['CMD', 'pg_isready', '-U', '${POSTGRES_USER}']
       interval: 10s
       timeout: 5s
       retries: 5
@@ -109,9 +112,9 @@ services:
     volumes:
       - opensearch_data:/usr/share/opensearch/data
     ports:
-      - "9200:9200"
+      - '9200:9200'
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9200"]
+      test: ['CMD', 'curl', '-f', 'http://localhost:9200']
       interval: 10s
       timeout: 5s
       retries: 5
@@ -121,9 +124,9 @@ services:
     volumes:
       - ollama_data:/root/.ollama
     ports:
-      - "11434:11434"
+      - '11434:11434'
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      test: ['CMD', 'curl', '-f', 'http://localhost:11434/api/tags']
       interval: 30s
       timeout: 10s
       retries: 3
@@ -133,12 +136,12 @@ services:
       context: ./nlp_service
       dockerfile: Dockerfile
     environment:
-      NLP_DATABASE_URL: ${NLP_DATABASE_URL}
+      DOCKER_POSTGRES_URL: ${DOCKER_POSTGRES_URL}
     depends_on:
       postgres:
         condition: service_healthy
     ports:
-      - "8011:8011"
+      - '8011:8011'
 
 volumes:
   postgres_data:
@@ -149,9 +152,11 @@ volumes:
 ## 5. AWS IAM Role for S3 Backups
 
 **Create IAM role:**
+
 1. Go to IAM → Roles → Create role
 2. Trusted entity: EC2
 3. Add inline policy:
+
 ```json
 {
   "Version": "2012-10-17",
@@ -172,9 +177,11 @@ volumes:
   ]
 }
 ```
+
 4. Attach role to your EC2 instance
 
 **Create S3 bucket:**
+
 ```bash
 aws s3 mb s3://cancerbot-backups-$(aws sts get-caller-identity --query Account --output text)
 ```
@@ -211,11 +218,13 @@ echo "✓ Deployment complete"
 ```
 
 Make executable:
+
 ```bash
 chmod +x deploy.sh
 ```
 
 Deploy:
+
 ```bash
 ./deploy.sh
 ```
@@ -275,6 +284,7 @@ server {
 ```
 
 Enable:
+
 ```bash
 sudo ln -s /etc/nginx/sites-available/cancerbot /etc/nginx/sites-enabled/
 sudo nginx -t
@@ -297,17 +307,20 @@ sudo tail -f /var/log/cancerbot_backup.log
 ## 10. Monitoring
 
 **Health check endpoint:**
+
 ```bash
 curl https://your-domain.com/health/
 ```
 
 **Check logs:**
+
 ```bash
 docker-compose logs -f backend
 docker-compose logs -f ollama
 ```
 
 **Disk usage:**
+
 ```bash
 df -h
 du -sh /opt/cancerbot
@@ -316,23 +329,27 @@ du -sh /opt/cancerbot
 ## Troubleshooting
 
 **Backend won't start:**
+
 ```bash
 docker-compose logs backend
 docker-compose run backend python -c "import src.main"
 ```
 
 **Ollama not ready:**
+
 ```bash
 docker-compose exec ollama ollama list
 docker-compose exec ollama ollama pull llama3.1:8b
 ```
 
 **Database migration failed:**
+
 ```bash
 docker-compose run backend alembic upgrade head
 ```
 
 **No backups happening:**
+
 ```bash
 /opt/cancerbot/scripts/backup_db.py  # Test manually
 sudo tail -f /var/log/cancerbot_backup.log
