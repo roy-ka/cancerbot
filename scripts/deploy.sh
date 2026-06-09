@@ -521,6 +521,14 @@ fi
 # Reload nginx with new frontend
 echo ""
 echo "Reloading nginx..."
+NGINX_CONF_SRC="$PROJECT_DIR/nginx.conf"
+NGINX_CONF_DEST="/etc/nginx/sites-available/cancerbot"
+if [ -f "$NGINX_CONF_SRC" ]; then
+  echo "Updating nginx config..."
+  sudo cp "$NGINX_CONF_SRC" "$NGINX_CONF_DEST"
+  echo "✓ Nginx config updated"
+fi
+
 if sudo nginx -t &>/dev/null; then
   if sudo systemctl reload nginx; then
     echo "✓ Nginx reloaded successfully"
