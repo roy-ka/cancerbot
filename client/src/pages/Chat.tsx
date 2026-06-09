@@ -207,8 +207,8 @@ export default function Chat() {
     } else {
       // For existing conversations, use WebSocket
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-      const baseUrl = new URL(BASE_URL)
-      const wsUrl = `${protocol}//${baseUrl.host}/conversations/${selectedConversationId}/add_message/ws`
+      const wsHost = BASE_URL ? new URL(BASE_URL).host : window.location.host
+      const wsUrl = `${protocol}//${wsHost}/conversations/${selectedConversationId}/add_message/ws`
 
       const ws = new WebSocket(wsUrl)
 
