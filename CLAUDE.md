@@ -15,6 +15,7 @@ CancerBot is a Retrieval-Augmented Generation (RAG) chatbot for cancer-related m
 3. **Fix Security** - Check for vulnerabilities (SQL injection, XSS, command injection, etc.)
 4. **Test** - Run the test suite and confirm it passes before committing
 5. **Verify** - Test changes work as intended (TypeScript/Python compilation, runtime behavior)
+6. **Push** - After committing, always push to remote (`git push`)
 
 ```bash
 # Run tests
