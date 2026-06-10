@@ -4,13 +4,11 @@ import Chat from './pages/Chat'
 import Terms from './pages/Terms'
 import ProtectedRoute from './components/ProtectedRoute'
 import PublicRoute from './components/PublicRoute'
-import VersionBadge from './components/VersionBadge'
 import './App.css'
 
 function App() {
   return (
     <BrowserRouter>
-      <VersionBadge />
       <Routes>
         {/* Default */}
         <Route path="/" element={<Navigate to="/login" replace />} />
