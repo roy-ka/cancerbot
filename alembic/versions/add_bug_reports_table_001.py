@@ -9,7 +9,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import UUID
 
 revision = 'add_bug_reports_table_001'
-down_revision = 'populate_extracted_terms_001'
+down_revision = 'cleanup_message_columns_001'
 branch_labels = None
 depends_on = None
 
