@@ -36,23 +36,21 @@ def _init_sentry() -> None:
     dsn = os.getenv("SENTRY_DSN")
     if not dsn:
         return
-    import sentry_sdk
-    from sentry_sdk.integrations.fastapi import FastApiIntegration
-    from sentry_sdk.integrations.starlette import StarletteIntegration
-    from sentry_sdk.integrations.logging import LoggingIntegration
-    env = os.getenv("ENV", "development")
-    sentry_sdk.init(
-        dsn=dsn,
-        integrations=[
-            FastApiIntegration(),
-            StarletteIntegration(),
-            LoggingIntegration(level=logging.INFO, event_level=logging.ERROR),
-        ],
-        environment=env,
-        traces_sample_rate=0.1,
-        send_default_pii=True,
-    )
-    logger.info("[NLP app] Sentry initialized")
+    try:
+        import sentry_sdk
+        from sentry_sdk.integrations.logging import LoggingIntegration
+        sentry_sdk.init(
+            dsn=dsn,
+            integrations=[
+                LoggingIntegration(level=logging.INFO, event_level=logging.ERROR),
+            ],
+            environment=os.getenv("ENV", "development"),
+            traces_sample_rate=0.1,
+            send_default_pii=True,
+        )
+        logger.info("[NLP app] Sentry initialized")
+    except Exception as exc:
+        logger.warning("[NLP app] Failed to initialize Sentry: %s", exc)
 
 _init_sentry()
 # --- DB (SQLAlchemy) ---

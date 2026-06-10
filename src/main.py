@@ -17,24 +17,22 @@ def _init_sentry() -> None:
     dsn = os.getenv("SENTRY_DSN")
     if not dsn:
         return
-    import sentry_sdk
-    from sentry_sdk.integrations.fastapi import FastApiIntegration
-    from sentry_sdk.integrations.starlette import StarletteIntegration
-    from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
-    from sentry_sdk.integrations.logging import LoggingIntegration
-    sentry_sdk.init(
-        dsn=dsn,
-        integrations=[
-            FastApiIntegration(),
-            StarletteIntegration(),
-            SqlalchemyIntegration(),
-            LoggingIntegration(level=logging.INFO, event_level=logging.ERROR),
-        ],
-        environment="production" if is_prod() else "development",
-        traces_sample_rate=0.1,
-        send_default_pii=True,
-    )
-    logger.info("Sentry initialized")
+    try:
+        import sentry_sdk
+        from sentry_sdk.integrations.logging import LoggingIntegration
+        sentry_sdk.init(
+            dsn=dsn,
+            # FastAPI, Starlette, SQLAlchemy auto-discovered when installed
+            integrations=[
+                LoggingIntegration(level=logging.INFO, event_level=logging.ERROR),
+            ],
+            environment="production" if is_prod() else "development",
+            traces_sample_rate=0.1,
+            send_default_pii=True,
+        )
+        logger.info("Sentry initialized (env=%s)", "production" if is_prod() else "development")
+    except Exception as exc:
+        logger.warning("Failed to initialize Sentry: %s", exc)
 
 _init_sentry()
 
