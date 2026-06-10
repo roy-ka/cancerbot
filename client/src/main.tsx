@@ -5,9 +5,7 @@ import App from './App'
 import { ThemeProvider as MuiThemeProvider } from '@mui/material/styles'
 import CssBaseline from '@mui/material/CssBaseline'
 import { ThemeProvider } from './context/ThemeContext'
-import { darkTheme, lightTheme } from './theme'
-import DarkModeToggle from './components/DarkModeToggle'
-import { useDarkMode } from './context/ThemeContext'
+import { darkTheme } from './theme'
 
 const sentryDsn = import.meta.env.VITE_SENTRY_DSN
 if (sentryDsn) {
@@ -21,13 +19,9 @@ if (sentryDsn) {
 }
 
 function Root() {
-  const { isDarkMode } = useDarkMode()
-  const currentTheme = isDarkMode ? darkTheme : lightTheme
-
   return (
-    <MuiThemeProvider theme={currentTheme}>
+    <MuiThemeProvider theme={darkTheme}>
       <CssBaseline />
-      <DarkModeToggle />
       <App />
     </MuiThemeProvider>
   )
