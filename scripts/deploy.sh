@@ -228,9 +228,19 @@ echo ""
 echo "Building frontend..."
 cd "$PROJECT_DIR/client"
 
-# Clean up old node_modules/package-lock/dist that might have permission issues
-echo "Cleaning up old dependencies and builds..."
-rm -rf node_modules package-lock.json dist 2>/dev/null || true
+# Only reinstall if package.json changed — keeps node_modules cached between deploys
+PKGLOCK="$PROJECT_DIR/client/package-lock.json"
+PKGLOCK_HASH_FILE="$PROJECT_DIR/.deploy_npm_hash"
+PKGLOCK_HASH_NOW=$(md5sum "$PKGLOCK" 2>/dev/null | cut -d' ' -f1)
+PKGLOCK_HASH_PREV=$(cat "$PKGLOCK_HASH_FILE" 2>/dev/null || echo "")
+NPM_NEEDS_INSTALL=true
+if [ "$PKGLOCK_HASH_NOW" = "$PKGLOCK_HASH_PREV" ] && [ -d "$PROJECT_DIR/client/node_modules" ]; then
+  echo "✓ package-lock.json unchanged — skipping npm install"
+  NPM_NEEDS_INSTALL=false
+else
+  echo "package-lock.json changed or node_modules missing — reinstalling..."
+  rm -rf node_modules dist 2>/dev/null || true
+fi
 
 # Find npm in nvm or system
 NPM_PATH=""
@@ -300,46 +310,53 @@ if [ -z "$NODE_PATH" ]; then
   exit 1
 fi
 
+# Read build-time env vars from server .env (keep secrets out of git)
+SENTRY_DSN_VAL=$(grep -E '^SENTRY_DSN=' "$PROJECT_DIR/.env" 2>/dev/null | cut -d'=' -f2- | tr -d '"'"'")
+export VITE_BASE_URL=""
+export VITE_SENTRY_DSN="$SENTRY_DSN_VAL"
+
 # Run npm as the actual user (not root) to avoid permission issues
+# Pass VITE_* vars explicitly so they survive sudo's env reset
+_npm() { "$NPM_PATH" "$@"; }
 if [ "$(whoami)" = "root" ] && [ -n "$SUDO_USER" ]; then
-  echo "Running npm as user: $SUDO_USER"
-  if sudo -u "$SUDO_USER" "$NPM_PATH" install; then
+  _npm() { sudo -u "$SUDO_USER" env VITE_BASE_URL="$VITE_BASE_URL" VITE_SENTRY_DSN="$VITE_SENTRY_DSN" "$NPM_PATH" "$@"; }
+fi
+
+if [ "$NPM_NEEDS_INSTALL" = true ]; then
+  if _npm install; then
     echo "✓ npm dependencies installed"
+    echo "$PKGLOCK_HASH_NOW" > "$PKGLOCK_HASH_FILE"
   else
     echo "✗ npm install failed"
-    exit 1
-  fi
-
-  if sudo -u "$SUDO_USER" "$NPM_PATH" run build; then
-    echo "✓ Frontend build completed"
-  else
-    echo "✗ Frontend build failed"
-    exit 1
-  fi
-else
-  # Running as regular user
-  if "$NPM_PATH" install; then
-    echo "✓ npm dependencies installed"
-  else
-    echo "✗ npm install failed"
-    exit 1
-  fi
-
-  if "$NPM_PATH" run build; then
-    echo "✓ Frontend build completed"
-  else
-    echo "✗ Frontend build failed"
     exit 1
   fi
 fi
 
+if _npm run build; then
+  echo "✓ Frontend build completed"
+else
+  echo "✗ Frontend build failed"
+  exit 1
+fi
+
 cd "$PROJECT_DIR"
 
-# Build Docker images
+# Build Docker images — use --no-cache only when requirements files changed
 echo ""
 echo "Building Docker images..."
-if docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot --profile prod build; then
+REQS_HASH_FILE="$PROJECT_DIR/.deploy_reqs_hash"
+REQS_HASH_NOW=$(cat "$PROJECT_DIR/requirements.txt" "$PROJECT_DIR/nlp_service/requirements.txt" 2>/dev/null | md5sum | cut -d' ' -f1)
+REQS_HASH_PREV=$(cat "$REQS_HASH_FILE" 2>/dev/null || echo "")
+DOCKER_BUILD_FLAGS=""
+if [ "$REQS_HASH_NOW" != "$REQS_HASH_PREV" ]; then
+  echo "Requirements changed — building with --no-cache"
+  DOCKER_BUILD_FLAGS="--no-cache"
+else
+  echo "Requirements unchanged — using Docker layer cache"
+fi
+if docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot --profile prod build $DOCKER_BUILD_FLAGS; then
   echo "✓ Docker images built successfully"
+  echo "$REQS_HASH_NOW" > "$REQS_HASH_FILE"
 else
   echo "✗ Docker build failed"
   exit 1
@@ -393,9 +410,6 @@ echo ""
 echo "Cleaning up networks and ports..."
 docker network prune -f 2>/dev/null || true
 
-# Full Docker cleanup if needed
-echo "Running full Docker system prune (removing unused images, volumes, networks)..."
-docker system prune -f --volumes 2>/dev/null || true
 
 # Kill any process using port 8000
 echo "Checking port 8000..."
