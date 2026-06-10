@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react'
 import { Stack, TextField, FormControl, Button, Checkbox, FormControlLabel, Link, Box, Alert, Typography } from '@mui/material'
-import { Link as RouterLink } from 'react-router-dom'
+import { Link as RouterLink, useNavigate } from 'react-router-dom'
 import type { RegistrationPayload } from '../types'
 
 interface PasswordRequirement {
@@ -76,6 +76,7 @@ export default function RegistrationForm({
 }: {
   changeToLogin: () => void
 }) {
+  const navigate = useNavigate()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [emailError, setEmailError] = useState(false)
@@ -83,7 +84,7 @@ export default function RegistrationForm({
   const [name, setName] = useState('')
   const [termsAccepted, setTermsAccepted] = useState(false)
   const [error, setError] = useState('')
-  const BASE_URL = import.meta.env.VITE_BASE_URL
+  const BASE_URL = import.meta.env.VITE_BASE_URL || ''
 
   const verifyEmail = (email: string) => {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email === ''
@@ -106,7 +107,19 @@ export default function RegistrationForm({
       const err = await res.json().catch(() => null)
       throw new Error(err?.detail ?? err?.message ?? 'Registration failed')
     }
-    changeToLogin()
+    // Auto-login after registration
+    const loginRes = await fetch(`${BASE_URL}/auth/login`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      credentials: 'include',
+      body: JSON.stringify({ email: payload.email, password: payload.password }),
+    })
+    if (!loginRes.ok) {
+      throw new Error('Login after registration failed')
+    }
+    navigate('/chat')
   }
 
   const onSubmit = (e: React.SubmitEvent<HTMLFormElement>) => {
