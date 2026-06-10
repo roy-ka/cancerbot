@@ -21,7 +21,6 @@ from starlette.concurrency import run_in_threadpool
 
 from models import Abbreviation, Base
 from db import get_session, SessionLocal, engine
-
 # Configure logging
 logging.basicConfig(
     level=logging.DEBUG,
@@ -32,6 +31,30 @@ logger = logging.getLogger(__name__)
 logger.info("[NLP app] Module loading started")
 load_dotenv()
 logger.info("[NLP app] .env loaded")
+
+def _init_sentry() -> None:
+    dsn = os.getenv("SENTRY_DSN")
+    if not dsn:
+        return
+    import sentry_sdk
+    from sentry_sdk.integrations.fastapi import FastApiIntegration
+    from sentry_sdk.integrations.starlette import StarletteIntegration
+    from sentry_sdk.integrations.logging import LoggingIntegration
+    env = os.getenv("ENV", "development")
+    sentry_sdk.init(
+        dsn=dsn,
+        integrations=[
+            FastApiIntegration(),
+            StarletteIntegration(),
+            LoggingIntegration(level=logging.INFO, event_level=logging.ERROR),
+        ],
+        environment=env,
+        traces_sample_rate=0.1,
+        send_default_pii=True,
+    )
+    logger.info("[NLP app] Sentry initialized")
+
+_init_sentry()
 # --- DB (SQLAlchemy) ---
 DATABASE_URL = os.getenv("DOCKER_POSTGRES_URL")
     
