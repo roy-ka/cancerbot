@@ -1,8 +1,33 @@
-import { Box, Typography } from '@mui/material'
+import { Box, Link, Typography } from '@mui/material'
 import React, { useMemo } from 'react'
 import type { Message, Source } from '../types'
 import MessageSourceItem from './MessageSourceItem'
 import GroupedMessageSourceItem from './GroupedMessageSourceItem'
+import { URL_RE } from '../utils/urls'
+
+function renderTextWithLinks(text: string, keyPrefix: string): React.ReactNode[] {
+  const nodes: React.ReactNode[] = []
+  let last = 0
+  let m: RegExpExecArray | null
+  URL_RE.lastIndex = 0
+  while ((m = URL_RE.exec(text)) !== null) {
+    if (m.index > last) nodes.push(text.slice(last, m.index))
+    nodes.push(
+      <Link
+        key={`${keyPrefix}-url-${m.index}`}
+        href={m[0]}
+        target="_blank"
+        rel="noopener noreferrer"
+        sx={{ wordBreak: 'break-all' }}
+      >
+        {m[0]}
+      </Link>,
+    )
+    last = m.index + m[0].length
+  }
+  if (last < text.length) nodes.push(text.slice(last))
+  return nodes
+}
 
 export default function MessageItem({ message }: { message: Message }) {
   const normalizeRefId = (raw: string) => {
@@ -108,7 +133,7 @@ export default function MessageItem({ message }: { message: Message }) {
     for (const group of groups) {
       // Add text before group
       if (group.start > lastIndex) {
-        parts.push(text.slice(lastIndex, group.start))
+        parts.push(...renderTextWithLinks(text.slice(lastIndex, group.start), `${message.id}-pre-${lastIndex}`))
       }
 
       // Add opening bracket (not clickable)
@@ -151,7 +176,7 @@ export default function MessageItem({ message }: { message: Message }) {
 
     // Add remaining text
     if (lastIndex < text.length) {
-      parts.push(text.slice(lastIndex))
+      parts.push(...renderTextWithLinks(text.slice(lastIndex), `${message.id}-tail`))
     }
 
     return <Typography sx={{ whiteSpace: 'pre-wrap' }}>{parts}</Typography>

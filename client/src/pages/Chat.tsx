@@ -5,6 +5,7 @@ import ConversationList from '../components/ConversationList'
 import MessageList from '../components/MessageList'
 import type { Conversation, Message } from '../types'
 import InputField from '../components/InputField'
+import { extractUrls } from '../utils/urls'
 export default function Chat() {
   const BASE_URL = import.meta.env.VITE_BASE_URL || ''
   const navigate = useNavigate()
@@ -25,15 +26,19 @@ export default function Chat() {
     setSidebarOpen(false)
   }
 
-  const textToMessage = (text: string): Message => ({
-    id: `temp-${Date.now()}`,
-    content: text,
-    role: 'user',
-    timestamp: new Date().toISOString(),
-    conversationId:
-      selectedConversationId === 'new' ? undefined : selectedConversationId,
-    sources: [],
-  })
+  const textToMessage = (text: string): Message => {
+    const urls = extractUrls(text)
+    return {
+      id: `temp-${Date.now()}`,
+      content: text,
+      role: 'user',
+      timestamp: new Date().toISOString(),
+      conversationId:
+        selectedConversationId === 'new' ? undefined : selectedConversationId,
+      sources: [],
+      ...(urls.length > 0 && { urls }),
+    }
+  }
 
   useEffect(() => {
     if (conversations.length > 0) return

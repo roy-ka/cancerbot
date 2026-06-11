@@ -7,7 +7,7 @@ import logging
 import time
 import asyncio
 import os
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from src.db.repositories.conversations import (
     get_conversation_by_id,
     get_conversation_by_id_no_auth,
@@ -20,15 +20,28 @@ from src.db.repositories.messeges import add_message, add_claims_and_sources, ge
 from uuid import UUID
 from src.retrieval import run_retrieval
 from src.classes.ollama_connector import OllamaConnector
-from src.routers.conversation_helper import _emit_noop, search_and_embed
+from src.routers.conversation_helper import _emit_noop, search_and_embed, fetch_url_contents
 
 ROLLS = Literal['user', 'assistant']
 
 class Message(BaseModel):
     content: str
-    conversation_id: UUID | None = None  # "new" for new conversation, or existing conversation ID
-    timestamp: str | None = None  # Optional timestamp for retrieval context (e.g. "2024-01-01T00:00:00Z")
-    role: ROLLS = 'user'  # Role of the message sender, default to 'user'
+    conversation_id: UUID | None = None
+    timestamp: str | None = None
+    role: ROLLS = 'user'
+    urls: list[str] | None = None  # URLs detected in the message by the client
+
+    @field_validator('urls')
+    @classmethod
+    def validate_urls(cls, v: list[str] | None) -> list[str] | None:
+        if v is None:
+            return v
+        if len(v) > 5:
+            raise ValueError('Too many URLs (max 5)')
+        for url in v:
+            if not url.startswith(('http://', 'https://')):
+                raise ValueError(f'Only http/https URLs are accepted')
+        return v
 
 StageEmitter = Callable[[str, Dict[str, Any] | None], Awaitable[None]]
 
@@ -75,6 +88,7 @@ async def _process_post_message(
             conversation_id=conversation.id,
             role="user",
             content=req.content,
+            urls=req.urls,
         )
         db.commit()
         db.refresh(user_message)
@@ -148,6 +162,14 @@ async def _process_post_message(
     logging.info(f"[conversation] Retrieving context for query: {req.content[:100]}")
     context = await asyncio.to_thread(run_retrieval, req.content)
     logging.info(f"[conversation] Retrieved {len(context.get('sources_ids', []))} sources, {len(context.get('claims_ids', []))} claims")
+
+    if req.urls:
+        logging.info(f"[conversation] Fetching {len(req.urls)} user-provided URL(s)")
+        url_items = await fetch_url_contents(req.urls)
+        if url_items:
+            logging.info(f"[conversation] Fetched {len(url_items)} URL(s) successfully, prepending to context")
+            context['generation_context'] = url_items + context['generation_context']
+            context['sources_ids'] = [item['id'] for item in url_items] + context.get('sources_ids', [])
 
     max_history = int(os.getenv('PROMPT_MAX_HISTORY', '8'))
     history = get_recent_messages(db, conversation.id, limit=max_history)

@@ -565,3 +565,120 @@ async def search_and_embed(
             "extracted_terms": terms,
         },
     }
+
+
+CANCER_KEYWORDS: frozenset[str] = frozenset({
+    # Disease terms
+    "cancer", "carcinoma", "sarcoma", "lymphoma", "leukemia", "melanoma",
+    "glioma", "glioblastoma", "myeloma", "mesothelioma", "neuroblastoma",
+    "blastoma", "adenocarcinoma", "squamous cell", "neoplasm", "neoplasia",
+    "tumor", "tumour", "malignant", "malignancy", "metastasis", "metastatic",
+    "oncology", "oncologist", "oncogene",
+    # Treatment
+    "chemotherapy", "radiotherapy", "immunotherapy", "targeted therapy",
+    "checkpoint inhibitor", "car-t", "car t", "stem cell transplant",
+    "radiation therapy", "surgery", "resection", "biopsy",
+    # Molecular / pathway
+    "apoptosis", "angiogenesis", "tumor suppressor", "p53", "brca", "egfr",
+    "her2", "pd-l1", "pd-1", "ctla-4", "mtor", "kras", "ras", "vegf",
+    "cell proliferation", "cell cycle", "dna repair", "mutation", "biomarker",
+    # Specific cancer types
+    "breast cancer", "lung cancer", "prostate cancer", "colon cancer",
+    "colorectal cancer", "pancreatic cancer", "ovarian cancer",
+    "cervical cancer", "gastric cancer", "liver cancer", "thyroid cancer",
+    "kidney cancer", "bladder cancer", "brain tumor", "skin cancer",
+    "blood cancer", "bone cancer", "endometrial cancer",
+})
+
+
+def _is_cancer_related(terms: list[str]) -> bool:
+    """Return True if any extracted term overlaps with the cancer keyword set."""
+    normalized = {t.lower().strip() for t in terms}
+    if normalized & CANCER_KEYWORDS:
+        return True
+    # Also check if a keyword is a substring of a term (e.g. "cancer" in "cancerous")
+    # Note: intentionally NOT checking `term in kw` — short NLP tokens (e.g. "as", "or")
+    # are substrings of many keywords and cause false positives.
+    for term in normalized:
+        for kw in CANCER_KEYWORDS:
+            if kw in term:
+                return True
+    return False
+
+
+async def fetch_url_contents(urls: list[str]) -> list[dict]:
+    """Fetch text content from a list of URLs and return context-ready dicts.
+
+    Extracts scientific terms via the NLP service and checks cancer relevance.
+    Non-cancer-related URLs are included but flagged with a warning prefix so
+    the LLM knows to treat them with lower confidence.
+
+    Each returned item shape:
+        {"id": "url:<sha1>", "content_for_embedding": "<text>", "title": "...", "url": "...", "cancer_related": bool}
+    """
+    from bs4 import BeautifulSoup
+
+    nlp_url = os.getenv("NLP_URL", "http://127.0.0.1:8011").strip().strip("\"'")
+    HEADERS = {
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_3) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/35.0.1916.47 Safari/537.36"
+        )
+    }
+    MAX_CHARS = 4000
+
+    async def _fetch_one(client: httpx.AsyncClient, url: str) -> dict | None:
+        try:
+            resp = await client.get(url, headers=HEADERS, follow_redirects=True)
+            resp.raise_for_status()
+            soup = BeautifulSoup(resp.text, "html.parser")
+            for tag in soup(["script", "style", "nav", "footer", "header"]):
+                tag.decompose()
+            title = soup.title.string.strip() if soup.title and soup.title.string else url
+            text = " ".join(soup.get_text(separator=" ").split())[:MAX_CHARS]
+            if not text:
+                return None
+
+            terms = await _extract_terms_from_message(client, nlp_url, text)
+            cancer_related = _is_cancer_related(terms)
+            logger.info(f"[fetch_url] {url} — terms={terms[:8]}, cancer_related={cancer_related}")
+
+            content = text if cancer_related else (
+                f"[WARNING: This source does not appear to be cancer-related. "
+                f"Use with caution.]\n{text}"
+            )
+
+            doc_id = "url:" + hashlib.sha1(url.encode("utf-8")).hexdigest()
+
+            await asyncio.to_thread(_enqueue_url_classification, url=url, content_text=text, title=title)
+
+            return {
+                "id": doc_id,
+                "content_for_embedding": content,
+                "title": title,
+                "url": url,
+                "cancer_related": cancer_related,
+            }
+        except Exception as e:
+            logger.warning(f"[fetch_url] Failed to fetch {url}: {type(e).__name__}: {e}")
+            return None
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as client:
+        results = await asyncio.gather(*[_fetch_one(client, u) for u in urls])
+
+    return [r for r in results if r is not None]
+
+
+def _enqueue_url_classification(*, url: str, content_text: str, title: str | None) -> None:
+    """Insert a pending classification job into the DB queue. Silently skips on error."""
+    try:
+        from src.db.session import SessionLocal
+        from src.db.models import UrlClassificationJob
+        with SessionLocal() as db:
+            job = UrlClassificationJob(url=url, content_text=content_text, title=title)
+            db.add(job)
+            db.commit()
+            logger.info(f"[url_queue] Enqueued classification job for {url}")
+    except Exception as e:
+        logger.warning(f"[url_queue] Failed to enqueue job for {url}: {type(e).__name__}: {e}")

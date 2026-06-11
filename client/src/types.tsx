@@ -37,4 +37,5 @@ export type Message = {
   role: 'user' | 'assistant'
   timestamp: string
   sources: Source[]
+  urls?: string[]
 }

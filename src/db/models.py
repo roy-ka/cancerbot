@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import  List, Optional
 from uuid import uuid4
 
-from sqlalchemy import Column, DateTime, ForeignKey, String, Text, JSON, Integer
+from sqlalchemy import Column, DateTime, ForeignKey, String, Text, JSON, Integer, Boolean
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, relationship
 from .base import Base
@@ -72,6 +72,7 @@ class Message(Base):
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
     sources_ids = Column(JSON, nullable=True)
     extracted_terms = Column(JSON, nullable=True)
+    urls = Column(JSON, nullable=True)
 
     # --- Virtual fields (not stored as separate DB columns) ---
     # Stored in DB: sources_ids (JSON)
@@ -195,5 +196,21 @@ class ExternalSearchResult(Base):
     skipped_count = Column(Integer, nullable=False, default=0)  # How many were skipped
     top_result_title = Column(String(500), nullable=True)  # Title of the best result
     top_result_url = Column(String(500), nullable=True)  # URL of the best result
-    error_message = Column(Text, nullable=True)  # If search failed, the error
+    error_message = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False, index=True)
+
+
+class UrlClassificationJob(Base):
+    __tablename__ = "url_classification_jobs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    url = Column(Text, nullable=False)
+    content_text = Column(Text, nullable=False)
+    title = Column(Text, nullable=True)
+    # pending → processing → done | failed
+    status = Column(String(20), nullable=False, default="pending", index=True)
+    cancer_related = Column(Boolean, nullable=True)
+    llm_reasoning = Column(Text, nullable=True)
+    error = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False, index=True)
+    processed_at = Column(DateTime(timezone=True), nullable=True)
