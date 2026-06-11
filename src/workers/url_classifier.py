@@ -112,6 +112,25 @@ def _process_one(db) -> bool:
     return True
 
 
+STALE_PROCESSING_MINUTES = 15
+
+
+def _reap_stale_jobs(db) -> None:
+    """Reset jobs stuck in 'processing' for longer than STALE_PROCESSING_MINUTES."""
+    from sqlalchemy import text
+    result = db.execute(
+        text(
+            "UPDATE url_classification_jobs SET status = 'pending', error = 'reaped: stuck in processing' "
+            "WHERE status = 'processing' "
+            "AND created_at < now() - :minutes * interval '1 minute'"
+        ),
+        {"minutes": STALE_PROCESSING_MINUTES},
+    )
+    db.commit()
+    if result.rowcount:
+        logger.warning(f"[worker] Reaped {result.rowcount} stale processing job(s)")
+
+
 def run() -> None:
     from src.db.session import SessionLocal
 
@@ -120,6 +139,7 @@ def run() -> None:
     while True:
         try:
             with SessionLocal() as db:
+                _reap_stale_jobs(db)
                 found = _process_one(db)
             if not found:
                 time.sleep(POLL_INTERVAL)

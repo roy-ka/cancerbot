@@ -596,10 +596,12 @@ def _is_cancer_related(terms: list[str]) -> bool:
     normalized = {t.lower().strip() for t in terms}
     if normalized & CANCER_KEYWORDS:
         return True
-    # Also check partial containment for multi-word keywords
+    # Also check if a keyword is a substring of a term (e.g. "cancer" in "cancerous")
+    # Note: intentionally NOT checking `term in kw` — short NLP tokens (e.g. "as", "or")
+    # are substrings of many keywords and cause false positives.
     for term in normalized:
         for kw in CANCER_KEYWORDS:
-            if kw in term or term in kw:
+            if kw in term:
                 return True
     return False
 
@@ -649,7 +651,7 @@ async def fetch_url_contents(urls: list[str]) -> list[dict]:
 
             doc_id = "url:" + hashlib.sha1(url.encode("utf-8")).hexdigest()
 
-            _enqueue_url_classification(url=url, content_text=text, title=title)
+            await asyncio.to_thread(_enqueue_url_classification, url=url, content_text=text, title=title)
 
             return {
                 "id": doc_id,
