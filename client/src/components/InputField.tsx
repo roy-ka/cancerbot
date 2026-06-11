@@ -1,5 +1,5 @@
 import { FormControl, TextField, Button, Grid } from '@mui/material'
-import { forwardRef, useImperativeHandle } from 'react'
+import { forwardRef, useImperativeHandle, useRef } from 'react'
 
 export type InputFieldHandle = {
   append: (text: string) => void
@@ -13,6 +13,8 @@ const InputField = forwardRef<
     onChange: (value: string) => void
   }
 >(({ onSubmit, value, onChange }, ref) => {
+  const formRef = useRef<HTMLFormElement>(null)
+
   useImperativeHandle(ref, () => ({
     append: (text: string) => {
       onChange(value + (value.endsWith(' ') || value === '' ? '' : ' ') + text)
@@ -25,13 +27,21 @@ const InputField = forwardRef<
     onSubmit(e)
   }
 
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      if (value.trim() !== '') formRef.current?.requestSubmit()
+    }
+  }
+
   return (
     <FormControl
       component="form"
+      ref={formRef}
       onSubmit={handleSubmit}
       sx={{ width: '100%' }}
     >
-      <Grid container spacing={2} sx={{ width: '100%' }}>
+      <Grid container spacing={2} sx={{ width: '100%', alignItems: 'flex-end' }}>
         <Grid size={11}>
           <TextField
             fullWidth
@@ -39,9 +49,12 @@ const InputField = forwardRef<
             id="input"
             name="input"
             hiddenLabel
-            type="input"
             variant="outlined"
+            multiline
+            minRows={1}
+            maxRows={6}
             onChange={(e) => onChange(e.target.value)}
+            onKeyDown={handleKeyDown}
             value={value}
           />
         </Grid>
