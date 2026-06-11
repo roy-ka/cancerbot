@@ -72,7 +72,7 @@ fi
 echo "✓ docker found"
 
 if ! command -v alembic &> /dev/null; then
-  echo "✗ Warning: alembic not found in PATH (will run inside Docker)"
+  echo "⚠ Warning: alembic not found in PATH (will run inside Docker)"
 fi
 
 # Check disk space (needs >2GB free)
@@ -144,27 +144,24 @@ rollback() {
     echo "⚠ Warning: Failed to reset git state"
   fi
 
+  # Always stop services and restart with old images
+  echo "Stopping services..."
+  docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot down || true
+
+  if [ -n "$BACKEND_IMAGE" ] && docker inspect "$BACKEND_IMAGE_TAG" &>/dev/null; then
+    docker tag "$BACKEND_IMAGE_TAG" "$BACKEND_IMAGE"
+    echo "✓ Restored backend image"
+  fi
+
+  if [ -n "$NLP_IMAGE" ] && docker inspect "$NLP_IMAGE_TAG" &>/dev/null; then
+    docker tag "$NLP_IMAGE_TAG" "$NLP_IMAGE"
+    echo "✓ Restored NLP image"
+  fi
+
+  echo "Starting services with previous images..."
+  docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot --profile prod up -d || true
+
   if [ -f "$BACKUP_FILE" ]; then
-    echo "Restoring database from backup: $BACKUP_FILE"
-    # Bring down services first
-    echo "Stopping services..."
-    docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot down || true
-
-    # Re-tag old images if we saved them
-    if [ -n "$BACKEND_IMAGE" ] && docker inspect "$BACKEND_IMAGE_TAG" &>/dev/null; then
-      docker tag "$BACKEND_IMAGE_TAG" "$BACKEND_IMAGE"
-      echo "✓ Restored backend image"
-    fi
-
-    if [ -n "$NLP_IMAGE" ] && docker inspect "$NLP_IMAGE_TAG" &>/dev/null; then
-      docker tag "$NLP_IMAGE_TAG" "$NLP_IMAGE"
-      echo "✓ Restored NLP image"
-    fi
-
-    # Bring services back up
-    echo "Starting services with previous images..."
-    docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot --profile prod up -d || true
-
     # Wait for postgres to be ready
     echo "Waiting for PostgreSQL to be ready..."
     local retry=0
@@ -185,13 +182,12 @@ rollback() {
       echo "✗ Failed to restore database - manual intervention required"
       echo "Backup file: $BACKUP_FILE"
     fi
-
-    echo ""
-    echo "Rollback complete. Check log for details: $LOG_FILE"
   else
     echo "⚠ No backup file available - database not restored"
   fi
 
+  echo ""
+  echo "Rollback complete. Check log for details: $LOG_FILE"
   exit $exit_code
 }
 
@@ -384,66 +380,14 @@ else
   BACKUP_FILE=""
 fi
 
-# Stop and remove existing containers
+# Update services — only containers with changed images are recreated;
+# stateful services (postgres, opensearch, ollama) keep running throughout
 echo ""
-echo "Stopping and removing existing containers..."
-
-# First try docker compose down
-if docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot down --remove-orphans 2>&1; then
-  echo "✓ Docker compose down completed"
+echo "Updating services..."
+if docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot --profile prod up -d --remove-orphans; then
+  echo "✓ Services updated"
 else
-  echo "⚠ Warning: docker compose down had issues, continuing with manual cleanup"
-fi
-
-# Force remove any remaining containers
-echo "Stopping and removing containers..."
-docker ps -a -q | while read container_id; do
-  docker stop "$container_id" 2>/dev/null || true
-done
-docker ps -a -q | while read container_id; do
-  docker rm -f "$container_id" 2>/dev/null || true
-done
-echo "✓ Containers removed"
-
-# Remove any dangling networks and wait for port release
-echo ""
-echo "Cleaning up networks and ports..."
-docker network prune -f 2>/dev/null || true
-
-
-# Kill any process using port 8000
-echo "Checking port 8000..."
-if lsof -i :8000 &>/dev/null; then
-  echo "Killing processes using port 8000..."
-  lsof -ti :8000 | xargs kill -9 2>/dev/null || true
-  sleep 2
-elif netstat -tuln 2>/dev/null | grep -q ':8000 '; then
-  echo "Port 8000 appears in use but no process found, waiting..."
-  sleep 3
-fi
-
-# Wait for port 8000 to be released (up to 10 seconds)
-echo "Waiting for port 8000 to be released..."
-for i in $(seq 1 10); do
-  if ! lsof -i :8000 &>/dev/null 2>&1 && ! netstat -tuln 2>/dev/null | grep -q ':8000 '; then
-    echo "✓ Port 8000 is free"
-    break
-  fi
-  echo "  Port 8000 still in use, waiting... ($i/10)"
-  sleep 1
-done
-
-if lsof -i :8000 &>/dev/null 2>&1; then
-  echo "⚠ Warning: Port 8000 still in use, but proceeding anyway"
-fi
-
-# Start services
-echo ""
-echo "Starting services..."
-if docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot --profile prod up -d; then
-  echo "✓ Services started"
-else
-  echo "✗ Failed to start services"
+  echo "✗ Failed to update services"
   exit 1
 fi
 
@@ -475,29 +419,43 @@ if [ "$POSTGRES_READY" = false ]; then
   exit 1
 fi
 
-# Extract POSTGRES_PASSWORD from .env
-POSTGRES_PASSWORD=$(grep -E '^POSTGRES_PASSWORD=' "$PROJECT_DIR/.env" | cut -d'=' -f2- | tr -d "'\"")
-
-# Run Alembic migrations
+# Run Alembic migrations inside the backend container (alembic is installed there)
 echo ""
 echo "Running Alembic migrations..."
-if docker run --rm \
-  --network cancerbot_osnet \
-  --env-file "$PROJECT_DIR/.env" \
-  -e POSTGRES_URL="postgresql+psycopg://cancerbot:${POSTGRES_PASSWORD}@cancerbot-postgres:5432/cancerbot" \
-  -v "$(pwd):/app" -w /app \
-  python:3.12 bash -c \
-  "pip install --quiet alembic 'psycopg[binary]' sqlalchemy python-dotenv && alembic upgrade head"; then
+BACKEND_CONTAINER=$(docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot ps -q backend 2>/dev/null | head -1)
+if [ -z "$BACKEND_CONTAINER" ]; then
+  echo "✗ Backend container not found"
+  exit 1
+fi
+
+for i in $(seq 1 15); do
+  if docker inspect "$BACKEND_CONTAINER" --format='{{.State.Running}}' 2>/dev/null | grep -q "true"; then
+    break
+  fi
+  echo "  Waiting for backend container to start... ($i/15)"
+  sleep 2
+done
+
+if docker exec "$BACKEND_CONTAINER" alembic upgrade head; then
   echo "✓ Alembic migrations completed"
 else
   echo "✗ Alembic migrations failed"
   exit 1
 fi
 
-# Fix iptables rules for Docker-host connectivity (after 10 second sleep)
+# Fix iptables rules for Docker-host connectivity
+# Poll for the Docker network to exist rather than sleeping a fixed interval
 echo ""
-echo "Waiting 10 seconds for Docker networks to fully initialize..."
-sleep 10
+echo "Waiting for Docker network to be ready..."
+for i in $(seq 1 20); do
+  if docker network inspect cancerbot_osnet &>/dev/null; then
+    echo "✓ Docker network ready"
+    break
+  fi
+  echo "  Waiting for network... ($i/20)"
+  sleep 1
+done
+
 echo "Fixing iptables rules for Docker-host connectivity..."
 if sudo "$SCRIPT_DIR/fix-iptables.sh"; then
   echo "✓ iptables rules applied successfully"
@@ -562,6 +520,12 @@ fi
 # Unset error trap on success
 trap - ERR
 
+# Rotate old backups — keep the 5 most recent
+echo ""
+echo "Rotating old backups..."
+ls -t "$PROJECT_DIR/backups"/backup_*.sql 2>/dev/null | tail -n +6 | xargs rm -f 2>/dev/null || true
+echo "✓ Old backups cleaned up"
+
 # Success summary
 echo ""
 echo "========================================="
@@ -576,12 +540,3 @@ echo ""
 echo "To view the deployment log later:"
 echo "  tail -f $LOG_FILE"
 echo ""
-
-# Reset git working directory to clean state
-echo "Resetting git working directory..."
-cd "$PROJECT_DIR"
-if git reset --hard HEAD; then
-  echo "✓ Git working directory reset"
-else
-  echo "⚠ Warning: Failed to reset git working directory"
-fi
