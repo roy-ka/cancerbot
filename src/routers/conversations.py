@@ -99,15 +99,12 @@ async def _process_post_message(
 
     # Extract and save scientific terms for the new message
     try:
-        nlp_url = os.getenv("NLP_URL", "http://127.0.0.1:8011").strip().strip("\"'")
-        import httpx
-        async with httpx.AsyncClient(timeout=httpx.Timeout(20.0)) as client:
-            from src.routers.conversation_helper import _extract_terms_from_message
-            extracted_terms = await _extract_terms_from_message(client, nlp_url, req.content)
-            user_message.extracted_terms = extracted_terms if extracted_terms else None
-            db.add(user_message)
-            db.commit()
-            logging.info(f"[conversation] Extracted and saved {len(extracted_terms)} terms for message {user_message.id}")
+        from src.routers.conversation_helper import _extract_terms_from_message
+        extracted_terms = await _extract_terms_from_message(req.content)
+        user_message.extracted_terms = extracted_terms if extracted_terms else None
+        db.add(user_message)
+        db.commit()
+        logging.info(f"[conversation] Extracted and saved {len(extracted_terms)} terms for message {user_message.id}")
     except Exception as e:
         logging.warning(f"[conversation] Failed to extract terms for message: {type(e).__name__}: {e}")
         db.rollback()

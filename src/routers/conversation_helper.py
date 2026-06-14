@@ -60,64 +60,16 @@ def _stable_source_id(source: dict) -> str:
     return "src:" + hashlib.sha1(f"{title}\n{content}".encode("utf-8")).hexdigest()
 
 
-async def _spelling_correction(client: httpx.AsyncClient, nlp_url: str, text: str) -> str:
-    text = " ".join((text or "").split()).strip()
-    if not text:
-        logger.debug("[nlp] spelling_correction: empty text, skipping")
-        return ""
-
-    logger.info(f"[nlp] spelling_correction: text_len={len(text)}, url={nlp_url}")
-    candidate_paths = ("/spelling/correct", "/correct", "/spell")
-    for path in candidate_paths:
-        full_url = f"{nlp_url}{path}"
-        try:
-            logger.info(f"[nlp] spelling_correction: POST {full_url} (timeout=20s)")
-            resp = await client.post(full_url, json={"text": text}, timeout=20.0)
-            logger.info(f"[nlp] spelling_correction: status={resp.status_code}, content_len={len(resp.content)}")
-            if resp.status_code >= 400:
-                logger.warning(f"[nlp] spelling_correction: status {resp.status_code}, trying next path")
-                continue
-            payload = resp.json() if resp.content else {}
-            corrected = (
-                payload.get("corrected")
-                or payload.get("text")
-                or payload.get("corrected_text")
-            )
-            if isinstance(corrected, str) and corrected.strip():
-                logger.info(f"[nlp] spelling_correction: success, corrected_len={len(corrected)}")
-                return corrected.strip()
-        except Exception as e:
-            logger.error(f"[nlp] spelling_correction: connection error on {full_url}: {type(e).__name__}: {e}")
-            continue
-    logger.warning(f"[nlp] spelling_correction: failed all paths, returning original")
-    return text
-
-
-async def _extract_terms_from_message(client: httpx.AsyncClient, nlp_url: str, text: str) -> list[str]:
-    logger.info(f"[nlp] extract_terms_from_message: starting, text_len={len(text or '')}, nlp_url={nlp_url}")
-    corrected = await _spelling_correction(client, nlp_url, text)
-    if not corrected:
-        logger.warning("[nlp] extract_terms_from_message: no corrected text after spelling correction")
-        return []
-
+async def _extract_terms_from_message(text: str) -> list[str]:
+    from src.nlp import extract_terms
+    logger.info(f"[nlp] extract_terms_from_message: text_len={len(text or '')}")
     try:
-        extract_url = f"{nlp_url}/extract"
-        logger.info(f"[nlp] extract_terms_from_message: POST {extract_url} (timeout=20s)")
-        resp = await client.post(extract_url, json={"text": corrected}, timeout=20.0)
-        logger.info(f"[nlp] extract_terms_from_message: status={resp.status_code}, content_len={len(resp.content)}")
-        resp.raise_for_status()
-        payload = resp.json()
-        logger.debug(f"[nlp] extract_terms_from_message: response keys={list(payload.keys())}")
+        result = await extract_terms(text or "")
+        logger.info(f"[nlp] extract_terms_from_message: {len(result)} terms: {result[:10]}")
+        return result
     except Exception as e:
-        logger.error(f"[nlp] extract_terms_from_message: failed to call /extract at {extract_url}: {type(e).__name__}: {e}")
+        logger.error(f"[nlp] extract_terms_from_message: {type(e).__name__}: {e}")
         return []
-
-    expanded = payload.get("expanded_entities") or []
-    entities = payload.get("entities") or []
-    logger.info(f"[nlp] extract_terms_from_message: found {len(entities)} entities, {len(expanded)} expanded")
-    result = _dedupe_terms([*expanded, *entities])
-    logger.info(f"[nlp] extract_terms_from_message: deduped to {len(result)} terms: {result[:10]}")
-    return result
 
 
 async def _search_pubmed_sources(client: httpx.AsyncClient, terms: list[str], max_results: int = 4) -> list[dict]:
@@ -445,53 +397,38 @@ async def search_and_embed(
         # Fallback: extract terms from recent messages if no stored terms
         logger.warning(f"[search_and_embed] No stored terms found, falling back to extraction")
 
-        nlp_url = (os.getenv("NLP_URL", "http://127.0.0.1:8011") or "").strip().strip("\"'")
-        logger.info(f"[nlp] Initialized NLP URL: {nlp_url}")
+        await emit("extracting_search_terms", {"source": "nlp"})
+        logger.info(f"[nlp] Extracting scientific terms from {len(message_texts)} messages")
 
-        async with httpx.AsyncClient(timeout=httpx.Timeout(20.0)) as client:
-            logger.info(f"[nlp] Testing NLP service health at {nlp_url}/health...")
-            try:
-                health_resp = await client.get(f"{nlp_url}/health", timeout=5.0)
-                logger.info(f"[nlp] Health check: status={health_resp.status_code}")
-            except Exception as e:
-                logger.error(f"[nlp] Health check FAILED: {type(e).__name__}: {e}")
+        term_results = await asyncio.gather(
+            *[_extract_terms_from_message(text) for text in message_texts],
+            return_exceptions=True,
+        )
 
-            await emit("extracting_search_terms", {"source": "cancerbot-nlp"})
-            logger.info(f"[nlp] Extracting scientific terms from {len(message_texts)} messages using NLP service")
+        terms: list[str] = []
+        for i, result in enumerate(term_results):
+            if isinstance(result, Exception):
+                logger.warning(f"[nlp] Term extraction for message {i} failed: {result}")
+            else:
+                logger.info(f"[nlp] Message {i}: extracted {len(result)} terms: {result[:5]}")
+                terms.extend(result)
 
-            # Extract scientific terms from each message and combine them
-            term_results = await asyncio.gather(
-                *[_extract_terms_from_message(client, nlp_url, text) for text in message_texts],
-                return_exceptions=True,
-            )
+        terms = _dedupe_terms(terms)
+        logger.info(f"[nlp] Combined and deduped: {len(terms)} total unique terms: {terms[:10]}")
 
-            terms: list[str] = []
-            for i, result in enumerate(term_results):
-                if isinstance(result, Exception):
-                    logger.warning(f"[nlp] Term extraction for message {i} failed: {result}")
-                else:
-                    logger.info(f"[nlp] Message {i}: extracted {len(result)} terms: {result[:5]}")
-                    terms.extend(result)
-
-            terms = _dedupe_terms(terms)
-            logger.info(f"[nlp] Combined and deduped: {len(terms)} total unique terms: {terms[:10]}")
-
-            # Fallback: if NLP extraction failed, use word-based extraction
-            if not terms:
-                logger.warning(f"[nlp] No terms extracted from NLP service, falling back to simple word extraction")
-                fallback_terms = []
-                for text in message_texts:
-                    words = text.split()
-                    # Strip punctuation from words
-                    meaningful = [w.lower().strip('?.,!;:').strip() for w in words if len(w) >= 3]
-                    # Filter out stop words and empty strings
-                    meaningful = [w for w in meaningful if w and w.lower() not in {
-                        'the', 'and', 'or', 'is', 'are', 'was', 'what', 'that', 'this', 'from',
-                        'with', 'for', 'but', 'has', 'have', 'had', 'can', 'could', 'will', 'would'
-                    }]
-                    fallback_terms.extend(meaningful)
-                terms = _dedupe_terms(fallback_terms)
-                logger.info(f"[nlp] Using fallback terms: {len(terms)} terms extracted from text")
+        if not terms:
+            logger.warning(f"[nlp] No terms extracted, falling back to simple word extraction")
+            fallback_terms = []
+            for text in message_texts:
+                words = text.split()
+                meaningful = [w.lower().strip('?.,!;:').strip() for w in words if len(w) >= 3]
+                meaningful = [w for w in meaningful if w and w.lower() not in {
+                    'the', 'and', 'or', 'is', 'are', 'was', 'what', 'that', 'this', 'from',
+                    'with', 'for', 'but', 'has', 'have', 'had', 'can', 'could', 'will', 'would'
+                }]
+                fallback_terms.extend(meaningful)
+            terms = _dedupe_terms(fallback_terms)
+            logger.info(f"[nlp] Using fallback terms: {len(terms)} terms extracted from text")
 
     await emit("terms_ready", {"terms_count": len(terms), "terms": terms[:20]})
     if not terms:
@@ -590,8 +527,7 @@ CANCER_KEYWORDS: frozenset[str] = frozenset({
     "blood cancer", "bone cancer", "endometrial cancer",
     # manually added terms that are highly indicative of cancer relevance
     "carcinogenesis", "tumor microenvironment", "cancer stem cell","ferroptosis", "epithelial-mesenchymal transition", 
-    "ctc", "circulating tumor cell", "marker of invasiveness", "tumor heterogeneity", "liquid biopsy", "tumor mutational burden", "microsatellite instability", "cancer-associated fibroblast", "tumor-infiltrating
-"lymphocyte", "tumor-associated macrophage", "cancer immunoediting", "tumor angiogenesis", "oncogenic driver", "tumor suppressor gene", "cancer-testis antigen", "tumor neoantigen", "cancer vaccine target", "tumor immune evasion", "cancer dormancy", "tumor progression", "cancer cachexia", "tumor lysis syndrome" ,
+    "ctc", "circulating tumor cell", "marker of invasiveness", "tumor heterogeneity", "liquid biopsy", "tumor mutational burden", "microsatellite instability", "cancer-associated fibroblast", "tumor-infiltrating lymphocyte", "tumor-associated macrophage", "cancer immunoediting", "tumor angiogenesis", "oncogenic driver", "tumor suppressor gene", "cancer-testis antigen", "tumor neoantigen", "cancer vaccine target", "tumor immune evasion", "cancer dormancy", "tumor progression", "cancer cachexia", "tumor lysis syndrome",
 
 })
 
@@ -623,7 +559,6 @@ async def fetch_url_contents(urls: list[str]) -> list[dict]:
     """
     from bs4 import BeautifulSoup
 
-    nlp_url = os.getenv("NLP_URL", "http://127.0.0.1:8011").strip().strip("\"'")
     HEADERS = {
         "User-Agent": (
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_3) "
@@ -645,7 +580,7 @@ async def fetch_url_contents(urls: list[str]) -> list[dict]:
             if not text:
                 return None
 
-            terms = await _extract_terms_from_message(client, nlp_url, text)
+            terms = await _extract_terms_from_message(text)
             cancer_related = _is_cancer_related(terms)
             logger.info(f"[fetch_url] {url} — terms={terms[:8]}, cancer_related={cancer_related}")
 
