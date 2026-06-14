@@ -437,15 +437,15 @@ for i in $(seq 1 15); do
 done
 
 echo "  Current revision:"
-docker exec "$BACKEND_CONTAINER" alembic current 2>&1 | sed 's/^/    /'
+docker exec "$BACKEND_CONTAINER" alembic current 2>&1 | sed 's/^/    /' || true
 
 echo "  Pending migrations:"
-docker exec "$BACKEND_CONTAINER" alembic history --indicate-current 2>&1 | sed 's/^/    /'
+docker exec "$BACKEND_CONTAINER" alembic history --indicate-current 2>&1 | sed 's/^/    /' || true
 
 echo "  Applying migrations..."
 if docker exec "$BACKEND_CONTAINER" alembic upgrade head 2>&1 | sed 's/^/    /'; then
   echo "  Revision after upgrade:"
-  docker exec "$BACKEND_CONTAINER" alembic current 2>&1 | sed 's/^/    /'
+  docker exec "$BACKEND_CONTAINER" alembic current 2>&1 | sed 's/^/    /' || true
   echo "✓ Alembic migrations completed"
 else
   echo "✗ Alembic migrations failed"
@@ -478,7 +478,8 @@ echo "Running health checks (up to 30 attempts, 5 seconds apart)..."
 HEALTHY=false
 for i in $(seq 1 30); do
   # Use curl with verbose error output
-  response=$(curl -sf http://localhost:8000/health/ 2>&1)
+  # '|| true' prevents set -e from firing when curl returns non-zero before the backend is up
+  response=$(curl -sf http://localhost:8000/health/ 2>&1) || true
   curl_exit=$?
 
   if echo "$response" | grep -q '"status":"ok"'; then
