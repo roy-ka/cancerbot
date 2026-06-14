@@ -419,33 +419,27 @@ if [ "$POSTGRES_READY" = false ]; then
   exit 1
 fi
 
-# Run Alembic migrations inside the backend container (alembic is installed there)
+# Run Alembic migrations in a one-off container using the backend image.
+# --no-deps: postgres/opensearch are already running; don't start them again.
+# This runs independently of the backend container's startup state and doesn't
+# require OpenSearch to be healthy (which can take 60+ seconds).
 echo ""
 echo "Running Alembic migrations..."
-BACKEND_CONTAINER=$(docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot ps -q backend 2>/dev/null | head -1)
-if [ -z "$BACKEND_CONTAINER" ]; then
-  echo "✗ Backend container not found"
-  exit 1
-fi
-
-for i in $(seq 1 15); do
-  if docker inspect "$BACKEND_CONTAINER" --format='{{.State.Running}}' 2>/dev/null | grep -q "true"; then
-    break
-  fi
-  echo "  Waiting for backend container to start... ($i/15)"
-  sleep 2
-done
+_alembic() {
+  docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot \
+    run --rm --no-deps backend "$@" 2>&1 | sed 's/^/    /'
+}
 
 echo "  Current revision:"
-docker exec "$BACKEND_CONTAINER" alembic current 2>&1 | sed 's/^/    /' || true
+_alembic alembic current || true
 
 echo "  Pending migrations:"
-docker exec "$BACKEND_CONTAINER" alembic history --indicate-current 2>&1 | sed 's/^/    /' || true
+_alembic alembic history --indicate-current || true
 
 echo "  Applying migrations..."
-if docker exec "$BACKEND_CONTAINER" alembic upgrade head 2>&1 | sed 's/^/    /'; then
+if _alembic alembic upgrade head; then
   echo "  Revision after upgrade:"
-  docker exec "$BACKEND_CONTAINER" alembic current 2>&1 | sed 's/^/    /' || true
+  _alembic alembic current || true
   echo "✓ Alembic migrations completed"
 else
   echo "✗ Alembic migrations failed"
