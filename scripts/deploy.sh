@@ -100,6 +100,8 @@ if [ "$FORCE" = false ]; then
   fi
 fi
 
+DEPLOY_START=$(date +%s)
+
 # Capture current image IDs for rollback
 echo ""
 echo "Capturing current images for rollback..."
@@ -187,6 +189,7 @@ rollback() {
   fi
 
   echo ""
+  echo "Failed after: $(( ($(date +%s) - ${DEPLOY_START:-$(date +%s)}) / 60 ))m $(( ($(date +%s) - ${DEPLOY_START:-$(date +%s)}) % 60 ))s"
   echo "Rollback complete. Check log for details: $LOG_FILE"
   exit $exit_code
 }
@@ -380,14 +383,16 @@ else
   BACKUP_FILE=""
 fi
 
-# Update services — only containers with changed images are recreated;
-# stateful services (postgres, opensearch, ollama) keep running throughout
+# Start infrastructure only (postgres, opensearch, dashboards) — NOT the backend.
+# Migrations must run before the backend starts to avoid a race condition where
+# start.sh's 'alembic upgrade heads' and the deploy's migration container run
+# concurrently and corrupt the alembic_version table with duplicate entries.
 echo ""
-echo "Updating services..."
-if docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot --profile prod up -d --remove-orphans; then
-  echo "✓ Services updated"
+echo "Starting infrastructure services..."
+if docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot up -d --remove-orphans; then
+  echo "✓ Infrastructure services started"
 else
-  echo "✗ Failed to update services"
+  echo "✗ Failed to start infrastructure services"
   exit 1
 fi
 
@@ -420,9 +425,7 @@ if [ "$POSTGRES_READY" = false ]; then
 fi
 
 # Run Alembic migrations in a one-off container using the backend image.
-# --no-deps: postgres/opensearch are already running; don't start them again.
-# This runs independently of the backend container's startup state and doesn't
-# require OpenSearch to be healthy (which can take 60+ seconds).
+# Runs before the backend starts so start.sh's 'alembic upgrade heads' is a no-op.
 echo ""
 echo "Running Alembic migrations..."
 _alembic() {
@@ -443,6 +446,16 @@ if _alembic alembic upgrade head; then
   echo "✓ Alembic migrations completed"
 else
   echo "✗ Alembic migrations failed"
+  exit 1
+fi
+
+# Now start the backend and other prod-profile services
+echo ""
+echo "Starting backend services..."
+if docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot --profile prod up -d --remove-orphans; then
+  echo "✓ Backend services started"
+else
+  echo "✗ Failed to start backend services"
   exit 1
 fi
 
@@ -531,11 +544,13 @@ ls -t "$PROJECT_DIR/backups"/backup_*.sql 2>/dev/null | tail -n +6 | xargs rm -f
 echo "✓ Old backups cleaned up"
 
 # Success summary
+DEPLOY_ELAPSED=$(( $(date +%s) - DEPLOY_START ))
 echo ""
 echo "========================================="
 echo "✓ DEPLOYMENT SUCCESSFUL"
 echo "========================================="
 echo "Deployed at: $(date '+%Y-%m-%d %H:%M:%S')"
+echo "Duration: $(( DEPLOY_ELAPSED / 60 ))m $(( DEPLOY_ELAPSED % 60 ))s"
 echo "Backend image: $(docker inspect --format='{{.Image}}' cancerbot-backend-1 2>/dev/null || echo 'unknown')"
 echo "NLP image: $(docker inspect --format='{{.Image}}' cancerbot-nlp 2>/dev/null || echo 'unknown')"
 echo "Database backup: $BACKUP_FILE"
