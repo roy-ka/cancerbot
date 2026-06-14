@@ -3,27 +3,37 @@ import React, { useMemo } from 'react'
 import type { Message, Source } from '../types'
 import MessageSourceItem from './MessageSourceItem'
 import GroupedMessageSourceItem from './GroupedMessageSourceItem'
-import { URL_RE } from '../utils/urls'
+// Fresh regex per call — avoids shared lastIndex state across concurrent renders
+const URL_LOCAL_RE = () => /https?:\/\/[^\s<>"'()[\]{}]+/g
+// Trailing punctuation that commonly appears after a URL in prose but isn't part of it
+const TRAILING_PUNCT = /[.,;:!?)]+$/
 
 function renderTextWithLinks(text: string, keyPrefix: string): React.ReactNode[] {
+  const re = URL_LOCAL_RE()
   const nodes: React.ReactNode[] = []
   let last = 0
   let m: RegExpExecArray | null
-  URL_RE.lastIndex = 0
-  while ((m = URL_RE.exec(text)) !== null) {
+  while ((m = re.exec(text)) !== null) {
+    const href = m[0].replace(TRAILING_PUNCT, '')
+    const matchEnd = m.index + m[0].length
+    const trailingLen = m[0].length - href.length
     if (m.index > last) nodes.push(text.slice(last, m.index))
     nodes.push(
       <Link
         key={`${keyPrefix}-url-${m.index}`}
-        href={m[0]}
-        target="_blank"
+        href={href}
         rel="noopener noreferrer"
-        sx={{ wordBreak: 'break-all' }}
+        onClick={(e) => {
+          e.preventDefault()
+          window.open(href, '_blank', 'noopener,noreferrer')
+        }}
+        sx={{ wordBreak: 'break-all', cursor: 'pointer' }}
       >
-        {m[0]}
+        {href}
       </Link>,
     )
-    last = m.index + m[0].length
+    if (trailingLen > 0) nodes.push(text.slice(matchEnd - trailingLen, matchEnd))
+    last = matchEnd
   }
   if (last < text.length) nodes.push(text.slice(last))
   return nodes

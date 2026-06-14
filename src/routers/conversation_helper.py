@@ -588,6 +588,11 @@ CANCER_KEYWORDS: frozenset[str] = frozenset({
     "cervical cancer", "gastric cancer", "liver cancer", "thyroid cancer",
     "kidney cancer", "bladder cancer", "brain tumor", "skin cancer",
     "blood cancer", "bone cancer", "endometrial cancer",
+    # manually added terms that are highly indicative of cancer relevance
+    "carcinogenesis", "tumor microenvironment", "cancer stem cell","ferroptosis", "epithelial-mesenchymal transition", 
+    "ctc", "circulating tumor cell", "marker of invasiveness", "tumor heterogeneity", "liquid biopsy", "tumor mutational burden", "microsatellite instability", "cancer-associated fibroblast", "tumor-infiltrating
+"lymphocyte", "tumor-associated macrophage", "cancer immunoediting", "tumor angiogenesis", "oncogenic driver", "tumor suppressor gene", "cancer-testis antigen", "tumor neoantigen", "cancer vaccine target", "tumor immune evasion", "cancer dormancy", "tumor progression", "cancer cachexia", "tumor lysis syndrome" ,
+
 })
 
 
