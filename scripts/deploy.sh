@@ -436,7 +436,16 @@ for i in $(seq 1 15); do
   sleep 2
 done
 
-if docker exec "$BACKEND_CONTAINER" alembic upgrade head; then
+echo "  Current revision:"
+docker exec "$BACKEND_CONTAINER" alembic current 2>&1 | sed 's/^/    /'
+
+echo "  Pending migrations:"
+docker exec "$BACKEND_CONTAINER" alembic history --indicate-current 2>&1 | sed 's/^/    /'
+
+echo "  Applying migrations..."
+if docker exec "$BACKEND_CONTAINER" alembic upgrade head 2>&1 | sed 's/^/    /'; then
+  echo "  Revision after upgrade:"
+  docker exec "$BACKEND_CONTAINER" alembic current 2>&1 | sed 's/^/    /'
   echo "✓ Alembic migrations completed"
 else
   echo "✗ Alembic migrations failed"
