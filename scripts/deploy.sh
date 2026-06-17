@@ -30,12 +30,17 @@ done
 # Setup logging
 TIMESTAMP=$(date '+%Y%m%d_%H%M%S')
 mkdir -p "$PROJECT_DIR/logs" "$PROJECT_DIR/backups"
-chmod 755 "$PROJECT_DIR/logs" "$PROJECT_DIR/backups" 2>/dev/null || sudo chmod 755 "$PROJECT_DIR/logs" "$PROJECT_DIR/backups" 2>/dev/null || true
+# Ensure the current user owns the log dirs so tee can write
+sudo chown "$(id -u):$(id -g)" "$PROJECT_DIR/logs" "$PROJECT_DIR/backups" 2>/dev/null || true
+chmod 755 "$PROJECT_DIR/logs" "$PROJECT_DIR/backups" 2>/dev/null || true
 LOG_FILE="$PROJECT_DIR/logs/deploy_$TIMESTAMP.log"
 
 # Create log file and redirect all output to it and stdout
-touch "$LOG_FILE" && chmod 666 "$LOG_FILE" 2>/dev/null || true
-exec > >(tee -a "$LOG_FILE") 2>&1
+if touch "$LOG_FILE" 2>/dev/null; then
+  exec > >(tee -a "$LOG_FILE") 2>&1
+else
+  echo "⚠ Warning: could not create log file at $LOG_FILE — output will not be saved"
+fi
 
 echo "========================================="
 echo "CancerBot Deploy Started at $(date '+%Y-%m-%d %H:%M:%S')"
