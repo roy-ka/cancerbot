@@ -5,8 +5,6 @@ import re
 import xml.etree.ElementTree as ET
 from typing import Any, Awaitable, Callable, Dict, Optional
 from urllib.parse import quote_plus
-from uuid import uuid4
-
 import httpx
 import logging
 import wikipediaapi
@@ -297,60 +295,6 @@ def _embed_and_index_sources(sources: list[dict]) -> tuple[int, int]:
     return indexed, skipped
 
 
-def _record_external_search(source_type: str, search_query: str, extracted_terms: list[str],
-                           results: list, conversation_id=None, message_id=None,
-                           indexed_count: int = 0, skipped_count: int = 0, error: str = None):
-    """Record external search results to database."""
-    try:
-        from sqlalchemy.orm import sessionmaker
-        from sqlalchemy import create_engine
-        from src.db.models import ExternalSearchResult
-        import os
-
-        logger.info(f"[external_search_record] Starting to record {source_type}: conv_id={conversation_id}, msg_id={message_id}, results={len(results)}")
-
-        db_url = os.getenv("POSTGRES_URL")
-        if not db_url:
-            logger.warning(f"[external_search_record] POSTGRES_URL not set, skipping recording")
-            return
-
-        logger.debug(f"[external_search_record] Creating database connection for {source_type}")
-        engine = create_engine(db_url, echo=False)
-        Session = sessionmaker(bind=engine)
-        session = Session()
-
-        top_title = None
-        top_url = None
-        if results:
-            first = results[0]
-            top_title = first.get("title") or first.get("pmid") or first.get("doi")
-            top_url = first.get("url")
-
-        record = ExternalSearchResult(
-            id=uuid4(),
-            conversation_id=conversation_id,
-            message_id=message_id,
-            search_query=search_query[:500],
-            source=source_type,
-            extracted_terms=",".join(extracted_terms) if extracted_terms else None,
-            result_count=len(results),
-            indexed_count=indexed_count,
-            skipped_count=skipped_count,
-            top_result_title=str(top_title)[:500] if top_title else None,
-            top_result_url=str(top_url)[:500] if top_url else None,
-            error_message=error,
-        )
-        logger.debug(f"[external_search_record] Created ExternalSearchResult record for {source_type}: top_title={top_title}, result_count={len(results)}")
-        session.add(record)
-        session.commit()
-        logger.info(f"[external_search_record] Successfully recorded {source_type}: {len(results)} results, indexed={indexed_count}, skipped={skipped_count}")
-        session.close()
-    except Exception as e:
-        logger.error(f"[external_search_record] Failed to record {source_type} results: {type(e).__name__}: {e}")
-        import traceback
-        logger.error(f"[external_search_record] Traceback: {traceback.format_exc()}")
-
-
 async def search_and_embed(
     conversation,
     emit: StageEmitter = _emit_noop,
@@ -572,11 +516,17 @@ async def fetch_url_contents(urls: list[str]) -> list[dict]:
         try:
             resp = await client.get(url, headers=HEADERS, follow_redirects=True)
             resp.raise_for_status()
-            soup = BeautifulSoup(resp.text, "html.parser")
-            for tag in soup(["script", "style", "nav", "footer", "header"]):
-                tag.decompose()
-            title = soup.title.string.strip() if soup.title and soup.title.string else url
-            text = " ".join(soup.get_text(separator=" ").split())[:MAX_CHARS]
+
+            def _parse(content: bytes, encoding: str) -> tuple[str, str]:
+                html = content.decode(encoding, errors="replace")
+                soup = BeautifulSoup(html, "html.parser")
+                for tag in soup(["script", "style", "nav", "footer", "header"]):
+                    tag.decompose()
+                t = soup.title.string.strip() if soup.title and soup.title.string else url
+                body = " ".join(soup.get_text(separator=" ").split())[:MAX_CHARS]
+                return t, body
+
+            title, text = await asyncio.to_thread(_parse, resp.content, resp.encoding or "utf-8")
             if not text:
                 return None
 

@@ -223,9 +223,6 @@ cat backups/backup_TIMESTAMP.sql | docker exec -i cancerbot-postgres psql -U can
 # Backend logs
 docker logs cancerbot-backend-1 --follow
 
-# NLP service logs
-docker logs cancerbot-nlp --follow
-
 # OpenSearch logs
 docker logs opensearch-node1 --follow
 

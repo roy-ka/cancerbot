@@ -106,9 +106,7 @@ DEPLOY_START=$(date +%s)
 echo ""
 echo "Capturing current images for rollback..."
 BACKEND_IMAGE=$(docker ps --filter "name=cancerbot-backend" --format "{{.Image}}" 2>/dev/null | head -1 || echo "")
-NLP_IMAGE=$(docker ps --filter "name=cancerbot-nlp" --format "{{.Image}}" 2>/dev/null | head -1 || echo "")
 BACKEND_IMAGE_TAG="cancerbot-backend:rollback_$TIMESTAMP"
-NLP_IMAGE_TAG="cancerbot-nlp:rollback_$TIMESTAMP"
 
 if [ -n "$BACKEND_IMAGE" ]; then
   if docker tag "$BACKEND_IMAGE" "$BACKEND_IMAGE_TAG" 2>/dev/null; then
@@ -118,16 +116,15 @@ if [ -n "$BACKEND_IMAGE" ]; then
   fi
 fi
 
-if [ -n "$NLP_IMAGE" ]; then
-  if docker tag "$NLP_IMAGE" "$NLP_IMAGE_TAG" 2>/dev/null; then
-    echo "✓ Saved NLP image: $NLP_IMAGE_TAG"
-  else
-    echo "⚠ Warning: Could not tag NLP image for rollback"
-  fi
-fi
-
 # Initialize backup file variable (may remain empty if not created)
 BACKUP_FILE=""
+MIGRATIONS_APPLIED=false
+
+# Run a command inside a one-off backend container (defined early so rollback can call it)
+_alembic() {
+  docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot \
+    run --rm --no-deps backend "$@" 2>&1 | sed 's/^/    /'
+}
 
 # Rollback function
 rollback() {
@@ -155,11 +152,6 @@ rollback() {
     echo "✓ Restored backend image"
   fi
 
-  if [ -n "$NLP_IMAGE" ] && docker inspect "$NLP_IMAGE_TAG" &>/dev/null; then
-    docker tag "$NLP_IMAGE_TAG" "$NLP_IMAGE"
-    echo "✓ Restored NLP image"
-  fi
-
   echo "Starting services with previous images..."
   docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot --profile prod up -d || true
 
@@ -184,6 +176,12 @@ rollback() {
       echo "✗ Failed to restore database - manual intervention required"
       echo "Backup file: $BACKUP_FILE"
     fi
+  elif [ "$MIGRATIONS_APPLIED" = true ]; then
+    # No backup but migrations already ran — attempt a schema downgrade so the
+    # old backend image doesn't start against a forward-migrated schema.
+    echo "⚠ No backup available — attempting alembic downgrade to match previous image..."
+    _alembic alembic downgrade -1 2>/dev/null || \
+      echo "  ⚠ Downgrade failed — old backend may be incompatible with current schema"
   else
     echo "⚠ No backup file available - database not restored"
   fi
@@ -344,7 +342,7 @@ cd "$PROJECT_DIR"
 echo ""
 echo "Building Docker images..."
 REQS_HASH_FILE="$PROJECT_DIR/.deploy_reqs_hash"
-REQS_HASH_NOW=$(cat "$PROJECT_DIR/requirements.txt" "$PROJECT_DIR/nlp_service/requirements.txt" 2>/dev/null | md5sum | cut -d' ' -f1)
+REQS_HASH_NOW=$(cat "$PROJECT_DIR/requirements.txt" 2>/dev/null | md5sum | cut -d' ' -f1)
 REQS_HASH_PREV=$(cat "$REQS_HASH_FILE" 2>/dev/null || echo "")
 DOCKER_BUILD_FLAGS=""
 if [ "$REQS_HASH_NOW" != "$REQS_HASH_PREV" ]; then
@@ -389,7 +387,7 @@ fi
 # concurrently and corrupt the alembic_version table with duplicate entries.
 echo ""
 echo "Starting infrastructure services..."
-if docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot up -d --remove-orphans; then
+if docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot up -d; then
   echo "✓ Infrastructure services started"
 else
   echo "✗ Failed to start infrastructure services"
@@ -424,15 +422,9 @@ if [ "$POSTGRES_READY" = false ]; then
   exit 1
 fi
 
-# Run Alembic migrations in a one-off container using the backend image.
-# Runs before the backend starts so start.sh's 'alembic upgrade heads' is a no-op.
+# Run Alembic migrations in a one-off container before the backend starts.
 echo ""
 echo "Running Alembic migrations..."
-_alembic() {
-  docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot \
-    run --rm --no-deps backend "$@" 2>&1 | sed 's/^/    /'
-}
-
 echo "  Current revision:"
 _alembic alembic current || true
 
@@ -440,7 +432,8 @@ echo "  Pending migrations:"
 _alembic alembic history --indicate-current || true
 
 echo "  Applying migrations..."
-if _alembic alembic upgrade head; then
+if _alembic alembic upgrade heads; then
+  MIGRATIONS_APPLIED=true
   echo "  Revision after upgrade:"
   _alembic alembic current || true
   echo "✓ Alembic migrations completed"
@@ -484,10 +477,9 @@ echo ""
 echo "Running health checks (up to 30 attempts, 5 seconds apart)..."
 HEALTHY=false
 for i in $(seq 1 30); do
-  # Use curl with verbose error output
-  # '|| true' prevents set -e from firing when curl returns non-zero before the backend is up
-  response=$(curl -sf http://localhost:8000/health/ 2>&1) || true
-  curl_exit=$?
+  # Capture exit code without triggering set -e on connection failures
+  curl_exit=0
+  response=$(curl -sf http://localhost:8000/health/ 2>&1) || curl_exit=$?
 
   if echo "$response" | grep -q '"status":"ok"'; then
     HEALTHY=true
@@ -552,7 +544,6 @@ echo "========================================="
 echo "Deployed at: $(date '+%Y-%m-%d %H:%M:%S')"
 echo "Duration: $(( DEPLOY_ELAPSED / 60 ))m $(( DEPLOY_ELAPSED % 60 ))s"
 echo "Backend image: $(docker inspect --format='{{.Image}}' cancerbot-backend-1 2>/dev/null || echo 'unknown')"
-echo "NLP image: $(docker inspect --format='{{.Image}}' cancerbot-nlp 2>/dev/null || echo 'unknown')"
 echo "Database backup: $BACKUP_FILE"
 echo "Deploy log: $LOG_FILE"
 echo ""

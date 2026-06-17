@@ -59,8 +59,6 @@ JWT_SECRET=<generate-with: python3 -c "import secrets; print(secrets.token_urlsa
 # URLs
 CORS_ORIGINS=https://your-domain.com
 OLLAMA_URL=http://ollama:11434
-NLP_URL=http://nlp_service:8011
-
 # OpenSearch (from Docker service)
 OPENSEARCH_URL=https://opensearch:9200
 OPENSEARCH_INITIAL_ADMIN_PASSWORD=<generate-strong-password>
@@ -130,18 +128,6 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-
-  nlp_service:
-    build:
-      context: ./nlp_service
-      dockerfile: Dockerfile
-    environment:
-      DOCKER_POSTGRES_URL: ${DOCKER_POSTGRES_URL}
-    depends_on:
-      postgres:
-        condition: service_healthy
-    ports:
-      - '8011:8011'
 
 volumes:
   postgres_data:

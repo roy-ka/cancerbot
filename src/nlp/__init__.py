@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import re
 
 from starlette.concurrency import run_in_threadpool
 
@@ -76,7 +75,6 @@ def _apply_spell_corrections(doc, cache_snapshot: dict[str, str]) -> str:
             and len(raw) >= 4
             and not raw.isupper()
             and lower not in protected
-            and not re.search(r"\d", raw)
             and "'" not in raw
             and _spell_checker.unknown([lower])
         ):
@@ -104,38 +102,33 @@ async def correct_spelling(text: str) -> str:
 
 
 async def extract_terms(text: str) -> list[str]:
-    """Spell-correct then extract scientific entities. Returns a deduplicated term list.
-
-    Runs the spaCy model once for most inputs. A second run is only triggered
-    when spell corrections actually changed the text (rare for medical content).
-    """
-    if not text or _nlp is None:
+    """Extract scientific entities via spaCy. Returns a deduplicated term list."""
+    if not text:
+        return []
+    if _nlp is None:
+        logger.warning("[nlp] extract_terms called but NLP model is not loaded — load_models() was not called at startup")
         return []
 
     text_norm = " ".join(text.split()).strip()
     doc = await run_in_threadpool(_nlp, text_norm)
-
-    async with _abbrev_cache_lock:
-        cache_snapshot = dict(_abbrev_cache)
-    corrected = _apply_spell_corrections(doc, cache_snapshot)
-
-    # Re-run model only when corrections changed the text
-    if corrected != text_norm:
-        doc = await run_in_threadpool(_nlp, corrected)
 
     entities = [
         e.text.strip()
         for e in doc.ents
         if e.text.strip() and e.text.strip().lower() not in _STOP_ENTS
     ]
-    abbr_found = {str(a): str(a._.long_form) for a in doc._.abbreviations}
+    # Normalise keys to lowercase so lookups via e.lower() always match
+    abbr_found = {str(a).strip().lower(): str(a._.long_form).strip() for a in doc._.abbreviations}
 
     if abbr_found:
         async with _abbrev_cache_lock:
             for short, long_form in abbr_found.items():
-                k = short.strip().lower()
-                if k:
-                    _abbrev_cache[k] = long_form.strip()
+                if short:
+                    _abbrev_cache[short] = long_form
+
+    # Single snapshot after writing new abbreviations — reused for all entity lookups
+    async with _abbrev_cache_lock:
+        cache_snapshot = dict(_abbrev_cache)
 
     expanded: list[str] = []
     for e in entities:
@@ -143,7 +136,6 @@ async def extract_terms(text: str) -> list[str]:
         if key in abbr_found:
             expanded.append(abbr_found[key])
         else:
-            async with _abbrev_cache_lock:
-                expanded.append(_abbrev_cache.get(key) or e)
+            expanded.append(cache_snapshot.get(key) or e)
 
     return _dedupe([*expanded, *entities])

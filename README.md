@@ -10,11 +10,9 @@ A Retrieval-Augmented Generation (RAG) chatbot for cancer-related medical inform
 - **Ollama** — local LLM for embedding and text generation (port 11434)
 - **OpenSearch** — hybrid BM25 + KNN vector search (port 9200)
 - **PostgreSQL** — users, conversations, messages (port 5432)
-- **NLP microservice** — entity extraction and spell checking via scispaCy (port 8011)
-
 ## Prerequisites
 
-- Python 3.13 (3.12 for the NLP service)
+- Python 3.13
 - Node.js 18+
 - [Ollama](https://ollama.com) installed natively (**not** via Docker — required for Metal/GPU acceleration on Mac)
 - Docker + Docker Compose
@@ -33,7 +31,7 @@ Generate a JWT secret:
 python3 -c "import secrets; print(secrets.token_hex(32))"
 ```
 
-### 2. Infrastructure (OpenSearch + PostgreSQL + NLP service)
+### 2. Infrastructure (OpenSearch + PostgreSQL)
 
 ```bash
 docker compose up -d
@@ -83,22 +81,6 @@ npm run dev
 ```
 
 Open [http://localhost:5173](http://localhost:5173).
-
-## NLP Service (local development, optional)
-
-The NLP service runs in Docker by default. To run locally:
-
-```bash
-cd nlp_service
-python3.12 -m venv .venv-nlp
-source .venv-nlp/bin/activate
-pip install -r requirements.txt
-pip install https://s3-us-west-2.amazonaws.com/ai2-s2-scispacy/releases/v0.5.4/en_core_sci_sm-0.5.4.tar.gz
-
-uvicorn app:app --host 0.0.0.0 --port 8011
-```
-
-> The NLP service requires Python 3.12. scispaCy does not yet support Python 3.13.
 
 ## Environment Variables
 

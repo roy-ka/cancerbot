@@ -49,18 +49,11 @@ npm run build     # Production build
 npm run lint      # ESLint
 ```
 
-### NLP Service
-```bash
-cd nlp_service
-pip install -r requirements.txt
-uvicorn app:app --host 0.0.0.0 --port 8011
-```
-
 ### Full Stack (Docker)
 ```bash
 docker-compose up --build
 # Default profile starts: OpenSearch cluster (2 nodes on 9200), Dashboards (5601),
-#   Ollama (11434), PostgreSQL (5432), NLP Service (8011)
+#   Ollama (11434), PostgreSQL (5432)
 # The FastAPI backend is only included in the 'prod' profile:
 docker-compose --profile prod up --build
 # The Vite frontend is always run separately (not in Docker)
@@ -86,7 +79,6 @@ bash scripts/daily_backup.sh  # Cron-friendly wrapper for backup
 |-----------|-------------|------|-------|
 | FastAPI backend | `src/main.py` | 8000 | Docker only with `prod` profile |
 | React frontend | `client/src/main.tsx` | 5173 | Always run locally |
-| NLP microservice | `nlp_service/app.py` | 8011 | In Docker |
 | OpenSearch node 1 | Docker | 9200/9600 | 2-node cluster |
 | OpenSearch node 2 | Docker | — | Same cluster |
 | OpenSearch Dashboards | Docker | 5601 | |
@@ -96,7 +88,7 @@ bash scripts/daily_backup.sh  # Cron-friendly wrapper for backup
 ### Chat Query Flow
 1. User message arrives via WebSocket (`/conversations/{id}/add_message/ws`) or HTTP POST (`/conversations/{id}/add_message`)
 2. User message is saved to PostgreSQL
-3. NLP service extracts scientific terms from the user message (`extracted_terms` stored on the `Message` row)
+3. `src/nlp` (in-process scispaCy) extracts scientific terms from the user message (`extracted_terms` stored on the `Message` row)
 4. **External search** runs in parallel: PubMed (4 results), CrossRef (4 results), Wikipedia (3 results) queried using NLP-extracted terms (`src/routers/conversation_helper.py`)
 5. New external sources are embedded via Ollama (`nomic-embed-text`) and indexed into OpenSearch `sources_index`; duplicates are skipped by stable ID
 6. External search results are recorded in `external_search_results` table
@@ -172,7 +164,6 @@ JWT_SECRET=...
 JWT_ALGORITHM=HS256
 ACCESS_TOKEN_EXPIRE_MINUTES=60000
 CORS_ORIGINS=http://localhost:5173     # comma-separated for multiple origins
-NLP_URL=http://127.0.0.1:8011
 PROMPT_MAX_HISTORY=12                  # Conversation turns included in prompt
 ENV=development                        # set to 'production' in prod
 
@@ -192,16 +183,11 @@ UNPAYWALL_EMAIL=
 ### Auth
 JWT tokens (HS256) accepted via `Authorization: Bearer <token>` header or `access_token` cookie. Dependency: `Depends(get_current_user)` in `src/deps/auth.py`. Rate-limited login via `LoginAttempt` model. Password reset via time-limited codes (SendGrid email).
 
-### NLP Service (`nlp_service/app.py`)
-Standalone FastAPI service using scispacy (`en_core_sci_sm`). Provides:
-- `POST /extract` — entity extraction + abbreviation detection + expansion
-- `POST /spelling/correct` — spell correction with protected medical terms
-- `GET /abbrev/{short}` — abbreviation lookup
-- `GET /abbrev/search` — fuzzy abbreviation search
-- `POST /abbrev/reload` — reload in-memory cache
-- `GET /health` — liveness check
-
-**Note:** PostgreSQL integration is currently **disabled** in the NLP service (`DATABASE_ENABLED = False` in `nlp_service/app.py`). Abbreviation persistence is a no-op; the in-memory cache is populated only from terms discovered in the current session.
+### NLP (`src/nlp/__init__.py`)
+In-process scispaCy (`en_core_sci_sm`) module loaded at startup via `load_models()` in the FastAPI lifespan. Provides:
+- `extract_terms(text)` — entity extraction + abbreviation detection + expansion
+- `correct_spelling(text)` — spell correction with protected medical terms
+- In-memory abbreviation cache with async lock
 
 ### Routers (`src/routers/`)
 - `auth.py` — registration, login, password reset
