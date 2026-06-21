@@ -411,8 +411,13 @@ async def search_and_embed(
                 words = text.split()
                 meaningful = [w.lower().strip('?.,!;:').strip() for w in words if len(w) >= 3]
                 meaningful = [w for w in meaningful if w and w.lower() not in {
-                    'the', 'and', 'or', 'is', 'are', 'was', 'what', 'that', 'this', 'from',
-                    'with', 'for', 'but', 'has', 'have', 'had', 'can', 'could', 'will', 'would'
+                    'the', 'and', 'or', 'is', 'are', 'was', 'were', 'be', 'been',
+                    'what', 'that', 'this', 'from', 'with', 'for', 'but', 'not',
+                    'has', 'have', 'had', 'can', 'could', 'will', 'would', 'should',
+                    'may', 'might', 'do', 'does', 'did', 'get', 'got', 'use', 'used',
+                    'how', 'why', 'when', 'where', 'who', 'which', 'there', 'here',
+                    'also', 'just', 'very', 'more', 'most', 'such', 'than', 'then',
+                    'about', 'like', 'into', 'over', 'after', 'some', 'any', 'all',
                 }]
                 fallback_terms.extend(meaningful)
             terms = _dedupe_terms(fallback_terms)

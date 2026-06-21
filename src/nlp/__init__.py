@@ -10,7 +10,16 @@ _spell_checker = None
 _abbrev_cache: dict[str, str] = {}
 _abbrev_cache_lock = asyncio.Lock()
 
-_STOP_ENTS = frozenset({"cancer", "tumor"})
+_STOP_ENTS = frozenset({
+    # Too generic to be useful search terms
+    "cancer", "tumor",
+    # Question / function words that scispaCy sometimes tags as entities
+    "how", "why", "when", "where", "who", "which", "what",
+    "does", "do", "did", "is", "are", "was", "were", "be", "been",
+    "can", "could", "will", "would", "should", "may", "might",
+    "not", "no", "yes", "also", "just", "very", "more", "most",
+    "about", "like", "such", "than", "then", "there", "here",
+})
 
 
 def load_models() -> None:
