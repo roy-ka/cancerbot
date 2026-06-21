@@ -17,6 +17,47 @@ from src.xml_to_source import pubmed_article_xml_to_source
 
 StageEmitter = Callable[[str, Dict[str, Any]], Awaitable[None]]
 
+_URL_RE = re.compile(r'https?://\S+', re.IGNORECASE)
+
+_SPAM_RE = re.compile(
+    r'(?i)(\bxxx\b|sex\s*(?:tape|video|videos?)\b|'
+    r'\bporn\b|\bnude\b|\bnaked\b|webcam\s*(?:sex|live)|'
+    r'adult\s*content|explicit\s*(?:content|material)|'
+    r'\bsexvideo\b|\bsextape\b)',
+)
+
+
+def _filter_url_terms(terms: list[str]) -> list[str]:
+    """Remove URL-shaped strings from a term list so they are not sent to PubMed/CrossRef."""
+    return [t for t in terms if not _URL_RE.match(t.strip())]
+
+
+def _extract_urls_from_texts(texts: list[str]) -> list[str]:
+    """Return unique URLs found across a list of message texts."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for text in texts:
+        for url in _URL_RE.findall(text):
+            url = url.rstrip('.,;:!?)')
+            if url not in seen:
+                seen.add(url)
+                out.append(url)
+    return out
+
+
+def _url_fetch_to_source(result: dict) -> dict:
+    """Convert a fetch_url_contents result to the shape expected by _embed_and_index_sources."""
+    return {
+        "source_type": "url",
+        "pmid": None,
+        "doi": None,
+        "title": result.get("title"),
+        "content_for_embedding": result.get("content_for_embedding"),
+        "tags": ["url", "external"],
+        "abstract_source": "url",
+        "url": result.get("url"),
+    }
+
 
 async def _emit_noop(stage: str, data: Dict[str, Any] | None = None) -> None:
     return
@@ -157,6 +198,9 @@ async def _search_crossref_sources(client: httpx.AsyncClient, terms: list[str], 
             f"{title}\n\n{abstract}".strip() if abstract else title.strip()
         )
         if not content_for_embedding:
+            continue
+        if _SPAM_RE.search(title):
+            logger.warning(f"[crossref] skipping spam/low-quality item doi={doi}: '{title[:80]}'")
             continue
         out.append(
             {
@@ -374,9 +418,25 @@ async def search_and_embed(
             terms = _dedupe_terms(fallback_terms)
             logger.info(f"[nlp] Using fallback terms: {len(terms)} terms extracted from text")
 
+    # Detect and fetch any URLs found in recent messages
+    message_urls = _extract_urls_from_texts(message_texts)
+    url_context_items: list[dict] = []  # raw fetch results — returned for direct context injection
+    url_sources: list[dict] = []        # converted shape for indexing
+    if message_urls:
+        logger.info(f"[search_and_embed] Found {len(message_urls)} URL(s) in messages, fetching content")
+        await emit("fetching_urls", {"count": len(message_urls), "urls": message_urls})
+        url_context_items = await fetch_url_contents(message_urls)
+        url_sources = [_url_fetch_to_source(r) for r in url_context_items]
+        logger.info(f"[search_and_embed] Fetched {len(url_sources)} URL source(s)")
+
+    # Strip URL-shaped strings so they are not sent as PubMed/CrossRef/Wikipedia queries
+    terms = _filter_url_terms(terms)
+    logger.info(f"[search_and_embed] After URL filtering: {len(terms)} terms for external search")
+
     await emit("terms_ready", {"terms_count": len(terms), "terms": terms[:20]})
-    if not terms:
-        logger.warning(f"[search_and_embed] No terms available, aborting search")
+
+    if not terms and not url_sources:
+        logger.warning(f"[search_and_embed] No terms or URL sources available, aborting search")
         return {
             "terms": [],
             "pubmed_found": 0,
@@ -386,24 +446,29 @@ async def search_and_embed(
             "skipped": 0,
         }
 
-    # Search for sources using the terms (whether stored or extracted)
-    async with httpx.AsyncClient(timeout=httpx.Timeout(20.0)) as client:
-        await emit("searching_pubmed", {"limit": 4})
-        await emit("searching_crossref", {"limit": 4})
-        await emit("searching_wikipedia", {"limit": 3})
-        pubmed_sources, crossref_sources, wikipedia_sources = await asyncio.gather(
-            asyncio.create_task(_search_pubmed_sources(client, terms, max_results=4)),
-            asyncio.create_task(_search_crossref_sources(client, terms, max_results=4)),
-            _search_wikipedia_sources(terms, max_results=3),
-        )
+    # Search for sources using the terms (skip external search if only URLs were provided)
+    pubmed_sources: list[dict] = []
+    crossref_sources: list[dict] = []
+    wikipedia_sources: list[dict] = []
+    if terms:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(20.0)) as client:
+            await emit("searching_pubmed", {"limit": 4})
+            await emit("searching_crossref", {"limit": 4})
+            await emit("searching_wikipedia", {"limit": 3})
+            pubmed_sources, crossref_sources, wikipedia_sources = await asyncio.gather(
+                asyncio.create_task(_search_pubmed_sources(client, terms, max_results=4)),
+                asyncio.create_task(_search_crossref_sources(client, terms, max_results=4)),
+                _search_wikipedia_sources(terms, max_results=3),
+            )
 
     await emit(
         "found_sources",
         {
+            "url_found": len(url_sources),
             "pubmed_found": len(pubmed_sources),
             "crossref_found": len(crossref_sources),
             "wikipedia_found": len(wikipedia_sources),
-            "total_found": len(pubmed_sources) + len(crossref_sources) + len(wikipedia_sources),
+            "total_found": len(url_sources) + len(pubmed_sources) + len(crossref_sources) + len(wikipedia_sources),
         },
     )
 
@@ -417,9 +482,9 @@ async def search_and_embed(
     logger.info(f"[external_search] About to index search results")
     logger.info(f"[external_search] conversation_id={conv_id}, message_id={msg_id}")
     logger.info(f"[external_search] original_query={original_query[:100]}")
-    logger.info(f"[external_search] pubmed={len(pubmed_sources)}, crossref={len(crossref_sources)}, wikipedia={len(wikipedia_sources)}")
+    logger.info(f"[external_search] url={len(url_sources)}, pubmed={len(pubmed_sources)}, crossref={len(crossref_sources)}, wikipedia={len(wikipedia_sources)}")
 
-    merged_sources = [*pubmed_sources, *crossref_sources, *wikipedia_sources]
+    merged_sources = [*url_sources, *pubmed_sources, *crossref_sources, *wikipedia_sources]
     await emit("embedding_and_indexing_sources", {"total_sources": len(merged_sources)})
     indexed, skipped = await asyncio.to_thread(_embed_and_index_sources, merged_sources)
     await emit(
@@ -431,6 +496,8 @@ async def search_and_embed(
 
     return {
         "terms": terms,
+        "url_found": len(url_sources),
+        "url_context_items": url_context_items,
         "pubmed_found": len(pubmed_sources),
         "crossref_found": len(crossref_sources),
         "wikipedia_found": len(wikipedia_sources),
@@ -491,12 +558,109 @@ def _is_cancer_related(terms: list[str]) -> bool:
     return False
 
 
+_DOI_IN_URL_RE = re.compile(r'(10\.\d{4,}/[^\s?#&"\'<>]+)', re.IGNORECASE)
+_NATURE_ARTICLE_RE = re.compile(r'nature\.com/articles/(s\d[\w-]+)', re.IGNORECASE)
+
+
+def _extract_doi_from_url(url: str) -> str | None:
+    """Return a DOI if one can be extracted from a publisher URL, otherwise None."""
+    # Generic: DOI appears verbatim in the URL path (Springer, Wiley, ACS, PLOS, BMC, …)
+    m = _DOI_IN_URL_RE.search(url)
+    if m:
+        return m.group(1).rstrip('.')
+    # Nature family: articles/s41586-026-10612-6  →  10.1038/s41586-026-10612-6
+    m = _NATURE_ARTICLE_RE.search(url)
+    if m:
+        return f"10.1038/{m.group(1)}"
+    return None
+
+
+async def _resolve_doi(client: httpx.AsyncClient, doi: str) -> dict | None:
+    """Return {title, abstract, doi, url} for a DOI via CrossRef, then PubMed as fallback."""
+    # CrossRef direct lookup
+    try:
+        resp = await client.get(
+            f"https://api.crossref.org/works/{quote_plus(doi)}",
+            timeout=httpx.Timeout(15.0),
+        )
+        if resp.status_code == 200:
+            item = resp.json().get("message") or {}
+            title_arr = item.get("title") or []
+            title = (title_arr[0] if title_arr else "").strip()
+            abstract = _strip_markup(item.get("abstract"))
+            if title:
+                logger.info(f"[doi] CrossRef resolved doi={doi}: '{title[:80]}'")
+                return {
+                    "title": title,
+                    "abstract": abstract,
+                    "doi": doi,
+                    "url": item.get("URL") or f"https://doi.org/{doi}",
+                }
+    except Exception as e:
+        logger.warning(f"[doi] CrossRef lookup failed doi={doi}: {e}")
+
+    # PubMed fallback — search by DOI field
+    try:
+        esearch_resp = await client.get(
+            "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi",
+            params={"db": "pubmed", "retmode": "json", "retmax": 1, "term": f"{doi}[doi]"},
+            timeout=httpx.Timeout(15.0),
+        )
+        esearch_resp.raise_for_status()
+        id_list = (esearch_resp.json().get("esearchresult") or {}).get("idlist") or []
+        if id_list:
+            efetch_resp = await client.get(
+                "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi",
+                params={"db": "pubmed", "id": id_list[0], "retmode": "xml"},
+                timeout=httpx.Timeout(15.0),
+            )
+            efetch_resp.raise_for_status()
+            root = ET.fromstring(efetch_resp.text)
+            article_xml = root.find(".//PubmedArticle")
+            if article_xml is not None:
+                source = pubmed_article_xml_to_source(ET.tostring(article_xml, encoding="unicode"))
+                if source.get("title"):
+                    logger.info(f"[doi] PubMed resolved doi={doi}: '{source.get('title','')[:80]}'")
+                    return {
+                        "title": source.get("title"),
+                        "abstract": source.get("abstract"),
+                        "doi": doi,
+                        "url": f"https://doi.org/{doi}",
+                    }
+    except Exception as e:
+        logger.warning(f"[doi] PubMed lookup failed doi={doi}: {e}")
+
+    return None
+
+
+async def _unpaywall_oa_url(client: httpx.AsyncClient, doi: str) -> str | None:
+    """Return the best open-access full-text URL for a DOI via Unpaywall, or None."""
+    email = os.getenv("UNPAYWALL_EMAIL", "").strip()
+    if not email:
+        return None
+    try:
+        resp = await client.get(
+            f"https://api.unpaywall.org/v2/{quote_plus(doi)}",
+            params={"email": email},
+            timeout=httpx.Timeout(10.0),
+        )
+        if resp.status_code == 200:
+            best = resp.json().get("best_oa_location") or {}
+            oa_url = best.get("url_for_landing_page") or best.get("url") or best.get("url_for_pdf")
+            if oa_url:
+                logger.info(f"[unpaywall] OA URL for doi={doi}: {oa_url}")
+                return oa_url
+    except Exception as e:
+        logger.warning(f"[unpaywall] Failed doi={doi}: {e}")
+    return None
+
+
 async def fetch_url_contents(urls: list[str]) -> list[dict]:
     """Fetch text content from a list of URLs and return context-ready dicts.
 
-    Extracts scientific terms via the NLP service and checks cancer relevance.
-    Non-cancer-related URLs are included but flagged with a warning prefix so
-    the LLM knows to treat them with lower confidence.
+    For URLs with a resolvable DOI, uses CrossRef → PubMed → Unpaywall (OA scrape)
+    to get structured title + abstract without hitting paywalls.
+    Falls back to plain web scraping for all other URLs.
 
     Each returned item shape:
         {"id": "url:<sha1>", "content_for_embedding": "<text>", "title": "...", "url": "...", "cancer_related": bool}
@@ -512,47 +676,84 @@ async def fetch_url_contents(urls: list[str]) -> list[dict]:
     }
     MAX_CHARS = 4000
 
+    def _scrape_html(content: bytes, encoding: str, fallback_title: str) -> tuple[str, str]:
+        html = content.decode(encoding, errors="replace")
+        soup = BeautifulSoup(html, "html.parser")
+        for tag in soup(["script", "style", "nav", "footer", "header"]):
+            tag.decompose()
+        t = soup.title.string.strip() if soup.title and soup.title.string else fallback_title
+        body = " ".join(soup.get_text(separator=" ").split())[:MAX_CHARS]
+        return t, body
+
     async def _fetch_one(client: httpx.AsyncClient, url: str) -> dict | None:
-        try:
-            resp = await client.get(url, headers=HEADERS, follow_redirects=True)
-            resp.raise_for_status()
+        title: str | None = None
+        text: str | None = None
 
-            def _parse(content: bytes, encoding: str) -> tuple[str, str]:
-                html = content.decode(encoding, errors="replace")
-                soup = BeautifulSoup(html, "html.parser")
-                for tag in soup(["script", "style", "nav", "footer", "header"]):
-                    tag.decompose()
-                t = soup.title.string.strip() if soup.title and soup.title.string else url
-                body = " ".join(soup.get_text(separator=" ").split())[:MAX_CHARS]
-                return t, body
+        # --- Path 1: DOI-based resolution (structured, paywall-free) ---
+        doi = _extract_doi_from_url(url)
+        if doi:
+            resolved = await _resolve_doi(client, doi)
+            if resolved:
+                title = resolved.get("title")
+                abstract = resolved.get("abstract") or ""
+                if abstract:
+                    text = f"{title}\n\n{abstract}" if title else abstract
+                    logger.info(f"[fetch_url] DOI path succeeded for {url} ({len(text)} chars)")
 
-            title, text = await asyncio.to_thread(_parse, resp.content, resp.encoding or "utf-8")
+            # No abstract from CrossRef/PubMed — try Unpaywall for an OA URL to scrape
             if not text:
-                return None
+                oa_url = await _unpaywall_oa_url(client, doi)
+                if oa_url and oa_url != url:
+                    try:
+                        oa_resp = await client.get(oa_url, headers=HEADERS, follow_redirects=True)
+                        oa_resp.raise_for_status()
+                        oa_title, oa_text = await asyncio.to_thread(
+                            _scrape_html, oa_resp.content, oa_resp.encoding or "utf-8", title or url
+                        )
+                        if oa_text:
+                            title = title or oa_title
+                            text = oa_text
+                            logger.info(f"[fetch_url] Unpaywall OA scrape succeeded for {url} ({len(text)} chars)")
+                    except Exception as e:
+                        logger.warning(f"[fetch_url] OA scrape failed for {oa_url}: {e}")
 
-            terms = await _extract_terms_from_message(text)
-            cancer_related = _is_cancer_related(terms)
-            logger.info(f"[fetch_url] {url} — terms={terms[:8]}, cancer_related={cancer_related}")
+        # --- Path 2: Plain web scraping fallback ---
+        if not text:
+            try:
+                resp = await client.get(url, headers=HEADERS, follow_redirects=True)
+                resp.raise_for_status()
+                page_title, page_text = await asyncio.to_thread(
+                    _scrape_html, resp.content, resp.encoding or "utf-8", url
+                )
+                title = title or page_title
+                text = page_text or None
+                if text:
+                    logger.info(f"[fetch_url] Web scrape fallback for {url} ({len(text)} chars)")
+            except Exception as e:
+                logger.warning(f"[fetch_url] Failed to fetch {url}: {type(e).__name__}: {e}")
 
-            content = text if cancer_related else (
-                f"[WARNING: This source does not appear to be cancer-related. "
-                f"Use with caution.]\n{text}"
-            )
-
-            doc_id = "url:" + hashlib.sha1(url.encode("utf-8")).hexdigest()
-
-            await asyncio.to_thread(_enqueue_url_classification, url=url, content_text=text, title=title)
-
-            return {
-                "id": doc_id,
-                "content_for_embedding": content,
-                "title": title,
-                "url": url,
-                "cancer_related": cancer_related,
-            }
-        except Exception as e:
-            logger.warning(f"[fetch_url] Failed to fetch {url}: {type(e).__name__}: {e}")
+        if not text:
             return None
+
+        terms = await _extract_terms_from_message(text)
+        cancer_related = _is_cancer_related(terms)
+        logger.info(f"[fetch_url] {url} — cancer_related={cancer_related}, terms={terms[:6]}")
+
+        content = text if cancer_related else (
+            f"[WARNING: This source does not appear to be cancer-related. "
+            f"Use with caution.]\n{text}"
+        )
+
+        doc_id = "url:" + hashlib.sha1(url.encode("utf-8")).hexdigest()
+        await asyncio.to_thread(_enqueue_url_classification, url=url, content_text=text, title=title)
+
+        return {
+            "id": doc_id,
+            "content_for_embedding": content,
+            "title": title or url,
+            "url": url,
+            "cancer_related": cancer_related,
+        }
 
     async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as client:
         results = await asyncio.gather(*[_fetch_one(client, u) for u in urls])

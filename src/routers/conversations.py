@@ -156,9 +156,27 @@ async def _process_post_message(
             db.rollback()
 
     await emit('retrieving_context', {})
-    logging.info(f"[conversation] Retrieving context for query: {req.content[:100]}")
-    context = await asyncio.to_thread(run_retrieval, req.content)
+
+    # If URLs were detected in the message content, use the fetched page title as the
+    # retrieval query so KNN/BM25 can find semantically related sources instead of
+    # searching with a meaningless URL string.
+    url_context_items: list[dict] = search_meta.get('url_context_items', [])
+    retrieval_query = req.content
+    if url_context_items:
+        first_title = (url_context_items[0].get('title') or '').strip()
+        if first_title and first_title != req.content:
+            retrieval_query = first_title
+            logging.info(f"[conversation] Using URL page title as retrieval query: {retrieval_query[:120]}")
+
+    logging.info(f"[conversation] Retrieving context for query: {retrieval_query[:100]}")
+    context = await asyncio.to_thread(run_retrieval, retrieval_query)
     logging.info(f"[conversation] Retrieved {len(context.get('sources_ids', []))} sources, {len(context.get('claims_ids', []))} claims")
+
+    # Prepend URL context items (fetched from message content) directly to generation context
+    if url_context_items:
+        logging.info(f"[conversation] Prepending {len(url_context_items)} URL source(s) from message to context")
+        context['generation_context'] = url_context_items + context['generation_context']
+        context['sources_ids'] = [item['id'] for item in url_context_items] + context.get('sources_ids', [])
 
     if req.urls:
         logging.info(f"[conversation] Fetching {len(req.urls)} user-provided URL(s)")

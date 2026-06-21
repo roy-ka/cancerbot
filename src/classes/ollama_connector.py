@@ -1,6 +1,7 @@
 from ollama import Client
 from dotenv import load_dotenv
 import os
+import re
 import json
 from typing import Any, Mapping, Sequence
 from src.db.models import Message
@@ -203,5 +204,8 @@ ANSWER:
     # Example: [R8] -> [url:86cc...]
     for alias, original_id in alias_to_id.items():
       answer = answer.replace(f"[{alias}]", f"[{original_id}]")
+
+    # Remove any empty brackets the LLM generated instead of a valid [R#] alias.
+    answer = re.sub(r'\s*\[\]', '', answer)
 
     return answer
