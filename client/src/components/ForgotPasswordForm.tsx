@@ -30,7 +30,7 @@ export default function ForgotPasswordForm({
     setError(null)
     setLoading(true)
     try {
-      await fetch(`${BASE_URL}/auth/forgot-password`, {
+      await fetch(`${BASE_URL}/auth/forgot-password/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email }),
@@ -53,7 +53,7 @@ export default function ForgotPasswordForm({
     }
     setLoading(true)
     try {
-      const res = await fetch(`${BASE_URL}/auth/reset-password`, {
+      const res = await fetch(`${BASE_URL}/auth/reset-password/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, code, new_password: newPassword }),

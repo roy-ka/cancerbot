@@ -182,7 +182,7 @@ export default function Chat() {
 
     if (selectedConversationId === 'new') {
       // For new conversations, use POST /conversations/new
-      const url = `${import.meta.env.VITE_BASE_URL}/conversations/new`
+      const url = `${BASE_URL}/conversations/new`
       setCurrentStage('loading_conversation')
       fetch(url, {
         method: 'POST',
