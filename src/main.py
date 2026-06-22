@@ -30,6 +30,7 @@ def _init_sentry() -> None:
             environment="production" if is_prod() else "development",
             traces_sample_rate=0.1,
             send_default_pii=False,
+            enable_logs=True,  # forwards INFO+ records to Sentry Logs view
         )
         logger.info("Sentry initialized (env=%s)", "production" if is_prod() else "development")
     except Exception as exc:
