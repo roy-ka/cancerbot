@@ -460,6 +460,25 @@ async def post_message_ws(
     finally:
         _active_ws[uid] = max(0, _active_ws[uid] - 1)
 
+class CreateConversationRequest(BaseModel):
+    title: str = ""
+
+@router.post("/create/", status_code=201)
+async def create_empty_conversation(
+    req: CreateConversationRequest,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user),
+):
+    title = req.title.strip()[:50] or "New Conversation"
+    conversation = create_conversation(db=db, user_id=current_user.id, title=title)
+    return {
+        "id": str(conversation.id),
+        "title": conversation.title,
+        "lastMessage": None,
+        "lastMessageTime": None,
+    }
+
+
 @router.post("/new")
 async def new_conversation(
     req: Message,
