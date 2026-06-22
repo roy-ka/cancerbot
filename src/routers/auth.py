@@ -136,11 +136,11 @@ async def logout(response: Response):
 
 
 class ForgotPasswordRequest(BaseModel):
-    email: str
+    email: EmailStr
 
 
 class ResetPasswordRequest(BaseModel):
-    email: str
+    email: EmailStr
     code: str
     new_password: str
 

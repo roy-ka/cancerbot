@@ -466,8 +466,6 @@ async def new_conversation(
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user),
 ):
-    if not _check_message_rate(str(current_user.id)):
-        raise HTTPException(status_code=429, detail="Too many messages. Please wait before sending another.")
     conversation = create_conversation(db=db, user_id=current_user.id, title=req.content[:20])
     return await post_message(
         conversation_id=conversation.id,

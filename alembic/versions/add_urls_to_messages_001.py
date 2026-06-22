@@ -14,7 +14,10 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column('messages', sa.Column('urls', sa.JSON(), nullable=True))
+    op.execute("""
+        ALTER TABLE messages
+        ADD COLUMN IF NOT EXISTS urls JSON
+    """)
 
 
 def downgrade() -> None:

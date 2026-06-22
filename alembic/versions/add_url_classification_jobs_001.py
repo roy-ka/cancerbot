@@ -15,21 +15,28 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.create_table(
-        'url_classification_jobs',
-        sa.Column('id', UUID(as_uuid=True), primary_key=True),
-        sa.Column('url', sa.Text(), nullable=False),
-        sa.Column('content_text', sa.Text(), nullable=False),
-        sa.Column('title', sa.Text(), nullable=True),
-        sa.Column('status', sa.String(20), nullable=False, server_default='pending'),
-        sa.Column('cancer_related', sa.Boolean(), nullable=True),
-        sa.Column('llm_reasoning', sa.Text(), nullable=True),
-        sa.Column('error', sa.Text(), nullable=True),
-        sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.Column('processed_at', sa.DateTime(timezone=True), nullable=True),
-    )
-    op.create_index('ix_url_classification_jobs_status', 'url_classification_jobs', ['status'])
-    op.create_index('ix_url_classification_jobs_created_at', 'url_classification_jobs', ['created_at'])
+    op.execute("""
+        CREATE TABLE IF NOT EXISTS url_classification_jobs (
+            id UUID PRIMARY KEY,
+            url TEXT NOT NULL,
+            content_text TEXT NOT NULL,
+            title TEXT,
+            status VARCHAR(20) NOT NULL DEFAULT 'pending',
+            cancer_related BOOLEAN,
+            llm_reasoning TEXT,
+            error TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            processed_at TIMESTAMPTZ
+        )
+    """)
+    op.execute("""
+        CREATE INDEX IF NOT EXISTS ix_url_classification_jobs_status
+        ON url_classification_jobs (status)
+    """)
+    op.execute("""
+        CREATE INDEX IF NOT EXISTS ix_url_classification_jobs_created_at
+        ON url_classification_jobs (created_at)
+    """)
 
 
 def downgrade() -> None:
