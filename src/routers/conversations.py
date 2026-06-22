@@ -7,7 +7,8 @@ import logging
 import time
 import asyncio
 import os
-from pydantic import BaseModel, field_validator
+from collections import defaultdict
+from pydantic import BaseModel, Field, field_validator
 from src.db.repositories.conversations import (
     get_conversation_by_id,
     get_conversation_by_id_no_auth,
@@ -24,8 +25,25 @@ from src.routers.conversation_helper import _emit_noop, search_and_embed, fetch_
 
 ROLLS = Literal['user', 'assistant']
 
+_user_msg_times: dict[str, list[float]] = defaultdict(list)
+_MSG_RATE_WINDOW = 60.0
+_MSG_RATE_MAX = 10
+
+def _check_message_rate(user_id: str) -> bool:
+    now = time.monotonic()
+    cutoff = now - _MSG_RATE_WINDOW
+    times = _user_msg_times[user_id]
+    times[:] = [t for t in times if t > cutoff]
+    if len(times) >= _MSG_RATE_MAX:
+        return False
+    times.append(now)
+    return True
+
+_active_ws: dict[str, int] = defaultdict(int)
+_WS_MAX_PER_USER = 3
+
 class Message(BaseModel):
-    content: str
+    content: str = Field(..., max_length=4000)
     conversation_id: UUID | None = None
     timestamp: str | None = None
     role: ROLLS = 'user'
@@ -273,7 +291,7 @@ async def _process_post_message(
 
 @router.get("/")
 async def get_user_conversations(
-    limit: int = 10,
+    limit: int = Query(10, ge=1, le=100),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
@@ -368,6 +386,8 @@ async def post_message(
     current_user = Depends(get_current_user),
     conversation=None,
 ):
+    if not _check_message_rate(str(current_user.id)):
+        raise HTTPException(status_code=429, detail="Too many messages. Please wait before sending another.")
     return await _process_post_message(
         conversation_id=conversation_id,
         req=req,
@@ -384,6 +404,11 @@ async def post_message_ws(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
+    uid = str(current_user.id)
+    if _active_ws[uid] >= _WS_MAX_PER_USER:
+        await websocket.close(code=1008)
+        return
+    _active_ws[uid] += 1
     await websocket.accept()
 
     async def emit(stage: str, data: Dict[str, Any] | None = None) -> None:
@@ -394,6 +419,11 @@ async def post_message_ws(
         })
 
     try:
+        if not _check_message_rate(uid):
+            await websocket.send_json({'type': 'error', 'message': 'Too many messages. Please wait before sending another.'})
+            await websocket.close(code=1008)
+            return
+
         payload = await websocket.receive_json()
         req = Message(**payload)
 
@@ -427,6 +457,8 @@ async def post_message_ws(
             await websocket.close()
         except Exception:
             pass
+    finally:
+        _active_ws[uid] = max(0, _active_ws[uid] - 1)
 
 @router.post("/new")
 async def new_conversation(
@@ -434,6 +466,8 @@ async def new_conversation(
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user),
 ):
+    if not _check_message_rate(str(current_user.id)):
+        raise HTTPException(status_code=429, detail="Too many messages. Please wait before sending another.")
     conversation = create_conversation(db=db, user_id=current_user.id, title=req.content[:20])
     return await post_message(
         conversation_id=conversation.id,

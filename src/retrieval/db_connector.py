@@ -2,6 +2,7 @@ from dotenv import load_dotenv
 from opensearchpy import OpenSearch
 import os
 import logging
+from src.utils.utils import is_prod
 
 load_dotenv()
 
@@ -48,13 +49,16 @@ class dbConnector:
       host = _parsed.hostname or 'localhost'
       port = _parsed.port or 9200
       auth = ('admin', cls._PASS)
+      verify_certs = os.getenv("OPENSEARCH_VERIFY_CERTS", "false").lower() in ("1", "true", "yes")
+      if not verify_certs and is_prod():
+        cls.logger.warning("OPENSEARCH_VERIFY_CERTS is disabled in production — TLS certificate not verified")
       cls.db_client = OpenSearch(
         hosts=[{'host': host, 'port': port}],
         http_compress=True,
         use_ssl=True,
-        verify_certs=False,
-        ssl_assert_hostname=False,
-        ssl_show_warn=False,
+        verify_certs=verify_certs,
+        ssl_assert_hostname=verify_certs,
+        ssl_show_warn=not verify_certs,
         http_auth=auth
       )
     except KeyError as e:

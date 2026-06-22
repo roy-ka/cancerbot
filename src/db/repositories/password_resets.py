@@ -1,5 +1,6 @@
 import hashlib
-import random
+import hmac
+import secrets
 import string
 from datetime import datetime, timedelta, timezone
 
@@ -15,7 +16,8 @@ def _hash_code(code: str) -> str:
 
 
 def generate_code() -> str:
-    return "".join(random.choices(string.digits, k=6))
+    alphabet = string.ascii_uppercase + string.digits
+    return "".join(secrets.choice(alphabet) for _ in range(8))
 
 
 def create_reset_code(db, user_id) -> str:
@@ -67,7 +69,7 @@ def verify_and_consume_code(db, user_id, code: str) -> tuple[bool, str]:
     if record.attempts >= _MAX_ATTEMPTS:
         return False, "Too many incorrect attempts. Please request a new code."
 
-    if record.code_hash != _hash_code(code):
+    if not hmac.compare_digest(record.code_hash, _hash_code(code)):
         record.attempts += 1
         db.commit()
         remaining = _MAX_ATTEMPTS - record.attempts

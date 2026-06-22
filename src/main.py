@@ -29,7 +29,7 @@ def _init_sentry() -> None:
             ],
             environment="production" if is_prod() else "development",
             traces_sample_rate=0.1,
-            send_default_pii=True,
+            send_default_pii=False,
         )
         logger.info("Sentry initialized (env=%s)", "production" if is_prod() else "development")
     except Exception as exc:
@@ -68,8 +68,8 @@ app.add_middleware(
   CORSMiddleware,
   allow_origins=allow_origins,
   allow_credentials=True,
-  allow_methods=["*"],
-  allow_headers=["*"],
+  allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+  allow_headers=["Content-Type", "Authorization"],
 )
 
 app.include_router(auth.router)

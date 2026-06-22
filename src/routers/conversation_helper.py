@@ -1,10 +1,11 @@
 import asyncio
 import hashlib
+import ipaddress
 import os
 import re
 import xml.etree.ElementTree as ET
 from typing import Any, Awaitable, Callable, Dict, Optional
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlparse
 import httpx
 import logging
 import wikipediaapi
@@ -18,6 +19,39 @@ from src.xml_to_source import pubmed_article_xml_to_source
 StageEmitter = Callable[[str, Dict[str, Any]], Awaitable[None]]
 
 _URL_RE = re.compile(r'https?://\S+', re.IGNORECASE)
+
+_PRIVATE_NETS = [
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("169.254.0.0/16"),
+    ipaddress.ip_network("0.0.0.0/8"),
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("fc00::/7"),
+    ipaddress.ip_network("fe80::/10"),
+]
+_BLOCKED_HOSTS = frozenset({"localhost", "localhost."})
+_MAX_MESSAGE_URLS = 3
+
+
+def _is_safe_url(url: str) -> bool:
+    """Return True only for http/https URLs that don't target private/internal networks."""
+    try:
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            return False
+        host = (parsed.hostname or "").lower()
+        if not host or host in _BLOCKED_HOSTS:
+            return False
+        try:
+            addr = ipaddress.ip_address(host)
+            return not any(addr in net for net in _PRIVATE_NETS)
+        except ValueError:
+            return True
+    except Exception:
+        return False
+
 
 _SPAM_RE = re.compile(
     r'(?i)(\bxxx\b|sex\s*(?:tape|video|videos?)\b|'
@@ -33,15 +67,17 @@ def _filter_url_terms(terms: list[str]) -> list[str]:
 
 
 def _extract_urls_from_texts(texts: list[str]) -> list[str]:
-    """Return unique URLs found across a list of message texts."""
+    """Return unique, safe URLs found across a list of message texts (max _MAX_MESSAGE_URLS)."""
     seen: set[str] = set()
     out: list[str] = []
     for text in texts:
         for url in _URL_RE.findall(text):
             url = url.rstrip('.,;:!?)')
-            if url not in seen:
+            if url not in seen and _is_safe_url(url):
                 seen.add(url)
                 out.append(url)
+                if len(out) >= _MAX_MESSAGE_URLS:
+                    return out
     return out
 
 

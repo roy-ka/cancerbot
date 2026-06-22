@@ -153,11 +153,11 @@ class TestMessageRepository:
 
 
 class TestPasswordResetRepository:
-    def test_create_reset_code_returns_six_digit_string(self, db_session, test_user):
+    def test_create_reset_code_returns_eight_char_string(self, db_session, test_user):
         code = create_reset_code(db_session, test_user.id)
         assert isinstance(code, str)
-        assert code.isdigit()
-        assert len(code) == 6
+        assert code.isalnum()
+        assert len(code) == 8
 
     def test_create_reset_code_invalidates_previous_code(self, db_session, test_user):
         code1 = create_reset_code(db_session, test_user.id)

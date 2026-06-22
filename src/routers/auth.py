@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from src.deps.db import get_db
 from src.auth.security import SecurityUtils
 from src.deps.auth import get_current_user
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 from datetime import timedelta, datetime, timezone
 import re
 import logging
@@ -32,11 +32,11 @@ PASSWORD_REGEX_PATTERNS = {
 
 class CreateUserRequest(BaseModel):
     name: str
-    email: str
+    email: EmailStr
     password: str
-    
+
 class LoginRequest(BaseModel):
-    email: str
+    email: EmailStr
     password: str
     rememberMe: bool = False
 
@@ -91,23 +91,14 @@ async def generate_token(req: LoginRequest, response: Response, db: Session = De
     user = get_user_by_email(db=db, email=req.email)
     logging.info(f"Login attempt for email: {req.email}")
 
-    if not user:
+    if not user or not SecurityUtils.verify_password(req.password, user.password_hash):
         attempt = increment_failed_attempts(db, req.email)
         if attempt.failed_attempts >= 5:
             raise HTTPException(
                 status_code=429,
                 detail="Too many failed login attempts. Account locked. Please reset your password."
             )
-        raise HTTPException(status_code=401, detail="Wrong email")
-
-    if not SecurityUtils.verify_password(req.password, user.password_hash):
-        attempt = increment_failed_attempts(db, req.email)
-        if attempt.failed_attempts >= 5:
-            raise HTTPException(
-                status_code=429,
-                detail="Too many failed login attempts. Account locked. Please reset your password."
-            )
-        raise HTTPException(status_code=401, detail="Incorrect password")
+        raise HTTPException(status_code=401, detail="Invalid email or password")
 
     reset_failed_attempts(db, req.email)
     update_last_login(db=db, user=user)
@@ -132,7 +123,7 @@ async def generate_token(req: LoginRequest, response: Response, db: Session = De
         max_age=max_age,
         path="/",
     )
-    return {"access_token": access_token, "token_type": "bearer"}
+    return {"token_type": "bearer"}
 
 @router.get("/check/")
 async def check_auth(current_user=Depends(get_current_user)):
@@ -177,8 +168,9 @@ async def reset_password(req: ResetPasswordRequest, db: Session = Depends(get_db
     if not ok:
         raise HTTPException(status_code=400, detail=error)
 
-    if len(req.new_password) < 6:
-        raise HTTPException(status_code=400, detail="Password must be at least 6 characters.")
+    password_error = validate_password(req.new_password)
+    if password_error:
+        raise HTTPException(status_code=400, detail=password_error)
 
     user.password_hash = SecurityUtils.hash_password(req.new_password)
     db.commit()

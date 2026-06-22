@@ -21,7 +21,7 @@ async def health_check(db: Session = Depends(get_db)):
         checks["database"] = {"status": "ok"}
     except Exception as e:
         logger.error(f"Database health check failed: {e}")
-        checks["database"] = {"status": "error", "message": str(e)}
+        checks["database"] = {"status": "error"}
         overall_ok = False
 
     try:
@@ -32,11 +32,11 @@ async def health_check(db: Session = Depends(get_db)):
         if models:
             checks["ollama"] = {"status": "ok", "models": len(models)}
         else:
-            checks["ollama"] = {"status": "error", "message": "No models available"}
+            checks["ollama"] = {"status": "error"}
             overall_ok = False
     except Exception as e:
         logger.error(f"Ollama health check failed: {e}")
-        checks["ollama"] = {"status": "error", "message": str(e)}
+        checks["ollama"] = {"status": "error"}
         overall_ok = False
 
     status_code = 200 if overall_ok else 503
