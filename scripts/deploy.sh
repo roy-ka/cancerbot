@@ -80,14 +80,14 @@ if ! command -v alembic &> /dev/null; then
   echo "⚠ Warning: alembic not found in PATH (will run inside Docker)"
 fi
 
-# Check disk space (needs >2GB free)
+# Check disk space (needs >100GB free)
 DISK_AVAILABLE=$(df -BG "$PROJECT_DIR" | awk 'NR==2 {print $(NF-2)}' | sed 's/G$//')
-if [ "$DISK_AVAILABLE" -lt 2 ]; then
+if [ "$DISK_AVAILABLE" -lt 100 ]; then
   echo "⚠ Low disk space (${DISK_AVAILABLE}GB). Running Docker cleanup..."
   docker system prune -a -f --volumes 2>/dev/null || true
   DISK_AVAILABLE=$(df -BG "$PROJECT_DIR" | awk 'NR==2 {print $(NF-2)}' | sed 's/G$//')
-  if [ "$DISK_AVAILABLE" -lt 2 ]; then
-    echo "✗ Error: Still not enough disk space after cleanup. Required: 2GB, Available: ${DISK_AVAILABLE}GB"
+  if [ "$DISK_AVAILABLE" -lt 100 ]; then
+    echo "✗ Error: Still not enough disk space after cleanup. Required: 100GB, Available: ${DISK_AVAILABLE}GB"
     exit 1
   fi
   echo "✓ Disk space recovered (${DISK_AVAILABLE}GB available)"
