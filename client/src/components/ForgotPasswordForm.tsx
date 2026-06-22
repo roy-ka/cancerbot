@@ -15,7 +15,7 @@ export default function ForgotPasswordForm({
 }: {
   onBack: () => void
 }) {
-  const BASE_URL = import.meta.env.VITE_BASE_URL
+  const BASE_URL = import.meta.env.VITE_BASE_URL || ''
   const [step, setStep] = useState<Step>('email')
   const [email, setEmail] = useState('')
   const [code, setCode] = useState('')

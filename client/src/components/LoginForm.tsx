@@ -23,7 +23,7 @@ export default function LoginForm({
   const navigate = useNavigate()
 
   const login = async (payload: LoginPayload) => {
-    const BASE_URL = import.meta.env.VITE_BASE_URL
+    const BASE_URL = import.meta.env.VITE_BASE_URL || ''
 
     const res = await fetch(`${BASE_URL}/auth/login/`, {
       method: 'POST',
