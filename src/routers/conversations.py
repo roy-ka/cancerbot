@@ -217,7 +217,7 @@ async def _process_post_message(
             top_score=metrics.get('top_score'),
             avg_score=metrics.get('avg_score'),
             min_score=metrics.get('min_score'),
-            sufficient_evidence=1 if not response.startswith('Insufficient evidence in provided context.') else 0,
+            sufficient_evidence=1 if not response.startswith("I couldn't find relevant data in my searches") else 0,
             fallback_triggered=0,
         )
         db.add(analytic)
