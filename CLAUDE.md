@@ -85,6 +85,9 @@ bash scripts/daily_backup.sh  # Cron-friendly wrapper for backup
 | PostgreSQL | Docker | 5432 | |
 | Ollama | Docker | 11434 | |
 
+### New Conversation Flow
+Frontend first calls `POST /conversations/create/` (lightweight DB-only, returns `{id, title}`), then immediately opens a WebSocket to `/conversations/{id}/add_message/ws`. This ensures stage events fire from the very start instead of the UI freezing on `loading_conversation`.
+
 ### Chat Query Flow
 1. User message arrives via WebSocket (`/conversations/{id}/add_message/ws`) or HTTP POST (`/conversations/{id}/add_message`)
 2. User message is saved to PostgreSQL
@@ -146,11 +149,11 @@ OPENSEARCH_INITIAL_ADMIN_PASSWORD=...
 OLLAMA_URL=http://localhost:11434       # used in dev
 OLLAMA_URL_PROD=http://...             # used in prod (is_prod() check)
 EMBED_MODEL_NAME=nomic-embed-text
-GEN_MODEL_NAME=llama3.1:8b
-OLLAMA_NUM_CTX=1536
-OLLAMA_NUM_PREDICT=256
-OLLAMA_CONTEXT_ITEMS=6                 # Number of context chunks sent to LLM
-OLLAMA_EVIDENCE_CHARS=900              # Max chars per evidence chunk
+GEN_MODEL_NAME=llama3.1:8b             # do NOT wrap in quotes — dotenv includes them literally
+OLLAMA_NUM_CTX=1536                    # context window tokens
+OLLAMA_NUM_PREDICT=512                 # max tokens to generate (256 cuts answers short)
+OLLAMA_CONTEXT_ITEMS=6                 # number of context chunks sent to LLM
+OLLAMA_EVIDENCE_CHARS=900              # max chars per evidence chunk
 
 # PostgreSQL
 POSTGRES_USER=cancerbot
@@ -191,5 +194,22 @@ In-process scispaCy (`en_core_sci_sm`) module loaded at startup via `load_models
 
 ### Routers (`src/routers/`)
 - `auth.py` — registration, login, password reset
-- `conversations.py` — CRUD + WebSocket message handling
+- `conversations.py` — CRUD + WebSocket message handling; includes `POST /conversations/create/`
 - `health.py` — health check endpoint
+
+### Conversation Ordering
+Conversations are sorted by `max(message.created_at)` across all roles (see `get_conversations_list_by_user_id` in `src/db/repositories/conversations.py`). `Conversation.updated_at` is **not** bumped when messages are added — do not rely on it for recency ordering.
+
+### OpenSearch — Production SSL
+In production with self-signed certs, `verify_certs=False` alone is insufficient (newer urllib3 still validates). `src/retrieval/db_connector.py` explicitly builds an `ssl.CERT_NONE` context when `is_prod() and not verify_certs`. Do not remove this — it is required for the prod OpenSearch cluster.
+
+### Migrations — Idempotency Pattern
+New migrations that create tables or indexes must use raw SQL with `IF NOT EXISTS` via `op.execute()`, not `op.create_table()` / `op.create_index()`. This avoids `DuplicateTable` errors when revision IDs change between deploys. See `add_bug_reports_table_001.py` as the canonical example.
+
+### Sentry
+Initialised in `src/main.py` with `enable_logs=True` — standard Python `logging` calls at INFO+ are forwarded to Sentry Logs (Explore → Logs). `LoggingIntegration(event_level=logging.ERROR)` creates Sentry Issues for ERROR+. No custom bridge handler is needed. The nginx CSP must include `https://*.ingest.de.sentry.io https://*.ingest.sentry.io` in `connect-src` (already set in `nginx.conf`).
+
+### Deploy Script (`scripts/deploy.sh`)
+- Checks disk free ≥ 100GB before building; runs `docker system prune` and re-checks if low
+- Skips `alembic upgrade heads` if `alembic current` already shows `(head)` — avoids 4 unnecessary Docker container spawns per deploy
+- Prints git commit hash in the success summary
