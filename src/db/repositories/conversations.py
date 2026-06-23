@@ -74,6 +74,17 @@ def soft_delete_conversation(db, conversation_id, user_id):
 
 
 def get_conversations_list_by_user_id(db, user_id, limit=10):
+  # Subquery: latest message timestamp per conversation (any role)
+  last_msg_ts_sq = (
+    db.query(
+      Message.conversation_id.label('conversation_id'),
+      func.max(Message.created_at).label('last_created_at'),
+    )
+    .group_by(Message.conversation_id)
+    .subquery()
+  )
+
+  # Subquery: latest user message timestamp per conversation (for display)
   last_user_ts_sq = (
     db.query(
       Message.conversation_id.label('conversation_id'),
@@ -92,6 +103,7 @@ def get_conversations_list_by_user_id(db, user_id, limit=10):
       Conversation.user_id == user_id,
       Conversation.deleted_at.is_(None),
     )
+    .outerjoin(last_msg_ts_sq, last_msg_ts_sq.c.conversation_id == Conversation.id)
     .outerjoin(last_user_ts_sq, last_user_ts_sq.c.conversation_id == Conversation.id)
     .outerjoin(
       LastMsg,
@@ -101,7 +113,7 @@ def get_conversations_list_by_user_id(db, user_id, limit=10):
         LastMsg.created_at == last_user_ts_sq.c.last_created_at,
       ),
     )
-    .order_by(Conversation.updated_at.desc())
+    .order_by(last_msg_ts_sq.c.last_created_at.desc().nullslast())
     .limit(limit)
     .all()
   )
