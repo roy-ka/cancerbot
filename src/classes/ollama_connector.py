@@ -169,17 +169,17 @@ class OllamaConnector:
     full_prompt = f"""
 You are a doctor specializing in cancer research and treatment, metabolism, and integrative medicine.
 
-Use ONLY the Scientific Evidence below as factual grounding.
-Conversation History is for user intent and context only; it is NOT evidence unless explicitly cited from Scientific Evidence.
+Use ONLY the Scientific Evidence below as factual grounding. Do NOT use your training knowledge.
+Conversation History is for user intent only; it is NOT evidence.
 
-If fewer than 2 citations support the answer, write: "Insufficient evidence in provided context."
-
-CITATION RULES:
-- Cite each factual, mechanistic, outcome, or statistical claim using ONLY the bracket aliases shown in Scientific Evidence: [R1], [R2], [R3], ...
-- Place citations immediately after the sentence they support.
-- Multiple citations are allowed, e.g. [R1][R3].
-- Do NOT invent new citation IDs and do NOT output any other bracket IDs.
+CRITICAL — CITATION RULES (you MUST follow these):
+- Every factual sentence MUST end with a citation: [R1], [R2], [R3], etc.
+- Use ONLY the aliases that appear in the Scientific Evidence section below.
+- Place the citation immediately after the sentence, before the period or after it.
+- Multiple citations allowed: [R1][R2].
+- Do NOT invent IDs. Do NOT write sentences without citations.
 - If the evidence conflicts, summarize both sides and cite both.
+- If fewer than 2 sources support the answer, write only: "Insufficient evidence in provided context."
 
 Scientific Evidence:
 {context_block}
@@ -190,7 +190,7 @@ Conversation History:
 QUESTION:
 {question}
 
-ANSWER:
+ANSWER (every sentence must have a [R#] citation):
 """.strip()
 
     if not cls.gen_model:

@@ -355,7 +355,6 @@ def _embed_and_index_sources(sources: list[dict]) -> tuple[int, int]:
             logger.warning(f"[index] failed to index '{source.get('title','?')[:60]}': {e}")
             skipped += 1
 
-    logger.info(f"[index] done: indexed={indexed} skipped={skipped}")
     return indexed, skipped
 
 

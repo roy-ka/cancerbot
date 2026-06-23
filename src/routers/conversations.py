@@ -126,7 +126,6 @@ async def _process_post_message(
 
     await emit('fallback_triggered', {'reason': 'always_search_external'})
     search_meta = await search_and_embed(conversation, emit=emit)
-    logging.info(f"[conversation] External search and indexing complete: indexed={search_meta.get('indexed')}, skipped={search_meta.get('skipped')}")
 
     # Record external search results using the current db session
     external_data = search_meta.get('external_search_data', {})
@@ -162,8 +161,8 @@ async def _process_post_message(
                 )
                 db.add(record)
             db.commit()
-        except Exception as e:
-            logging.error(f"[conversation] Failed to record external search results: {type(e).__name__}: {e}")
+        except Exception:
+            logging.exception("[conversation] Failed to record external search results")
             db.rollback()
 
     await emit('retrieving_context', {})
@@ -223,8 +222,8 @@ async def _process_post_message(
         )
         db.add(analytic)
         db.commit()
-    except Exception as e:
-        logging.error(f"[analytics] failed to record: {type(e).__name__}: {e}")
+    except Exception:
+        logging.exception("[analytics] failed to record")
         db.rollback()
     await emit('saving_assistant_message', {})
 

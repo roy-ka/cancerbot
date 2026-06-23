@@ -201,6 +201,7 @@ export default function Chat() {
               return updated
             })
           }
+          ws.close()
         } else if (msg.type === 'error') {
           setCurrentStage(null)
           setMessages((prev) => prev.filter((m) => !m.id?.startsWith('temp-')))
