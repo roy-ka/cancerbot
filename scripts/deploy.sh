@@ -430,21 +430,24 @@ fi
 # Run Alembic migrations in a one-off container before the backend starts.
 echo ""
 echo "Running Alembic migrations..."
+CURRENT_OUT=$(_alembic alembic current 2>&1)
 echo "  Current revision:"
-_alembic alembic current || true
+echo "$CURRENT_OUT"
 
-echo "  Pending migrations:"
-_alembic alembic history --indicate-current || true
-
-echo "  Applying migrations..."
-if _alembic alembic upgrade heads; then
+if echo "$CURRENT_OUT" | grep -q "(head)"; then
+  echo "✓ Database already at head, no migrations needed"
   MIGRATIONS_APPLIED=true
-  echo "  Revision after upgrade:"
-  _alembic alembic current || true
-  echo "✓ Alembic migrations completed"
 else
-  echo "✗ Alembic migrations failed"
-  exit 1
+  echo "  Applying migrations..."
+  if _alembic alembic upgrade heads; then
+    MIGRATIONS_APPLIED=true
+    echo "  Revision after upgrade:"
+    _alembic alembic current || true
+    echo "✓ Alembic migrations completed"
+  else
+    echo "✗ Alembic migrations failed"
+    exit 1
+  fi
 fi
 
 # Now start the backend and other prod-profile services
