@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Alert, Box, Grid, Snackbar } from '@mui/material'
 import { useNavigate } from 'react-router-dom'
 import ConversationList from '../components/ConversationList'
@@ -20,6 +20,10 @@ export default function Chat() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [currentStage, setCurrentStage] = useState<string | null>(null)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
+  // When a new conversation is created and the WS is in-flight, skip the
+  // message fetch triggered by setSelectedConversationId so the optimistic
+  // message is not wiped before the WS final response arrives.
+  const skipFetchForConvRef = useRef<string | null>(null)
 
   const setSelectedConversationIdWithClose = (id: string | React.SetStateAction<string>) => {
     setSelectedConversationId(id)
@@ -68,6 +72,12 @@ export default function Chat() {
         setMessages((prev) => (prev.length === 0 ? prev : []))
         setNextBefore(null)
         setIsLoadingOlder(false)
+        return
+      }
+
+      // Skip fetch for a newly-created conversation while the WS is in-flight
+      if (skipFetchForConvRef.current === selectedConversationId) {
+        skipFetchForConvRef.current = null
         return
       }
 
@@ -244,6 +254,7 @@ export default function Chat() {
           return res.json()
         })
         .then((conv) => {
+          skipFetchForConvRef.current = conv.id
           setConversations((prev) => [conv, ...prev])
           setSelectedConversationId(conv.id)
           sendViaWebSocket(conv.id, { ...optimisticMessage, conversationId: conv.id })
