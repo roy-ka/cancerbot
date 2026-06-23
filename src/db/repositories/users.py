@@ -8,7 +8,6 @@ def create_user(db, name, email, password_hash):
     email=email,
     password_hash=password_hash
   )
-  logging.info(f"Creating user {name} with email {email}")
   db.add(new_user)
   db.commit()
   return new_user

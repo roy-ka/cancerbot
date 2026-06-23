@@ -88,7 +88,6 @@ def add_message(db, conversation_id, role, content, sources_ids='', urls=None):
     sources_ids=sources_ids if sources_ids else None,
     urls=urls if urls else None,
   )
-  logging.info(f"Adding message to conversation {conversation_id} with role {role}")
   db.add(new_message)
   db.commit()
 

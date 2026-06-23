@@ -137,13 +137,11 @@ def _stable_source_id(source: dict) -> str:
 
 async def _extract_terms_from_message(text: str) -> list[str]:
     from src.nlp import extract_terms
-    logger.info(f"[nlp] extract_terms_from_message: text_len={len(text or '')}")
     try:
         result = await extract_terms(text or "")
-        logger.info(f"[nlp] extract_terms_from_message: {len(result)} terms: {result[:10]}")
         return result
     except Exception as e:
-        logger.error(f"[nlp] extract_terms_from_message: {type(e).__name__}: {e}")
+        logger.error(f"[nlp] extract_terms failed: {type(e).__name__}: {e}")
         return []
 
 
@@ -152,7 +150,6 @@ async def _search_pubmed_sources(client: httpx.AsyncClient, terms: list[str], ma
         return []
 
     search_query = " OR ".join(f"({t})" for t in terms[:12])
-    logger.info(f"[pubmed] searching terms={terms[:5]} query='{search_query[:120]}'")
 
     esearch_url = (
         "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
@@ -166,8 +163,6 @@ async def _search_pubmed_sources(client: httpx.AsyncClient, terms: list[str], ma
     except Exception as e:
         logger.warning(f"[pubmed] esearch failed: {e}")
         return []
-
-    logger.info(f"[pubmed] esearch returned {len(id_list)} ids: {id_list}")
 
     if not id_list:
         return []
@@ -199,7 +194,7 @@ async def _search_pubmed_sources(client: httpx.AsyncClient, terms: list[str], ma
         if len(out) >= max_results:
             break
 
-    logger.info(f"[pubmed] fetched {len(out)} articles: {[s.get('pmid') or s.get('title','?')[:60] for s in out]}")
+    logger.info(f"[pubmed] fetched {len(out)} articles")
     return out
 
 
@@ -208,7 +203,6 @@ async def _search_crossref_sources(client: httpx.AsyncClient, terms: list[str], 
         return []
 
     query = " ".join(terms[:12])
-    logger.info(f"[crossref] searching query='{query[:120]}'")
 
     url = "https://api.crossref.org/works"
     params = {
@@ -253,7 +247,7 @@ async def _search_crossref_sources(client: httpx.AsyncClient, terms: list[str], 
         if len(out) >= max_results:
             break
 
-    logger.info(f"[crossref] fetched {len(out)} items: {[s.get('doi') or s.get('title','?')[:60] for s in out]}")
+    logger.info(f"[crossref] fetched {len(out)} items")
     return out
 
 
@@ -268,8 +262,6 @@ async def _search_wikipedia_sources(terms: list[str], max_results: int = 3) -> l
     if not terms:
         return []
 
-    logger.info(f"[wikipedia] searching terms={terms[:5]}")
-
     def _fetch() -> list[dict]:
         out: list[dict] = []
         seen: set[str] = set()
@@ -277,19 +269,15 @@ async def _search_wikipedia_sources(terms: list[str], max_results: int = 3) -> l
             if len(out) >= max_results:
                 break
             try:
-                logger.debug(f"[wikipedia] fetching page for term='{term}'")
                 page = _wiki.page(term)
                 if not page.exists():
-                    logger.debug(f"[wikipedia] page not found for term='{term}'")
                     continue
                 if page.title in seen:
                     continue
                 seen.add(page.title)
                 summary = (page.summary or "").strip()
                 if len(summary) < 80:
-                    logger.debug(f"[wikipedia] page '{page.title}' summary too short ({len(summary)} chars), skipping")
                     continue
-                logger.info(f"[wikipedia] found page='{page.title}' url={page.fullurl}")
                 out.append(
                     {
                         "source_type": "wikipedia",
@@ -303,10 +291,10 @@ async def _search_wikipedia_sources(terms: list[str], max_results: int = 3) -> l
                     }
                 )
             except Exception as e:
-                logger.warning(f"[wikipedia] error fetching term='{term}': {e}")
+                logger.warning(f"[wikipedia] error for term='{term}': {e}")
                 continue
 
-        logger.info(f"[wikipedia] done: fetched {len(out)} pages")
+        logger.info(f"[wikipedia] fetched {len(out)} pages")
         return out
 
     return await asyncio.to_thread(_fetch)
@@ -316,7 +304,6 @@ def _embed_and_index_sources(sources: list[dict]) -> tuple[int, int]:
     if not sources:
         return 0, 0
 
-    logger.info(f"[index] embedding and indexing {len(sources)} sources")
     db = dbConnector()
     db.create_index("sources_index")
     indexed = 0
@@ -341,8 +328,6 @@ def _embed_and_index_sources(sources: list[dict]) -> tuple[int, int]:
 
     # Check which IDs already exist in OpenSearch
     already_indexed = db.existing_source_ids([sid for sid, _ in candidate])
-    if already_indexed:
-        logger.info(f"[index] {len(already_indexed)} sources already in index, skipping: {list(already_indexed)}")
 
     for source_id, source in candidate:
         if source_id in already_indexed:
@@ -365,10 +350,9 @@ def _embed_and_index_sources(sources: list[dict]) -> tuple[int, int]:
                 "embedding": OllamaConnector.embed_text(content),
             }
             db.index_to_db("sources_index", doc)
-            logger.info(f"[index] indexed id={source_id} title='{source.get('title','?')[:60]}' type={source.get('source_type')}")
             indexed += 1
         except Exception as e:
-            logger.warning(f"[index] failed to index source '{source.get('title','?')[:60]}': {e}")
+            logger.warning(f"[index] failed to index '{source.get('title','?')[:60]}': {e}")
             skipped += 1
 
     logger.info(f"[index] done: indexed={indexed} skipped={skipped}")
@@ -379,9 +363,7 @@ async def search_and_embed(
     conversation,
     emit: StageEmitter = _emit_noop,
 ) -> dict[str, Any]:
-    logger.info(f"[search_and_embed] Starting search_and_embed for conversation")
     messages = list(getattr(conversation, "messages", []) or [])
-    logger.info(f"[search_and_embed] Loaded {len(messages)} messages from conversation")
 
     # Get the last 4 messages
     last_messages = messages[-4:]
@@ -406,23 +388,13 @@ async def search_and_embed(
         msg_terms = getattr(msg, 'extracted_terms', None)
         if msg_terms and isinstance(msg_terms, list):
             stored_terms.extend(msg_terms)
-            logger.debug(f"[search_and_embed] Message {msg.id}: found {len(msg_terms)} stored terms")
-        else:
-            logger.debug(f"[search_and_embed] Message {msg.id}: no stored terms")
-
     stored_terms = _dedupe_terms(stored_terms)
-    logger.info(f"[search_and_embed] Loaded {len(stored_terms)} stored terms from recent messages: {stored_terms[:10]}")
 
     # Use stored terms if available, otherwise extract them
     if stored_terms:
         terms = stored_terms
-        logger.info(f"[search_and_embed] Using {len(terms)} stored terms for search")
     else:
-        # Fallback: extract terms from recent messages if no stored terms
-        logger.warning(f"[search_and_embed] No stored terms found, falling back to extraction")
-
         await emit("extracting_search_terms", {"source": "nlp"})
-        logger.info(f"[nlp] Extracting scientific terms from {len(message_texts)} messages")
 
         term_results = await asyncio.gather(
             *[_extract_terms_from_message(text) for text in message_texts],
@@ -432,16 +404,14 @@ async def search_and_embed(
         terms: list[str] = []
         for i, result in enumerate(term_results):
             if isinstance(result, Exception):
-                logger.warning(f"[nlp] Term extraction for message {i} failed: {result}")
+                logger.warning(f"[nlp] term extraction failed for message {i}: {result}")
             else:
-                logger.info(f"[nlp] Message {i}: extracted {len(result)} terms: {result[:5]}")
                 terms.extend(result)
 
         terms = _dedupe_terms(terms)
-        logger.info(f"[nlp] Combined and deduped: {len(terms)} total unique terms: {terms[:10]}")
 
         if not terms:
-            logger.warning(f"[nlp] No terms extracted, falling back to simple word extraction")
+            logger.warning("[nlp] no terms extracted, falling back to word extraction")
             fallback_terms = []
             for text in message_texts:
                 words = text.split()
@@ -457,27 +427,23 @@ async def search_and_embed(
                 }]
                 fallback_terms.extend(meaningful)
             terms = _dedupe_terms(fallback_terms)
-            logger.info(f"[nlp] Using fallback terms: {len(terms)} terms extracted from text")
 
     # Detect and fetch any URLs found in recent messages
     message_urls = _extract_urls_from_texts(message_texts)
     url_context_items: list[dict] = []  # raw fetch results — returned for direct context injection
     url_sources: list[dict] = []        # converted shape for indexing
     if message_urls:
-        logger.info(f"[search_and_embed] Found {len(message_urls)} URL(s) in messages, fetching content")
         await emit("fetching_urls", {"count": len(message_urls), "urls": message_urls})
         url_context_items = await fetch_url_contents(message_urls)
         url_sources = [_url_fetch_to_source(r) for r in url_context_items]
-        logger.info(f"[search_and_embed] Fetched {len(url_sources)} URL source(s)")
 
     # Strip URL-shaped strings so they are not sent as PubMed/CrossRef/Wikipedia queries
     terms = _filter_url_terms(terms)
-    logger.info(f"[search_and_embed] After URL filtering: {len(terms)} terms for external search")
 
     await emit("terms_ready", {"terms_count": len(terms), "terms": terms[:20]})
 
     if not terms and not url_sources:
-        logger.warning(f"[search_and_embed] No terms or URL sources available, aborting search")
+        logger.warning("[search_and_embed] no terms or URL sources, aborting search")
         return {
             "terms": [],
             "pubmed_found": 0,
@@ -520,20 +486,13 @@ async def search_and_embed(
     last_msg = messages[-1] if messages else None
     msg_id = getattr(last_msg, 'id', None) if last_msg else None
 
-    logger.info(f"[external_search] About to index search results")
-    logger.info(f"[external_search] conversation_id={conv_id}, message_id={msg_id}")
-    logger.info(f"[external_search] original_query={original_query[:100]}")
-    logger.info(f"[external_search] url={len(url_sources)}, pubmed={len(pubmed_sources)}, crossref={len(crossref_sources)}, wikipedia={len(wikipedia_sources)}")
+    logger.info(f"[search] pubmed={len(pubmed_sources)} crossref={len(crossref_sources)} wikipedia={len(wikipedia_sources)} url={len(url_sources)}")
 
     merged_sources = [*url_sources, *pubmed_sources, *crossref_sources, *wikipedia_sources]
     await emit("embedding_and_indexing_sources", {"total_sources": len(merged_sources)})
     indexed, skipped = await asyncio.to_thread(_embed_and_index_sources, merged_sources)
-    await emit(
-        "sources_indexed",
-        {"indexed": indexed, "skipped": skipped},
-    )
-
-    logger.info(f"[external_search] Indexed: total_indexed={indexed}, total_skipped={skipped}")
+    await emit("sources_indexed", {"indexed": indexed, "skipped": skipped})
+    logger.info(f"[search] indexed={indexed} skipped={skipped}")
 
     return {
         "terms": terms,

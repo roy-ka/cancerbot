@@ -17,7 +17,6 @@ def get_field_from_results(results: list, field: str) -> list:
       val = x.get(field)
     if isinstance(val, str) and val.strip():
       extracted.append(val)
-  logger.info(f"get_field_from_results: extracted {len(extracted)} results for field={field}")
   return extracted
 
 

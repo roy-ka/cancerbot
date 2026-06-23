@@ -80,8 +80,7 @@ async def _process_post_message(
 ):
     t0 = time.time()
 
-    logging.info(f"[conversation] Processing message for conversation {conversation_id}, user {current_user.id}")
-    logging.info(f"[conversation] Message content: {req.content[:100]}")
+    logging.info(f"[conversation] msg conversation_id={conversation_id} user={current_user.id}")
 
     await emit('loading_conversation', {'conversation_id': str(conversation_id)})
 
@@ -97,7 +96,6 @@ async def _process_post_message(
     if str(conversation.user_id) != str(current_user.id):
         raise HTTPException(status_code=403, detail="Forbidden")
 
-    logging.info(f"[conversation] Conversation verified, conversation_id={conversation.id}")
     await emit('saving_user_message', {})
 
     try:
@@ -122,9 +120,8 @@ async def _process_post_message(
         user_message.extracted_terms = extracted_terms if extracted_terms else None
         db.add(user_message)
         db.commit()
-        logging.info(f"[conversation] Extracted and saved {len(extracted_terms)} terms for message {user_message.id}")
     except Exception as e:
-        logging.warning(f"[conversation] Failed to extract terms for message: {type(e).__name__}: {e}")
+        logging.warning(f"[conversation] term extraction failed: {type(e).__name__}: {e}")
         db.rollback()
 
     await emit('fallback_triggered', {'reason': 'always_search_external'})
@@ -143,7 +140,6 @@ async def _process_post_message(
 
             for source_type in ['pubmed', 'crossref', 'wikipedia']:
                 results = external_data.get(f'{source_type}_sources', [])
-                logging.info(f"[conversation] Recording external search: {source_type}={len(results)} results")
 
                 top_title = None
                 top_url = None
@@ -166,11 +162,8 @@ async def _process_post_message(
                 )
                 db.add(record)
             db.commit()
-            logging.info(f"[conversation] Successfully recorded external search results")
         except Exception as e:
             logging.error(f"[conversation] Failed to record external search results: {type(e).__name__}: {e}")
-            import traceback
-            logging.error(f"[conversation] Traceback: {traceback.format_exc()}")
             db.rollback()
 
     await emit('retrieving_context', {})
@@ -184,48 +177,39 @@ async def _process_post_message(
         first_title = (url_context_items[0].get('title') or '').strip()
         if first_title and first_title != req.content:
             retrieval_query = first_title
-            logging.info(f"[conversation] Using URL page title as retrieval query: {retrieval_query[:120]}")
 
-    logging.info(f"[conversation] Retrieving context for query: {retrieval_query[:100]}")
     context = await asyncio.to_thread(run_retrieval, retrieval_query)
-    logging.info(f"[conversation] Retrieved {len(context.get('sources_ids', []))} sources, {len(context.get('claims_ids', []))} claims")
+    logging.info(f"[conversation] retrieved sources={len(context.get('sources_ids', []))} url_ctx={len(url_context_items)}")
 
     # Prepend URL context items (fetched from message content) directly to generation context
     if url_context_items:
-        logging.info(f"[conversation] Prepending {len(url_context_items)} URL source(s) from message to context")
         context['generation_context'] = url_context_items + context['generation_context']
         context['sources_ids'] = [item['id'] for item in url_context_items] + context.get('sources_ids', [])
 
     if req.urls:
-        logging.info(f"[conversation] Fetching {len(req.urls)} user-provided URL(s)")
         url_items = await fetch_url_contents(req.urls)
         if url_items:
-            logging.info(f"[conversation] Fetched {len(url_items)} URL(s) successfully, prepending to context")
             context['generation_context'] = url_items + context['generation_context']
             context['sources_ids'] = [item['id'] for item in url_items] + context.get('sources_ids', [])
 
     max_history = int(os.getenv('PROMPT_MAX_HISTORY', '8'))
     history = get_recent_messages(db, conversation.id, limit=max_history)
-    logging.info(f"[conversation] Loaded {len(history)} history messages")
 
     await emit('building_prompt', {'history_messages': len(history)})
     await emit('generating_answer', {})
 
-    logging.info(f"[conversation] Generating answer with {len(context.get('generation_context', ''))} chars of context")
     response = await asyncio.to_thread(
         OllamaConnector.generate_text,
         context=context["generation_context"],
         question=req.content,
         history=history,
     )
-    logging.info(f"[conversation] Generated response: {response[:100]}")
+    logging.info(f"[conversation] answer generated took={int((time.time()-t0)*1000)}ms")
 
     # Record analytics for search
     try:
         from src.db.models import SearchAnalytic
         metrics = context.get('search_metrics', {})
-        logging.info(f"[analytics] Recording search analytics: conversation_id={conversation.id}, message_id={user_message.id}")
-        logging.info(f"[analytics] Metrics from context: {metrics}")
         analytic = SearchAnalytic(
             conversation_id=conversation.id,
             message_id=user_message.id,
@@ -237,14 +221,10 @@ async def _process_post_message(
             sufficient_evidence=1 if not response.startswith('Insufficient evidence in provided context.') else 0,
             fallback_triggered=0,
         )
-        logging.info(f"[analytics] Created SearchAnalytic: result_count={analytic.result_count}, top_score={analytic.top_score}")
         db.add(analytic)
         db.commit()
-        logging.info(f"[analytics] Successfully recorded search analytics")
     except Exception as e:
-        logging.error(f"[analytics] Failed to record analytics: {type(e).__name__}: {e}")
-        import traceback
-        logging.error(f"[analytics] Traceback: {traceback.format_exc()}")
+        logging.error(f"[analytics] failed to record: {type(e).__name__}: {e}")
         db.rollback()
     await emit('saving_assistant_message', {})
 
@@ -295,7 +275,6 @@ async def get_user_conversations(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    logging.info(f"Fetching conversations for user_id: {current_user.id} with limit: {limit}")
     conversations = get_conversations_list_by_user_id(
         db=db,
         user_id=current_user.id,
@@ -323,13 +302,6 @@ async def get_conversation_messages(
     limit: int = Query(30, ge=1, le=100),
     before: Optional[str] = Query(None),
 ):
-    logging.info(
-        "Fetching paginated messages for conversation_id: %s limit=%s before=%s",
-        conversation_id,
-        limit,
-        before,
-    )
-
     conversation = get_conversation_by_id(
         db=db,
         conversation_id=conversation_id,
