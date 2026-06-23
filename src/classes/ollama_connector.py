@@ -115,6 +115,8 @@ class OllamaConnector:
     # Compact JSON string for the prompt (stable and token-efficient)
     message_context = json.dumps(message_context_compact, ensure_ascii=False, separators=(',', ':'))
 
+    max_evidence_chars = int(os.getenv('OLLAMA_EVIDENCE_CHARS', '900'))
+
     def render_item(item: Any, i: int) -> str:
       if not isinstance(item, Mapping):
         raise ValueError(
@@ -151,11 +153,14 @@ class OllamaConnector:
         or ''
       )
       text = ' '.join(str(text).split())
+      if len(text) > max_evidence_chars:
+        text = text[:max_evidence_chars] + '…'
 
       # Render ONLY alias + content_for_embedding
       return f"[{alias}] {text}" if text else f"[{alias}]"
 
-    rendered = [render_item(item, i).strip() for i, item in enumerate(context)]
+    max_context_items = int(os.getenv('OLLAMA_CONTEXT_ITEMS', '6'))
+    rendered = [render_item(item, i).strip() for i, item in enumerate(context[:max_context_items])]
     context_block = "\n".join(rendered)
 
     if not context_block.strip():
@@ -192,10 +197,20 @@ ANSWER:
       raise ValueError(
         "GEN_MODEL_NAME is not set. Set it to a chat-capable Ollama model (e.g., llama3.1, qwen2.5)."
       )
+
+    options: dict = {}
+    num_ctx = os.getenv('OLLAMA_NUM_CTX')
+    num_predict = os.getenv('OLLAMA_NUM_PREDICT')
+    if num_ctx:
+      options['num_ctx'] = int(num_ctx)
+    if num_predict:
+      options['num_predict'] = int(num_predict)
+
     response = cls.ollama.generate(
         model=cls.gen_model,
         prompt=full_prompt,
-        stream=False
+        stream=False,
+        options=options or None,
     )
 
     answer = response["response"]
