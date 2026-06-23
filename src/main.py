@@ -23,14 +23,13 @@ def _init_sentry() -> None:
         from sentry_sdk.integrations.logging import LoggingIntegration
         sentry_sdk.init(
             dsn=dsn,
-            # FastAPI, Starlette, SQLAlchemy auto-discovered when installed
             integrations=[
                 LoggingIntegration(level=logging.INFO, event_level=logging.ERROR),
             ],
             environment="production" if is_prod() else "development",
             traces_sample_rate=0.1,
             send_default_pii=False,
-            enable_logs=True,  # forwards INFO+ records to Sentry Logs view
+            enable_logs=True,
         )
         logger.info("Sentry initialized (env=%s)", "production" if is_prod() else "development")
     except Exception as exc:
