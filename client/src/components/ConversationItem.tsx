@@ -24,9 +24,11 @@ export default function ConversationItem({
         <Grid container>
           <Grid size={7}>
             <Typography className="conversation-item-subtitle">
-              {conversation.lastMessage.length > 17
-                ? conversation.lastMessage.substring(0, 17) + '...'
-                : conversation.lastMessage.length}
+              {conversation.lastMessage
+                ? conversation.lastMessage.length > 17
+                  ? conversation.lastMessage.substring(0, 17) + '...'
+                  : conversation.lastMessage
+                : ''}
             </Typography>
           </Grid>
           <Grid size={1}>
