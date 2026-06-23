@@ -196,9 +196,8 @@ export default function Chat() {
             setConversations((prev) => {
               const idx = prev.findIndex((c) => c.id === msg.conversation.id)
               if (idx === -1) return prev
-              const updated = [...prev]
-              updated[idx] = { ...updated[idx], ...msg.conversation }
-              return updated
+              const merged = { ...prev[idx], ...msg.conversation }
+              return [merged, ...prev.filter((_, i) => i !== idx)]
             })
           }
           ws.close()
