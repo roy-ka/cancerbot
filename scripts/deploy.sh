@@ -364,6 +364,32 @@ else
   exit 1
 fi
 
+# Scan Docker images for vulnerabilities
+echo ""
+echo "Scanning Docker images for vulnerabilities..."
+if command -v trivy &>/dev/null; then
+  SCAN_FAILED=false
+  for IMAGE in cancerbot-backend cancerbot-url-classifier; do
+    if docker image inspect "$IMAGE" &>/dev/null; then
+      echo "  Scanning $IMAGE..."
+      if ! trivy image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed --no-progress "$IMAGE"; then
+        echo "✗ Trivy scan failed for $IMAGE — HIGH/CRITICAL vulnerabilities found"
+        SCAN_FAILED=true
+      else
+        echo "✓ $IMAGE passed vulnerability scan"
+      fi
+    else
+      echo "✗ Image $IMAGE not found — cannot scan"
+      SCAN_FAILED=true
+    fi
+  done
+  if [ "$SCAN_FAILED" = true ]; then
+    exit 1
+  fi
+else
+  echo "⚠ Warning: trivy not installed — skipping image scan (install with: apt install trivy)"
+fi
+
 # Conditional database backup - only if postgres is running
 echo ""
 if docker ps --format '{{.Names}}' | grep -q 'cancerbot-postgres'; then

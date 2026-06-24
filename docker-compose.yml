@@ -81,6 +81,12 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /home/appuser/.cache
+    cap_drop:
+      - ALL
     env_file: .env
     environment:
       ENV: production
@@ -107,6 +113,12 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /home/appuser/.cache
+    cap_drop:
+      - ALL
     command: python -m src.workers.url_classifier
     env_file: .env
     environment:
