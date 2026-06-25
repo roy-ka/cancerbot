@@ -20,7 +20,7 @@ from src.db.repositories.conversations import (
 from src.db.repositories.messeges import add_message, add_claims_and_sources, get_messages_by_conversation_id, get_recent_messages
 from uuid import UUID
 from src.retrieval import run_retrieval
-from src.classes.ollama_connector import OllamaConnector
+from src.classes.ollama_connector import OllamaConnector, NO_DATA_RESPONSE
 from src.routers.conversation_helper import _emit_noop, search_and_embed, fetch_url_contents
 
 ROLLS = Literal['user', 'assistant']
@@ -205,6 +205,16 @@ async def _process_post_message(
     )
     logging.info(f"[conversation] answer generated took={int((time.time()-t0)*1000)}ms")
 
+    # If the LLM found no relevant data, still surface the retrieved sources so the
+    # user can follow up themselves — append them as citation tokens the frontend renders.
+    # Use a normalised check (strip + lower) so minor LLM whitespace/case variations still match.
+    _no_data = response.strip().lower().startswith(NO_DATA_RESPONSE.lower())
+    if _no_data:
+        source_ids = context.get('sources_ids', [])
+        if source_ids:
+            citations = ' '.join(f'[{sid}]' for sid in source_ids)
+            response = f"{response}\n\nRelated sources: {citations}"
+
     # Record analytics for search
     try:
         from src.db.models import SearchAnalytic
@@ -217,7 +227,7 @@ async def _process_post_message(
             top_score=metrics.get('top_score'),
             avg_score=metrics.get('avg_score'),
             min_score=metrics.get('min_score'),
-            sufficient_evidence=1 if not response.startswith("I couldn't find relevant data in my searches") else 0,
+            sufficient_evidence=0 if _no_data else 1,
             fallback_triggered=0,
         )
         db.add(analytic)

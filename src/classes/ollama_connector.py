@@ -6,6 +6,8 @@ import json
 from typing import Any, Mapping, Sequence
 from src.db.models import Message
 
+NO_DATA_RESPONSE = "I couldn't find relevant data in my searches."
+
 class _OllamaClientProxy:
   """Lazy proxy for Ollama client initialization."""
   _client = None
@@ -179,7 +181,7 @@ CRITICAL — CITATION RULES (you MUST follow these):
 - Multiple citations allowed: [R1][R2].
 - Do NOT invent IDs. Do NOT write sentences without citations.
 - If the evidence conflicts, summarize both sides and cite both.
-- If fewer than 2 sources support the answer, write only: "I couldn't find relevant data in my searches."
+- If fewer than 2 sources support the answer, write only: "{NO_DATA_RESPONSE}"
 
 Scientific Evidence:
 {context_block}

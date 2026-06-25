@@ -146,10 +146,7 @@ export default function MessageItem({ message }: { message: Message }) {
         parts.push(...renderTextWithLinks(text.slice(lastIndex, group.start), `${message.id}-pre-${lastIndex}`))
       }
 
-      // Add opening bracket (not clickable)
-      parts.push('[')
-
-      // Add citations in group
+      // Resolve citations before pushing brackets — skip the group entirely if none resolve.
       const groupSources: Source[] = []
       const displayTexts: string[] = []
 
@@ -162,6 +159,7 @@ export default function MessageItem({ message }: { message: Message }) {
       }
 
       if (groupSources.length === 1) {
+        parts.push('[')
         parts.push(
           <MessageSourceItem
             key={`${message.id}-${group.start}`}
@@ -169,7 +167,9 @@ export default function MessageItem({ message }: { message: Message }) {
             text={displayTexts[0]}
           />,
         )
+        parts.push(']')
       } else if (groupSources.length > 1) {
+        parts.push('[')
         parts.push(
           <GroupedMessageSourceItem
             key={`${message.id}-${group.start}`}
@@ -177,10 +177,9 @@ export default function MessageItem({ message }: { message: Message }) {
             displayTexts={displayTexts}
           />,
         )
+        parts.push(']')
       }
 
-      // Add closing bracket (not clickable)
-      parts.push(']')
       lastIndex = group.end
     }
 
