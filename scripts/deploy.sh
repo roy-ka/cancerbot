@@ -382,13 +382,13 @@ if command -v trivy &>/dev/null; then
       # snap apps see a private tmpfs at /tmp that hides files written by the host shell.
       # Portable mktemp template syntax works on both GNU coreutils and macOS BSD mktemp.
       TRIVY_TAR=$(mktemp "$PROJECT_DIR/.trivy-scan-XXXXXX.tar")
-      if ! docker save "$IMAGE" -o "$TRIVY_TAR"; then
+      if ! docker save "$IMAGE:latest" -o "$TRIVY_TAR"; then
         echo "✗ docker save failed for $IMAGE — cannot scan"
         rm -f "$TRIVY_TAR"; TRIVY_TAR=""
         SCAN_FAILED=true
         continue
       fi
-      if ! trivy image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed --no-progress --input "$TRIVY_TAR"; then
+      if ! trivy image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed --no-progress --log-level warn --input "$TRIVY_TAR"; then
         echo "✗ Trivy scan failed for $IMAGE — HIGH/CRITICAL vulnerabilities found"
         SCAN_FAILED=true
       else
