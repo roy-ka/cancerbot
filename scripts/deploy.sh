@@ -369,20 +369,38 @@ echo ""
 echo "Scanning Docker images for vulnerabilities..."
 if command -v trivy &>/dev/null; then
   SCAN_FAILED=false
+  TRIVY_TAR=""
+  # Cleanup on any exit path (normal, signal, or ERR trap firing rollback).
+  # Must be set before the loop so interrupted docker save doesn't leak a large tar.
+  _trivy_cleanup() { rm -f "${TRIVY_TAR:-}"; }
+  trap '_trivy_cleanup' EXIT INT TERM
+
   for IMAGE in cancerbot-backend cancerbot-url-classifier; do
     if docker image inspect "$IMAGE" &>/dev/null; then
       echo "  Scanning $IMAGE..."
-      if ! trivy image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed --no-progress "$IMAGE"; then
+      # Write tar to PROJECT_DIR (not /tmp) so snap-confined Trivy can read it —
+      # snap apps see a private tmpfs at /tmp that hides files written by the host shell.
+      # Portable mktemp template syntax works on both GNU coreutils and macOS BSD mktemp.
+      TRIVY_TAR=$(mktemp "$PROJECT_DIR/.trivy-scan-XXXXXX.tar")
+      if ! docker save "$IMAGE" -o "$TRIVY_TAR"; then
+        echo "✗ docker save failed for $IMAGE — cannot scan"
+        rm -f "$TRIVY_TAR"; TRIVY_TAR=""
+        SCAN_FAILED=true
+        continue
+      fi
+      if ! trivy image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed --no-progress --input "$TRIVY_TAR"; then
         echo "✗ Trivy scan failed for $IMAGE — HIGH/CRITICAL vulnerabilities found"
         SCAN_FAILED=true
       else
         echo "✓ $IMAGE passed vulnerability scan"
       fi
+      rm -f "$TRIVY_TAR"; TRIVY_TAR=""
     else
       echo "✗ Image $IMAGE not found — cannot scan"
       SCAN_FAILED=true
     fi
   done
+  trap - EXIT INT TERM
   if [ "$SCAN_FAILED" = true ]; then
     exit 1
   fi
