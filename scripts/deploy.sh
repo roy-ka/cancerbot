@@ -388,7 +388,7 @@ if command -v trivy &>/dev/null; then
         SCAN_FAILED=true
         continue
       fi
-      if ! trivy image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed --no-progress --log-level warn --input "$TRIVY_TAR"; then
+      if ! trivy image --quiet --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed --no-progress --input "$TRIVY_TAR"; then
         echo "✗ Trivy scan failed for $IMAGE — HIGH/CRITICAL vulnerabilities found"
         SCAN_FAILED=true
       else
