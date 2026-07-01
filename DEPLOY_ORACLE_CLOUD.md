@@ -172,15 +172,24 @@ Setup Nginx as a reverse proxy to expose the FastAPI backend on port 80/443:
 ```bash
 sudo apt-get install -y nginx
 
-# Create /etc/nginx/sites-available/cancerbot
-sudo nano /etc/nginx/sites-available/cancerbot
+# Use the provided setup script (requires certbot SSL certs already installed)
+sudo ./scripts/setup-nginx.sh
 ```
 
-Example configuration:
+Example configuration (managed by `scripts/setup-nginx.sh`):
 ```nginx
 server {
     listen 80;
-    server_name your-domain.com;
+    server_name cancer-bot.com www.cancer-bot.com;
+    return 301 https://$server_name$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name cancer-bot.com www.cancer-bot.com;
+
+    ssl_certificate /etc/letsencrypt/live/cancer-bot.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/cancer-bot.com/privkey.pem;
 
     location / {
         proxy_pass http://localhost:8000;

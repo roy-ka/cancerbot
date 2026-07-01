@@ -26,7 +26,16 @@ NGINX_CONFIG_PATH="/etc/nginx/sites-available/cancerbot"
 cat > "$NGINX_CONFIG_PATH" << 'EOF'
 server {
     listen 80;
-    server_name _;
+    server_name cancer-bot.com www.cancer-bot.com;
+    return 301 https://$server_name$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name cancer-bot.com www.cancer-bot.com;
+
+    ssl_certificate /etc/letsencrypt/live/cancer-bot.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/cancer-bot.com/privkey.pem;
 
     # Serve frontend from build output
     root /home/ubuntu/cancerbot-private/client/dist;
@@ -152,5 +161,5 @@ echo "API proxy configured for: http://localhost:8000"
 echo ""
 echo "Next steps:"
 echo "1. Run ./scripts/deploy.sh to deploy the application"
-echo "2. Visit http://82.70.211.195 to access the app"
+echo "2. Visit https://cancer-bot.com to access the app"
 echo ""
