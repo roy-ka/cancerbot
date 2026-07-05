@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-CancerBot is a Retrieval-Augmented Generation (RAG) chatbot for cancer-related medical information. It uses a hybrid search approach (BM25 + KNN vector search) over a corpus of medical sources and claims in OpenSearch, with a local LLM (Ollama) for generation. On every user message, the system also performs live external search (PubMed, CrossRef, Wikipedia), embeds the results, and indexes them into OpenSearch before retrieval.
+CancerBot is a Retrieval-Augmented Generation (RAG) chatbot for cancer-related medical information. It uses a hybrid search approach (BM25 + KNN vector search) over a corpus of medical sources and claims in OpenSearch, with Groq (cloud LLM) for generation and Ollama for embeddings only. On every user message, the system also performs live external search (PubMed, CrossRef, Wikipedia), embeds the results, and indexes them into OpenSearch before retrieval.
 
 ## Code Review Workflow
 
@@ -84,6 +84,7 @@ bash scripts/daily_backup.sh  # Cron-friendly wrapper for backup
 | OpenSearch Dashboards | Docker | 5601 | |
 | PostgreSQL | Docker | 5432 | |
 | Ollama | Docker | 11434 | |
+| NLP microservice | `nlp_service/` | 8100 | Docker only with `prod` profile |
 
 ### New Conversation Flow
 Frontend first calls `POST /conversations/create/` (lightweight DB-only, returns `{id, title}`), then immediately opens a WebSocket to `/conversations/{id}/add_message/ws`. This ensures stage events fire from the very start instead of the UI freezing on `loading_conversation`.
@@ -92,12 +93,12 @@ Frontend first calls `POST /conversations/create/` (lightweight DB-only, returns
 1. User message arrives via WebSocket (`/conversations/{id}/add_message/ws`) or HTTP POST (`/conversations/{id}/add_message`)
 2. User message is saved to PostgreSQL
 3. `src/nlp` (in-process scispaCy) extracts scientific terms from the user message (`extracted_terms` stored on the `Message` row)
-4. **External search** runs in parallel: PubMed (4 results), CrossRef (4 results), Wikipedia (3 results) queried using NLP-extracted terms (`src/routers/conversation_helper.py`)
+4. **External search** runs in parallel: PubMed (4 results), CrossRef (4 results), Wikipedia (3 results) queried using NLP-extracted terms (`src/routers/conversation_helper.py`). Wikipedia uses the search API first and picks the most oncology-relevant page from candidates.
 5. New external sources are embedded via Ollama (`nomic-embed-text`) and indexed into OpenSearch `sources_index`; duplicates are skipped by stable ID
 6. External search results are recorded in `external_search_results` table
 7. `src/retrieval/__init__.py:run_retrieval` embeds the query and runs hybrid BM25 + KNN search on `sources_index` (top 5 returned)
 8. Search analytics recorded in `search_analytics` table
-9. `src/classes/ollama_connector.py` builds a prompt with history + context (cited as `[R1]`, `[R2]`, ...) and calls Ollama generate
+9. `src/classes/ollama_connector.py` builds a prompt with history + context (cited as `[R1]`, `[R2]`, ...) and calls Groq chat completions (`GROQ_MODEL_NAME`)
 10. Post-processing replaces `[R1]` aliases with stable IDs (`pmid:xxx`, `doi:xxx`, `url:<sha1>`)
 11. Assistant message + source IDs stored in PostgreSQL
 12. WebSocket emits staged events throughout (see below)
@@ -115,13 +116,6 @@ Indices are auto-created on startup via `dbConnector.ensure_all_indexes()`.
 `src/retrieval/search.py:search_sources` runs a hybrid query against `sources_index` only:
 - KNN vector clause (boost ×2, k=5)
 - BM25 match on `content_for_embedding` (boost ×1) and `title` (boost ×1.5)
-
-`src/retrieval/router.py:classify_intent` still classifies queries as `concept` vs `intervention` (keyword matching), but this classification is not used in the current retrieval path.
-
-### Intent Classification (`src/retrieval/router.py`)
-- **concept** — "what is", "mechanism", "pathway", "how does", etc. → sources-first ordering
-- **intervention** — "treatment", "diet", "supplement", "fasting", "metformin", etc. → claims-first ordering
-- Currently not wired into the main retrieval path; available for future use.
 
 ### Data Files (`data/`)
 - `sources_canonical.jsonl` — deduplicated sources (merged by PMID > DOI > URL > title)
@@ -145,15 +139,20 @@ Indices are auto-created on startup via `dbConnector.ensure_all_indexes()`.
 OPENSEARCH_URL=https://localhost:9200
 OPENSEARCH_INITIAL_ADMIN_PASSWORD=...
 
-# Ollama
+# Ollama (embeddings only)
 OLLAMA_URL=http://localhost:11434       # used in dev
 OLLAMA_URL_PROD=http://...             # used in prod (is_prod() check)
 EMBED_MODEL_NAME=nomic-embed-text
-GEN_MODEL_NAME=llama3.1:8b             # do NOT wrap in quotes — dotenv includes them literally
-OLLAMA_NUM_CTX=1536                    # context window tokens
-OLLAMA_NUM_PREDICT=512                 # max tokens to generate (256 cuts answers short)
 OLLAMA_CONTEXT_ITEMS=6                 # number of context chunks sent to LLM
+
+# NLP microservice
+NLP_SERVICE_URL=http://localhost:8100  # http://nlp-service:8100 in Docker prod
 OLLAMA_EVIDENCE_CHARS=900              # max chars per evidence chunk
+
+# Groq (text generation)
+GROQ_API_KEY=...
+GROQ_MODEL_NAME=llama-3.3-70b-versatile  # required — do NOT wrap in quotes
+GROQ_MAX_TOKENS=1024                   # max tokens to generate
 
 # PostgreSQL
 POSTGRES_USER=cancerbot
@@ -186,11 +185,11 @@ UNPAYWALL_EMAIL=
 ### Auth
 JWT tokens (HS256) accepted via `Authorization: Bearer <token>` header or `access_token` cookie. Dependency: `Depends(get_current_user)` in `src/deps/auth.py`. Rate-limited login via `LoginAttempt` model. Password reset via time-limited codes (SendGrid email).
 
-### NLP (`src/nlp/__init__.py`)
-In-process scispaCy (`en_core_sci_sm`) module loaded at startup via `load_models()` in the FastAPI lifespan. Provides:
-- `extract_terms(text)` — entity extraction + abbreviation detection + expansion
-- `correct_spelling(text)` — spell correction with protected medical terms
-- In-memory abbreviation cache with async lock
+### NLP
+`src/nlp/__init__.py` is a thin HTTP client that calls the **NLP microservice** (`nlp_service/`) over HTTP. The microservice runs scispaCy (`en_core_sci_sm`) + SpellChecker in a separate Docker container (`nlp-service`, port 8100). URL configured via `NLP_SERVICE_URL` env var (default `http://localhost:8100`).
+- `extract_terms(text)` → `POST /extract` — entity extraction + abbreviation expansion
+- `correct_spelling(text)` → `POST /spelling/correct` — spell correction with protected medical terms
+- `load_models()` — no-op; logs the service URL at startup
 
 ### Routers (`src/routers/`)
 - `auth.py` — registration, login, password reset

@@ -1,150 +1,56 @@
-import asyncio
 import logging
+import os
 
-from starlette.concurrency import run_in_threadpool
+import httpx
+from dotenv import load_dotenv
 
+load_dotenv()
 logger = logging.getLogger(__name__)
 
-_nlp = None
-_spell_checker = None
-_abbrev_cache: dict[str, str] = {}
-_abbrev_cache_lock = asyncio.Lock()
+_NLP_URL = os.getenv("NLP_SERVICE_URL", "http://localhost:8100")
+_client: httpx.AsyncClient | None = None
 
-_STOP_ENTS = frozenset({
-    # Too generic to be useful search terms
-    "cancer", "tumor",
-    # Question / function words that scispaCy sometimes tags as entities
-    "how", "why", "when", "where", "who", "which", "what",
-    "does", "do", "did", "is", "are", "was", "were", "be", "been",
-    "can", "could", "will", "would", "should", "may", "might",
-    "not", "no", "yes", "also", "just", "very", "more", "most",
-    "about", "like", "such", "than", "then", "there", "here",
-})
+
+def _get_client() -> httpx.AsyncClient:
+    global _client
+    if _client is None:
+        _client = httpx.AsyncClient(base_url=_NLP_URL, timeout=10.0)
+    return _client
 
 
 def load_models() -> None:
-    """Load spacy model and spell checker. Call once at startup."""
-    global _nlp, _spell_checker
-    import spacy
-    import scispacy  # noqa: F401 — registers scispaCy pipeline components
-    import scispacy.abbreviation  # noqa: F401 — registers abbreviation_detector factory
-    from spellchecker import SpellChecker
-
-    logger.info("[nlp] Loading en_core_sci_sm...")
-    _nlp = spacy.load("en_core_sci_sm")
-    if "abbreviation_detector" not in _nlp.pipe_names:
-        _nlp.add_pipe("abbreviation_detector", last=True)
-    logger.info("[nlp] Pipeline ready: %s", _nlp.pipe_names)
-
-    _spell_checker = SpellChecker(distance=1)
-    logger.info("[nlp] SpellChecker ready")
-
-
-def _preserve_case(original: str, corrected: str) -> str:
-    if original.isupper():
-        return corrected.upper()
-    if original[:1].isupper():
-        return corrected.capitalize()
-    return corrected
-
-
-def _dedupe(items: list[str]) -> list[str]:
-    seen: set[str] = set()
-    out: list[str] = []
-    for x in items:
-        term = " ".join((x or "").split()).strip()
-        if term and term.lower() not in seen:
-            seen.add(term.lower())
-            out.append(term)
-    return out
-
-
-def _apply_spell_corrections(doc, cache_snapshot: dict[str, str]) -> str:
-    """Apply spell corrections to an existing spaCy doc, protecting known terms."""
-    protected: set[str] = set()
-    for ent in doc.ents:
-        for tok in ent:
-            if tok.text.strip():
-                protected.add(tok.text.strip().lower())
-    for abbr in doc._.abbreviations:
-        if str(abbr).strip():
-            protected.add(str(abbr).strip().lower())
-        if str(abbr._.long_form).strip():
-            protected.add(str(abbr._.long_form).strip().lower())
-    protected.update(cache_snapshot.keys())
-
-    parts: list[str] = []
-    for tok in doc:
-        raw = tok.text
-        lower = raw.lower()
-        fixed = raw
-        if (
-            _spell_checker is not None
-            and tok.is_alpha
-            and len(raw) >= 4
-            and not raw.isupper()
-            and lower not in protected
-            and "'" not in raw
-            and _spell_checker.unknown([lower])
-        ):
-            suggestion = _spell_checker.correction(lower)
-            if (
-                suggestion
-                and suggestion != lower
-                and suggestion[0] == lower[0]
-                and abs(len(suggestion) - len(lower)) <= 2
-            ):
-                fixed = _preserve_case(raw, suggestion)
-        parts.append(f"{fixed}{tok.whitespace_}")
-    return "".join(parts)
-
-
-async def correct_spelling(text: str) -> str:
-    """Return spell-corrected text, protecting known scientific entities and abbreviations."""
-    text = " ".join((text or "").split()).strip()
-    if not text or _nlp is None or _spell_checker is None:
-        return text
-    doc = await run_in_threadpool(_nlp, text)
-    async with _abbrev_cache_lock:
-        cache_snapshot = dict(_abbrev_cache)
-    return _apply_spell_corrections(doc, cache_snapshot)
+    logger.info("[nlp] Using remote NLP service at %s", _NLP_URL)
 
 
 async def extract_terms(text: str) -> list[str]:
-    """Extract scientific entities via spaCy. Returns a deduplicated term list."""
     if not text:
         return []
-    if _nlp is None:
-        logger.warning("[nlp] extract_terms called but NLP model is not loaded — load_models() was not called at startup")
+    try:
+        resp = await _get_client().post("/extract", json={"text": text})
+        resp.raise_for_status()
+        data = resp.json()
+        base = data.get("expanded_entities") or data.get("entities") or []
+        synonyms = data.get("synonyms") or []
+        seen: set[str] = {t.lower() for t in base}
+        merged = list(base)
+        for s in synonyms:
+            if s.lower() not in seen:
+                seen.add(s.lower())
+                merged.append(s)
+        return merged
+    except Exception as e:
+        logger.error("[nlp] extract_terms failed: %s: %s", type(e).__name__, e)
         return []
 
-    text_norm = " ".join(text.split()).strip()
-    doc = await run_in_threadpool(_nlp, text_norm)
 
-    entities = [
-        e.text.strip()
-        for e in doc.ents
-        if e.text.strip() and e.text.strip().lower() not in _STOP_ENTS
-    ]
-    # Normalise keys to lowercase so lookups via e.lower() always match
-    abbr_found = {str(a).strip().lower(): str(a._.long_form).strip() for a in doc._.abbreviations}
-
-    if abbr_found:
-        async with _abbrev_cache_lock:
-            for short, long_form in abbr_found.items():
-                if short:
-                    _abbrev_cache[short] = long_form
-
-    # Single snapshot after writing new abbreviations — reused for all entity lookups
-    async with _abbrev_cache_lock:
-        cache_snapshot = dict(_abbrev_cache)
-
-    expanded: list[str] = []
-    for e in entities:
-        key = e.lower()
-        if key in abbr_found:
-            expanded.append(abbr_found[key])
-        else:
-            expanded.append(cache_snapshot.get(key) or e)
-
-    return _dedupe([*expanded, *entities])
+async def correct_spelling(text: str) -> str:
+    text = " ".join((text or "").split()).strip()
+    if not text:
+        return text
+    try:
+        resp = await _get_client().post("/spelling/correct", json={"text": text})
+        resp.raise_for_status()
+        return resp.json().get("corrected") or text
+    except Exception as e:
+        logger.error("[nlp] correct_spelling failed: %s: %s", type(e).__name__, e)
+        return text

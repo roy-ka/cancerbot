@@ -1,0 +1,9 @@
+fastapi[standard]
+uvicorn
+python-dotenv
+spacy>=3.7.5,<3.8.0
+scispacy==0.5.5
+numpy>=1.24.0,<2.0.0
+pyspellchecker>=0.8.2
+sentry-sdk[fastapi]>=2.35.0
+https://s3-us-west-2.amazonaws.com/ai2-s2-scispacy/releases/v0.5.4/en_core_sci_sm-0.5.4.tar.gz

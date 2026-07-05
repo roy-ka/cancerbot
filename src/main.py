@@ -39,9 +39,8 @@ _init_sentry()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Load NLP models — fail fast if en_core_sci_sm is not installed
     from src.nlp import load_models
-    await asyncio.to_thread(load_models)
+    load_models()
 
     # Startup: Initialize OpenSearch indexes
     logger.info("Initializing OpenSearch indexes...")
