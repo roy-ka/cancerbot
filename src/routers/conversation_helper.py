@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import html as _html
 import ipaddress
 import os
 import re
@@ -257,6 +258,57 @@ _wiki = wikipediaapi.Wikipedia(
     extract_format=wikipediaapi.ExtractFormat.WIKI,
 )
 
+_ONCOLOGY_KEYWORDS = {
+    "cancer", "carcinoma", "tumor", "tumour", "oncol", "leukemia", "lymphoma",
+    "sarcoma", "melanoma", "glioma", "metastasis", "neoplasm", "malignant",
+    "chemotherapy", "radiotherapy", "immunotherapy", "targeted therapy",
+}
+
+_WIKI_SEARCH_URL = "https://en.wikipedia.org/w/api.php"
+
+
+def _strip_wiki_html(s: str) -> str:
+    return _html.unescape(re.sub(r'<[^>]+>', '', s))
+
+
+def _pick_oncology_title(candidates: list[dict]) -> str | None:
+    """Return the title most relevant to oncology from Wikipedia search results."""
+    for item in candidates:
+        title = item.get("title") or ""
+        snippet = _strip_wiki_html(item.get("snippet") or "")
+        combined = title.lower() + " " + snippet.lower()
+        if title and any(kw in combined for kw in _ONCOLOGY_KEYWORDS):
+            return title
+    # Fall back to highest-ranked result that has a title
+    for item in candidates:
+        title = item.get("title")
+        if title:
+            return title
+    return None
+
+
+def _wiki_search(term: str, limit: int = 5) -> list[dict]:
+    """Call Wikipedia's search API and return result items."""
+    try:
+        resp = httpx.get(
+            _WIKI_SEARCH_URL,
+            params={
+                "action": "query",
+                "list": "search",
+                "srsearch": term,
+                "srlimit": limit,
+                "format": "json",
+                "utf8": 1,
+            },
+            headers={"User-Agent": "cancerbot/1.0 (medical-rag-assistant)"},
+            timeout=8,
+        )
+        resp.raise_for_status()
+        return resp.json().get("query", {}).get("search", [])
+    except Exception as e:
+        logger.warning("[wikipedia] search API error for term='%s': %s", term, e)
+        return []
+
 
 async def _search_wikipedia_sources(terms: list[str], max_results: int = 3) -> list[dict]:
     if not terms:
@@ -269,9 +321,14 @@ async def _search_wikipedia_sources(terms: list[str], max_results: int = 3) -> l
             if len(out) >= max_results:
                 break
             try:
-                page = _wiki.page(term)
+                candidates = _wiki_search(term)
+                title = _pick_oncology_title(candidates) if candidates else term
+                page = _wiki.page(title)
                 if not page.exists():
-                    continue
+                    # If search picked a bad title, try the raw term as fallback
+                    page = _wiki.page(term)
+                    if not page.exists():
+                        continue
                 if page.title in seen:
                     continue
                 seen.add(page.title)
