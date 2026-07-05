@@ -1,4 +1,5 @@
 from ollama import Client
+from groq import Groq
 from dotenv import load_dotenv
 import os
 import re
@@ -34,7 +35,6 @@ class _GroqClientProxy:
   def _ensure_client(self):
     if _GroqClientProxy._client is None:
       load_dotenv()
-      from groq import Groq
       api_key = os.getenv('GROQ_API_KEY')
       if not api_key:
         raise ValueError("GROQ_API_KEY is not set.")
@@ -50,7 +50,7 @@ class OllamaConnector:
 
   load_dotenv()
   embed_model = os.getenv('EMBED_MODEL_NAME', os.getenv('MODEL_NAME'))
-  groq_model = os.getenv('GROQ_MODEL_NAME', 'llama-3.3-70b-versatile')
+  groq_model = os.getenv('GROQ_MODEL_NAME')
   ollama = _OllamaClientProxy()
   groq = _GroqClientProxy()
 
@@ -221,14 +221,18 @@ ANSWER (every sentence must have a [R#] citation):
       max_tokens=max_tokens,
     )
 
+    if not completion.choices:
+      raise ValueError("Groq returned an empty choices list — possible content-policy rejection.")
+
+    choice = completion.choices[0]
     logger.debug(
       "[groq] response model=%s finish_reason=%s tokens_used=%s",
       completion.model,
-      completion.choices[0].finish_reason,
+      choice.finish_reason,
       getattr(completion.usage, "total_tokens", "?"),
     )
 
-    answer = completion.choices[0].message.content or ""
+    answer = choice.message.content or ""
 
     # Replace alias citations with the original stable IDs.
     for alias, original_id in alias_to_id.items():

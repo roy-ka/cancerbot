@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import html as _html
 import ipaddress
 import os
 import re
@@ -266,16 +267,24 @@ _ONCOLOGY_KEYWORDS = {
 _WIKI_SEARCH_URL = "https://en.wikipedia.org/w/api.php"
 
 
+def _strip_wiki_html(s: str) -> str:
+    return _html.unescape(re.sub(r'<[^>]+>', '', s))
+
+
 def _pick_oncology_title(candidates: list[dict]) -> str | None:
     """Return the title most relevant to oncology from Wikipedia search results."""
     for item in candidates:
-        title_lower = item.get("title", "").lower()
-        snippet_lower = item.get("snippet", "").lower()
-        combined = title_lower + " " + snippet_lower
-        if any(kw in combined for kw in _ONCOLOGY_KEYWORDS):
-            return item["title"]
-    # Fall back to highest-ranked result
-    return candidates[0]["title"] if candidates else None
+        title = item.get("title") or ""
+        snippet = _strip_wiki_html(item.get("snippet") or "")
+        combined = title.lower() + " " + snippet.lower()
+        if title and any(kw in combined for kw in _ONCOLOGY_KEYWORDS):
+            return title
+    # Fall back to highest-ranked result that has a title
+    for item in candidates:
+        title = item.get("title")
+        if title:
+            return title
+    return None
 
 
 def _wiki_search(term: str, limit: int = 5) -> list[dict]:
@@ -297,7 +306,7 @@ def _wiki_search(term: str, limit: int = 5) -> list[dict]:
         resp.raise_for_status()
         return resp.json().get("query", {}).get("search", [])
     except Exception as e:
-        logger.warning(f"[wikipedia] search API error for term='{term}': {e}")
+        logger.warning("[wikipedia] search API error for term='%s': %s", term, e)
         return []
 
 

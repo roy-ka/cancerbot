@@ -197,12 +197,15 @@ async def _process_post_message(
     await emit('building_prompt', {'history_messages': len(history)})
     await emit('generating_answer', {})
 
-    response = await asyncio.to_thread(
-        OllamaConnector.generate_text,
-        context=context["generation_context"],
-        question=req.content,
-        history=history,
-    )
+    try:
+        response = await asyncio.to_thread(
+            OllamaConnector.generate_text,
+            context=context["generation_context"],
+            question=req.content,
+            history=history,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
     logging.info(f"[conversation] answer generated took={int((time.time()-t0)*1000)}ms")
 
     # If the LLM found no relevant data, still surface the retrieved sources so the

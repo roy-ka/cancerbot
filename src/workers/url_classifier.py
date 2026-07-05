@@ -38,17 +38,16 @@ Answer (yes/no):"""
 
 
 def _classify(content_text: str) -> tuple[bool, str]:
-    """Call Ollama to classify content. Returns (is_cancer_related, raw_response)."""
+    """Call Groq to classify content. Returns (is_cancer_related, raw_response)."""
     from src.classes.ollama_connector import OllamaConnector
 
     prompt = CLASSIFICATION_PROMPT.format(text=content_text[:3000])
-    response = OllamaConnector.ollama.generate(
-        model=OllamaConnector.gen_model,
-        prompt=prompt,
-        stream=False,
-        options={"num_predict": 10, "temperature": 0},
+    completion = OllamaConnector.groq.chat.completions.create(
+        model=OllamaConnector.groq_model or "llama-3.3-70b-versatile",
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=10,
     )
-    raw = response.get("response", "").strip().lower()
+    raw = (completion.choices[0].message.content or "").strip().lower() if completion.choices else ""
     return raw.startswith("yes"), raw
 
 
