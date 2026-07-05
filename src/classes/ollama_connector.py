@@ -3,13 +3,17 @@ from dotenv import load_dotenv
 import os
 import re
 import json
+import logging
 from typing import Any, Mapping, Sequence
 from src.db.models import Message
 
+logger = logging.getLogger(__name__)
+
 NO_DATA_RESPONSE = "I couldn't find relevant data in my searches."
 
+
 class _OllamaClientProxy:
-  """Lazy proxy for Ollama client initialization."""
+  """Lazy proxy for Ollama client (embeddings only)."""
   _client = None
 
   def _ensure_client(self):
@@ -22,23 +26,43 @@ class _OllamaClientProxy:
   def __getattr__(self, name):
     return getattr(self._ensure_client(), name)
 
+
+class _GroqClientProxy:
+  """Lazy proxy for Groq client (text generation)."""
+  _client = None
+
+  def _ensure_client(self):
+    if _GroqClientProxy._client is None:
+      load_dotenv()
+      from groq import Groq
+      api_key = os.getenv('GROQ_API_KEY')
+      if not api_key:
+        raise ValueError("GROQ_API_KEY is not set.")
+      _GroqClientProxy._client = Groq(api_key=api_key)
+    return _GroqClientProxy._client
+
+  def __getattr__(self, name):
+    return getattr(self._ensure_client(), name)
+
+
 class OllamaConnector:
-  __name__='Ollama_connector'
+  __name__ = 'Ollama_connector'
 
   load_dotenv()
-  ollama_host = os.getenv('OLLAMA_URL', 'http://localhost:11434')
   embed_model = os.getenv('EMBED_MODEL_NAME', os.getenv('MODEL_NAME'))
-  gen_model = os.getenv('GEN_MODEL_NAME')
+  groq_model = os.getenv('GROQ_MODEL_NAME', 'llama-3.3-70b-versatile')
   ollama = _OllamaClientProxy()
+  groq = _GroqClientProxy()
 
   @classmethod
   def embed_text(cls, text):
+    logger.debug("[ollama] embed model=%s input_len=%d", cls.embed_model, len(text))
     response = cls.ollama.embed(model=cls.embed_model, input=text)
     return response.embeddings[0]
 
   @classmethod
   def generate_text(cls, context: Sequence[Any], question: str, history: Sequence[Message]) -> str:
-    
+
     """Generate an answer grounded in the provided context.
 
     Context must be a list of dict / Mapping items with explicit IDs, e.g.
@@ -72,7 +96,6 @@ class OllamaConnector:
               continue
             out.append({'id': str(_id), **({'name': str(name)} if name else {})})
           else:
-            # If it's already an id-like primitive
             out.append({'id': str(it)})
           if len(out) >= max_items:
             break
@@ -80,25 +103,17 @@ class OllamaConnector:
         return []
       return out
 
-    # Keep only the most recent messages to avoid token bloat
     max_history = int(os.getenv('PROMPT_MAX_HISTORY', '8'))
     recent_msgs = list(history)[-max_history:]
 
-    # Drop assistant messages that are purely tool output (e.g., raw JSON blobs)
     def _is_tool_output(msg: Message) -> bool:
       if msg.role != 'assistant':
         return False
-
       content = str(getattr(msg, 'content', '') or '').strip()
-
-      # Explicit tool intent flag
       if getattr(msg, 'intent', None) == 'tool':
         return True
-
-      # Heuristic: large JSON-like payloads
       if content.startswith('{') and content.endswith('}') and len(content) > 200:
         return True
-
       return False
 
     recent_msgs = [m for m in recent_msgs if not _is_tool_output(m)]
@@ -107,14 +122,12 @@ class OllamaConnector:
       {
         'role': msg.role,
         'content': _truncate(msg.content, 360 if msg.role == 'user' else 520),
-        # Keep only small id lists (enriched content already appears in Scientific Evidence)
         'source_ids': _ids_only(getattr(msg, 'sources', None)),
         'claim_ids': _ids_only(getattr(msg, 'claims', None)),
       }
       for msg in recent_msgs
     ]
 
-    # Compact JSON string for the prompt (stable and token-efficient)
     message_context = json.dumps(message_context_compact, ensure_ascii=False, separators=(',', ':'))
 
     max_evidence_chars = int(os.getenv('OLLAMA_EVIDENCE_CHARS', '900'))
@@ -125,10 +138,8 @@ class OllamaConnector:
           "Context items must be dict-like objects containing 'id' and 'content_for_embedding'."
         )
 
-      # Support OpenSearch hit shape: {"_id": "...", "_source": {...}}
       src = item.get("_source") if isinstance(item.get("_source"), Mapping) else None
 
-      # Extract original stable id (prefer explicit fields; fall back to _source.id; then _id)
       raw_id = (
         item.get('id')
         or item.get('source_id')
@@ -144,11 +155,9 @@ class OllamaConnector:
 
       original_id = str(raw_id).strip()
 
-      # Use a short deterministic alias for citations to prevent LLM typos
       alias = f"R{i+1}"
       alias_to_id[alias] = original_id
 
-      # Extract content_for_embedding
       text = (
         item.get('content_for_embedding')
         or (src.get('content_for_embedding') if src else None)
@@ -158,7 +167,6 @@ class OllamaConnector:
       if len(text) > max_evidence_chars:
         text = text[:max_evidence_chars] + '…'
 
-      # Render ONLY alias + content_for_embedding
       return f"[{alias}] {text}" if text else f"[{alias}]"
 
     max_context_items = int(os.getenv('OLLAMA_CONTEXT_ITEMS', '6'))
@@ -195,30 +203,34 @@ QUESTION:
 ANSWER (every sentence must have a [R#] citation):
 """.strip()
 
-    if not cls.gen_model:
+    if not cls.groq_model:
       raise ValueError(
-        "GEN_MODEL_NAME is not set. Set it to a chat-capable Ollama model (e.g., llama3.1, qwen2.5)."
+        "GROQ_MODEL_NAME is not set. Set it to a Groq-hosted model (e.g., llama-3.3-70b-versatile)."
       )
 
-    options: dict = {}
-    num_ctx = os.getenv('OLLAMA_NUM_CTX')
-    num_predict = os.getenv('OLLAMA_NUM_PREDICT')
-    if num_ctx:
-      options['num_ctx'] = int(num_ctx)
-    if num_predict:
-      options['num_predict'] = int(num_predict)
+    max_tokens = int(os.getenv('GROQ_MAX_TOKENS', '1024'))
 
-    response = cls.ollama.generate(
-        model=cls.gen_model,
-        prompt=full_prompt,
-        stream=False,
-        options=options or None,
+    logger.debug(
+      "[groq] generate model=%s max_tokens=%d prompt_len=%d context_items=%d",
+      cls.groq_model, max_tokens, len(full_prompt), len(rendered),
     )
 
-    answer = response["response"]
+    completion = cls.groq.chat.completions.create(
+      model=cls.groq_model,
+      messages=[{"role": "user", "content": full_prompt}],
+      max_tokens=max_tokens,
+    )
+
+    logger.debug(
+      "[groq] response model=%s finish_reason=%s tokens_used=%s",
+      completion.model,
+      completion.choices[0].finish_reason,
+      getattr(completion.usage, "total_tokens", "?"),
+    )
+
+    answer = completion.choices[0].message.content or ""
 
     # Replace alias citations with the original stable IDs.
-    # Example: [R8] -> [url:86cc...]
     for alias, original_id in alias_to_id.items():
       answer = answer.replace(f"[{alias}]", f"[{original_id}]")
 
