@@ -92,7 +92,7 @@ Frontend first calls `POST /conversations/create/` (lightweight DB-only, returns
 ### Chat Query Flow
 1. User message arrives via WebSocket (`/conversations/{id}/add_message/ws`) or HTTP POST (`/conversations/{id}/add_message`)
 2. User message is saved to PostgreSQL
-3. `src/nlp` (in-process scispaCy) extracts scientific terms from the user message (`extracted_terms` stored on the `Message` row)
+3. `src/nlp` calls the NLP microservice (`/extract`) to extract scientific terms and expand them with MeSH synonyms (`extracted_terms` stored on the `Message` row)
 4. **External search** runs in parallel: PubMed (4 results), CrossRef (4 results), Wikipedia (3 results) queried using NLP-extracted terms (`src/routers/conversation_helper.py`). Wikipedia uses the search API first and picks the most oncology-relevant page from candidates.
 5. New external sources are embedded via Ollama (`nomic-embed-text`) and indexed into OpenSearch `sources_index`; duplicates are skipped by stable ID
 6. External search results are recorded in `external_search_results` table
@@ -187,7 +187,7 @@ JWT tokens (HS256) accepted via `Authorization: Bearer <token>` header or `acces
 
 ### NLP
 `src/nlp/__init__.py` is a thin HTTP client that calls the **NLP microservice** (`nlp_service/`) over HTTP. The microservice runs scispaCy (`en_core_sci_sm`) + SpellChecker in a separate Docker container (`nlp-service`, port 8100). URL configured via `NLP_SERVICE_URL` env var (default `http://localhost:8100`).
-- `extract_terms(text)` → `POST /extract` — entity extraction + abbreviation expansion
+- `extract_terms(text)` → `POST /extract` — entity extraction + abbreviation expansion + MeSH synonym lookup (`nlp_service/synonyms.py`); returns merged term list
 - `correct_spelling(text)` → `POST /spelling/correct` — spell correction with protected medical terms
 - `load_models()` — no-op; logs the service URL at startup
 
