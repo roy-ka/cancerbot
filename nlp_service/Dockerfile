@@ -2,6 +2,8 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt .
 # Install scispacy without its entity-linking deps (nmslib-metabrainz fails to build on ARM)
 RUN pip install --no-cache-dir --no-deps scispacy==0.5.5 \
