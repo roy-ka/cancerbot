@@ -1,4 +1,4 @@
-import { FormControl, TextField, Button, Grid } from '@mui/material'
+import { FormControl, TextField, IconButton, Button, Box } from '@mui/material'
 import { forwardRef, useImperativeHandle, useRef } from 'react'
 
 export type InputFieldHandle = {
@@ -41,29 +41,44 @@ const InputField = forwardRef<
       onSubmit={handleSubmit}
       sx={{ width: '100%' }}
     >
-      <Grid container spacing={2} sx={{ width: '100%', alignItems: 'flex-end' }}>
-        <Grid size={11}>
-          <TextField
-            fullWidth
-            required
-            id="input"
-            name="input"
-            hiddenLabel
-            variant="outlined"
-            multiline
-            minRows={1}
-            maxRows={6}
-            onChange={(e) => onChange(e.target.value)}
-            onKeyDown={handleKeyDown}
-            value={value}
-          />
-        </Grid>
-        <Grid size={1}>
-          <Button type="submit" variant="contained" fullWidth>
-            🦀 Send
-          </Button>
-        </Grid>
-      </Grid>
+      <Box sx={{ display: 'flex', alignItems: 'stretch', gap: 1, width: '100%' }}>
+        <TextField
+          fullWidth
+          required
+          id="input"
+          name="input"
+          hiddenLabel
+          variant="outlined"
+          multiline
+          minRows={1}
+          maxRows={6}
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={handleKeyDown}
+          value={value}
+        />
+        {/* Desktop: icon + text */}
+        <Button
+          type="submit"
+          variant="contained"
+          sx={{ flexShrink: 0, borderRadius: 1, display: { xs: 'none', sm: 'flex' } }}
+        >
+          🦀 Send
+        </Button>
+        {/* Mobile: icon only */}
+        <IconButton
+          type="submit"
+          sx={{
+            flexShrink: 0,
+            width: 44,
+            fontSize: '22px',
+            border: '1px solid rgba(255,255,255,0.25)',
+            borderRadius: 1,
+            display: { xs: 'flex', sm: 'none' },
+          }}
+        >
+          🦀
+        </IconButton>
+      </Box>
     </FormControl>
   )
 })

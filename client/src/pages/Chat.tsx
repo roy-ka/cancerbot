@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Alert, Box, Grid, Snackbar } from '@mui/material'
+import { Alert, Box, Snackbar } from '@mui/material'
 import { useNavigate } from 'react-router-dom'
 import ConversationList from '../components/ConversationList'
 import MessageList from '../components/MessageList'
@@ -20,6 +20,12 @@ export default function Chat() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [currentStage, setCurrentStage] = useState<string | null>(null)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
+
+  // Prevent body-level scroll so the chat layout fills the viewport exactly
+  useEffect(() => {
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = '' }
+  }, [])
   // When a new conversation is created and the WS is in-flight, skip the
   // message fetch triggered by setSelectedConversationId so the optimistic
   // message is not wiped before the WS final response arrives.
@@ -53,7 +59,12 @@ export default function Chat() {
         const json = await res.json()
         return json?.conversations
       })
-      .then(setConversations)
+      .then((convs: Conversation[]) => {
+        setConversations(convs)
+        if (Array.isArray(convs) && convs.length > 0) {
+          setSelectedConversationId(convs[0].id)
+        }
+      })
       .catch((e) => {
         console.error('conversations failed:', e)
         if (
@@ -294,11 +305,8 @@ export default function Chat() {
           onClick={() => setSidebarOpen(false)}
         />
       )}
-      <Grid container className="chat-grid" spacing={0}>
-        <Grid
-          size={3}
-          className={`chat-conversations ${sidebarOpen ? 'open' : ''}`}
-        >
+      <Box className="chat-body">
+        <Box className={`chat-conversations ${sidebarOpen ? 'open' : ''}`}>
           <ConversationList
             setSelectedConversationId={setSelectedConversationIdWithClose}
             selectedConversationId={selectedConversationId}
@@ -306,8 +314,8 @@ export default function Chat() {
             onLogout={handleLogout}
             onCloseSidebar={() => setSidebarOpen(false)}
           />
-        </Grid>
-        <Grid size={9} className="chat-messages">
+        </Box>
+        <Box className="chat-messages">
           <Box className="chat-message-list">
             <MessageList
               messages={messages}
@@ -317,15 +325,15 @@ export default function Chat() {
               currentStage={currentStage}
             />
           </Box>
-          <Box className="chat-input">
-            <InputField
-              onSubmit={onMessageSubmit}
-              value={inputValue}
-              onChange={setInputValue}
-            />
-          </Box>
-        </Grid>
-      </Grid>
+        </Box>
+      </Box>
+      <Box className="chat-input">
+        <InputField
+          onSubmit={onMessageSubmit}
+          value={inputValue}
+          onChange={setInputValue}
+        />
+      </Box>
     </Box>
   )
 }

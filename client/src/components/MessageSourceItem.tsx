@@ -87,15 +87,15 @@ export default function MessageSourceItem({
         onClose={handleClose}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
         transformOrigin={{ vertical: 'top', horizontal: 'left' }}
+        marginThreshold={12}
         slotProps={{
           paper: {
             sx: {
-              maxWidth: 640,
+              width: { xs: 'calc(100vw - 24px)', sm: 'auto' },
+              maxWidth: { xs: 'calc(100vw - 24px)', sm: 640 },
               p: 2,
               borderRadius: 2,
-              opacity: 1,
               bgcolor: 'rgba(17, 24, 39, 0.98)',
-              backdropFilter: 'none',
             },
           },
         }}

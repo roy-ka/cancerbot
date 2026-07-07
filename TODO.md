@@ -1,7 +1,7 @@
 # CancerBot TODO
 
 ## Pending
-- [ ] **Mobile support** — responsive UI for the React frontend
+- [ ] **Mobile support** — verify on device; login + chat layout fixed, sidebar toggle implemented
 - [ ] **Mailing** — transactional emails beyond password reset (e.g. conversation summaries, weekly digests)
 - [ ] **Delete user** — account deletion endpoint: remove user row, cascade conversations/messages, revoke tokens
 - [ ] **Unify oncology keyword sets** — `_ONCOLOGY_KEYWORDS` in `conversation_helper.py` and `CANCER_KEYWORDS` in the same file serve overlapping purposes; consolidate (note: `"oncol"` partial match is only in `_ONCOLOGY_KEYWORDS`)

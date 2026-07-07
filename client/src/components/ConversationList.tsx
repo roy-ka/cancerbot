@@ -1,4 +1,4 @@
-import { Box, Dialog, DialogContent, IconButton, Link, Tooltip, Typography } from '@mui/material'
+import { Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, IconButton, Link, Tooltip, Typography } from '@mui/material'
 import PersonOutlineIcon from '@mui/icons-material/PersonOutline'
 import LogoutIcon from '@mui/icons-material/Logout'
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined'
@@ -28,54 +28,98 @@ export default function ConversationList({
   onCloseSidebar?: () => void
 }) {
   const [aboutOpen, setAboutOpen] = useState(false)
+  const [logoutOpen, setLogoutOpen] = useState(false)
 
   const onclick = (id: string) => {
     setSelectedConversationId(id)
   }
 
   return (
-    <Box className="conversation-list-root" sx={{ px: 2, py: 3 }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          <PersonOutlineIcon fontSize="small" sx={{ color: 'rgba(255,255,255,0.6)' }} />
-        </Box>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      {/* Sticky header — never scrolls */}
+      <Box sx={{ flexShrink: 0, px: 2, pt: 3, pb: 1 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2, mt: '12px' }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <PersonOutlineIcon fontSize="small" sx={{ color: 'rgba(255,255,255,0.6)' }} />
+          </Box>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Tooltip title="About">
+              <IconButton size="small" onClick={() => setAboutOpen(true)} sx={{ color: 'rgba(255,255,255,0.6)' }}>
+                <InfoOutlinedIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+            <BugReportDialog compact />
+            <Tooltip title="Logout">
+              <IconButton size="small" onClick={() => setLogoutOpen(true)} sx={{ color: 'rgba(255,255,255,0.6)' }}>
+                <LogoutIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          </Box>
           {onCloseSidebar && (
             <button className="conversation-list-close-btn" onClick={onCloseSidebar}>
               ✕
             </button>
           )}
-          <Tooltip title="About">
-            <IconButton size="small" onClick={() => setAboutOpen(true)} sx={{ color: 'rgba(255,255,255,0.6)' }}>
-              <InfoOutlinedIcon fontSize="small" />
-            </IconButton>
-          </Tooltip>
-          <BugReportDialog compact />
-          <Tooltip title="Logout">
-            <IconButton size="small" onClick={onLogout} sx={{ color: 'rgba(255,255,255,0.6)' }}>
-              <LogoutIcon fontSize="small" />
-            </IconButton>
-          </Tooltip>
         </Box>
+        <Typography className="conversation-title" pb={1}>
+          Conversations
+        </Typography>
       </Box>
-      <Typography className="conversation-title" pb={2}>
-        Conversations
-      </Typography>
-      <ConversationItem
-        conversation={newConversation}
-        selected={selectedConversationId === 'new'}
-        onClick={() => onclick('new')}
-      />
-      {conversations &&
-        conversations.length > 0 &&
-        conversations.map((conv) => (
-          <ConversationItem
-            key={conv.id}
-            conversation={conv}
-            selected={selectedConversationId === conv.id}
-            onClick={() => onclick(conv.id)}
-          />
-        ))}
+
+      {/* Scrollable list */}
+      <Box className="conversation-list-root" sx={{ px: 2 }}>
+        <ConversationItem
+          conversation={newConversation}
+          selected={selectedConversationId === 'new'}
+          onClick={() => onclick('new')}
+        />
+        {conversations &&
+          conversations.length > 0 &&
+          conversations.map((conv) => (
+            <ConversationItem
+              key={conv.id}
+              conversation={conv}
+              selected={selectedConversationId === conv.id}
+              onClick={() => onclick(conv.id)}
+            />
+          ))}
+      </Box>
+
+      {/* Back button — mobile only, never scrolls */}
+      {onCloseSidebar && (
+        <Box className="conversation-list-back-btn-wrapper" sx={{ flexShrink: 0, px: 2, pb: 2 }}>
+          <button className="conversation-list-back-btn" onClick={onCloseSidebar}>
+            ← Back to chat
+          </button>
+        </Box>
+      )}
+
+      <Dialog
+        open={logoutOpen}
+        onClose={() => setLogoutOpen(false)}
+        slotProps={{
+          backdrop: { sx: { backgroundColor: 'rgba(0,0,0,0.3)' } },
+          paper: { sx: { backgroundColor: 'rgba(18,25,45,0.75)', backdropFilter: 'blur(18px)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 3 } },
+        }}
+      >
+        <DialogTitle sx={{ color: 'rgba(255,255,255,0.92)' }}>Log out?</DialogTitle>
+        <DialogContent sx={{ color: 'rgba(255,255,255,0.66)' }}>
+          Are you sure you want to log out?
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2, gap: 1 }}>
+          <Button onClick={() => setLogoutOpen(false)} sx={{ textTransform: 'none', color: 'rgba(255,255,255,0.6)' }}>
+            No
+          </Button>
+          <Button
+            onClick={() => { setLogoutOpen(false); onLogout?.() }}
+            variant="contained"
+            color="error"
+            sx={{ textTransform: 'none' }}
+          >
+            Yes, log out
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       <Dialog open={aboutOpen} onClose={() => setAboutOpen(false)} aria-label="About CancerBot" PaperProps={{ sx: { borderRadius: 3, px: 1 } }}>
         <DialogContent sx={{ textAlign: 'center', py: 4, px: 5, position: 'relative' }}>

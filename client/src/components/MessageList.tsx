@@ -19,7 +19,7 @@ const getStageMessage = (stage: string): string => {
     terms_ready: 'Search terms ready...',
     searching_pubmed: 'Searching PubMed...',
     searching_crossref: 'Searching CrossRef...',
-    searching_wikipedia: 'Searching Wikipedia...',
+    searching_wikipedia: 'Searching sources...',
     found_sources: 'Found sources...',
     embedding_and_indexing_sources: 'Indexing sources...',
     sources_indexed: 'Sources indexed...',

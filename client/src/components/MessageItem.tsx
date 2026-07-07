@@ -8,7 +8,10 @@ const URL_LOCAL_RE = () => /https?:\/\/[^\s<>"'()[\]{}]+/g
 // Trailing punctuation that commonly appears after a URL in prose but isn't part of it
 const TRAILING_PUNCT = /[.,;:!?)]+$/
 
-function renderTextWithLinks(text: string, keyPrefix: string): React.ReactNode[] {
+function renderTextWithLinks(
+  text: string,
+  keyPrefix: string,
+): React.ReactNode[] {
   const re = URL_LOCAL_RE()
   const nodes: React.ReactNode[] = []
   let last = 0
@@ -32,7 +35,8 @@ function renderTextWithLinks(text: string, keyPrefix: string): React.ReactNode[]
         {href}
       </Link>,
     )
-    if (trailingLen > 0) nodes.push(text.slice(matchEnd - trailingLen, matchEnd))
+    if (trailingLen > 0)
+      nodes.push(text.slice(matchEnd - trailingLen, matchEnd))
     last = matchEnd
   }
   if (last < text.length) nodes.push(text.slice(last))
@@ -91,7 +95,12 @@ export default function MessageItem({ message }: { message: Message }) {
 
     // First, find all citations and their positions
     const re = /\[([^\]\s]+)\]/g
-    const citations: Array<{ id: string; start: number; end: number; full: string }> = []
+    const citations: Array<{
+      id: string
+      start: number
+      end: number
+      full: string
+    }> = []
     let match: RegExpExecArray | null
 
     while ((match = re.exec(text)) !== null) {
@@ -106,7 +115,11 @@ export default function MessageItem({ message }: { message: Message }) {
     }
 
     // Group consecutive citations
-    const groups: Array<{ citations: typeof citations; start: number; end: number }> = []
+    const groups: Array<{
+      citations: typeof citations
+      start: number
+      end: number
+    }> = []
     let currentGroup: typeof citations = []
     let groupStart = 0
 
@@ -143,7 +156,12 @@ export default function MessageItem({ message }: { message: Message }) {
     for (const group of groups) {
       // Add text before group
       if (group.start > lastIndex) {
-        parts.push(...renderTextWithLinks(text.slice(lastIndex, group.start), `${message.id}-pre-${lastIndex}`))
+        parts.push(
+          ...renderTextWithLinks(
+            text.slice(lastIndex, group.start),
+            `${message.id}-pre-${lastIndex}`,
+          ),
+        )
       }
 
       // Resolve citations before pushing brackets — skip the group entirely if none resolve.
@@ -185,7 +203,9 @@ export default function MessageItem({ message }: { message: Message }) {
 
     // Add remaining text
     if (lastIndex < text.length) {
-      parts.push(...renderTextWithLinks(text.slice(lastIndex), `${message.id}-tail`))
+      parts.push(
+        ...renderTextWithLinks(text.slice(lastIndex), `${message.id}-tail`),
+      )
     }
 
     return <Typography sx={{ whiteSpace: 'pre-wrap' }}>{parts}</Typography>
@@ -203,11 +223,16 @@ export default function MessageItem({ message }: { message: Message }) {
     >
       <Box
         key={message.id}
+        className={
+          message.role === 'user'
+            ? 'message-bubble-user'
+            : 'message-bubble-assistant'
+        }
         sx={{
-          maxWidth: '70%',
+          maxWidth: { xs: '90%', sm: '70%' },
           px: 3,
           py: 2,
-          borderRadius: 2,
+          position: 'relative',
           backgroundColor:
             message.role === 'user'
               ? 'rgba(255,255,255,0.1)'

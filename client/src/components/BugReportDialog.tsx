@@ -77,7 +77,16 @@ export default function BugReportDialog({ compact = false }: { compact?: boolean
     <>
       {trigger}
 
-      <Dialog open={open} onClose={handleClose} fullWidth maxWidth="sm">
+      <Dialog
+        open={open}
+        onClose={handleClose}
+        fullWidth
+        maxWidth="sm"
+        slotProps={{
+          backdrop: { sx: { backgroundColor: 'rgba(0,0,0,0.3)' } },
+          paper: { sx: { backgroundColor: 'rgba(18,25,45,0.55)', backdropFilter: 'blur(18px)', boxShadow: '0 20px 60px rgba(0,0,0,0.4)', border: '1px solid rgba(255,255,255,0.1)' } },
+        }}
+      >
         <DialogTitle>Report a Bug</DialogTitle>
         <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 1 }}>
           {success && <Alert severity="success">Thank you! Your report was submitted.</Alert>}

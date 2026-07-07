@@ -6,7 +6,6 @@ body,
 
 body {
   margin: 0;
-  overflow: hidden;
 }
 
 #root {
@@ -65,9 +64,18 @@ body {
   height: 100dvh;
   width: 100vw;
   display: flex;
+  flex-direction: column;
   position: relative;
   overflow: hidden;
   background-color: var(--mui-palette-background-default);
+}
+
+.chat-body {
+  display: flex;
+  flex-direction: row;
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .chat-sidebar-toggle {
@@ -92,12 +100,22 @@ body {
   transition: all 0.2s ease;
 }
 
+@media (max-width: 768px) {
+  .chat-sidebar-toggle {
+    display: block;
+  }
+}
+
 .chat-sidebar-toggle:hover {
   background: linear-gradient(
     135deg,
     rgba(124, 92, 255, 0.8),
     rgba(47, 227, 198, 0.5)
   );
+}
+
+.chat-sidebar-toggle:active {
+  transform: scale(0.95);
 }
 
 .chat-sidebar-backdrop {
@@ -109,18 +127,9 @@ body {
 }
 
 @media (max-width: 768px) {
-  .chat-sidebar-toggle {
-    display: block;
-  }
-
   .chat-sidebar-backdrop {
     display: block;
   }
-}
-.chat-grid {
-  width: 100%;
-  height: 100%;
-  min-width: 0;
 }
 
 .chat-root::before {
@@ -229,10 +238,9 @@ body {
   height: 100%;
   min-height: 0;
   flex-direction: column;
-  flex: 0 0 330px !important;
+  flex: 0 0 330px;
   width: 330px;
   max-width: 330px;
-  transition: transform 0.3s ease, width 0.3s ease;
 }
 
 @media (max-width: 768px) {
@@ -240,10 +248,13 @@ body {
     position: fixed;
     left: 0;
     top: 0;
-    width: 280px;
+    width: 100%;
     height: 100%;
     z-index: 100;
     transform: translateX(-100%);
+    transition: transform 0.3s ease;
+    flex: none;
+    max-width: none;
   }
 
   .chat-conversations.open {
@@ -254,14 +265,9 @@ body {
 .chat-messages {
   display: flex;
   flex-direction: column;
-  height: 100%;
-  /* Override MUI Grid item sizing: make this panel grow to fill remaining space */
-  flex: 1 1 0 !important;
-  width: auto !important;
-  max-width: none !important;
+  flex: 1 1 0;
   min-width: 0;
   min-height: 0;
-  position: relative;
   overflow: hidden;
 }
 
@@ -269,9 +275,10 @@ body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 16px;
+  padding: 0 0 16px;
   display: flex;
   flex-direction: column;
+  justify-content: flex-start;
 }
 
 .conversation-list-close-btn {
@@ -296,6 +303,47 @@ body {
 @media (max-width: 768px) {
   .conversation-list-close-btn {
     display: block;
+  }
+}
+
+.conversation-list-back-btn-wrapper {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .conversation-list-back-btn-wrapper {
+    display: block;
+    margin-top: auto;
+    padding-top: 16px;
+  }
+
+  .conversation-list-back-btn {
+    width: 100%;
+    padding: 12px;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    background: linear-gradient(
+      135deg,
+      rgba(124, 92, 255, 0.25),
+      rgba(47, 227, 198, 0.12)
+    );
+    color: rgba(255, 255, 255, 0.88);
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s ease;
+  }
+
+  .conversation-list-back-btn:hover {
+    background: linear-gradient(
+      135deg,
+      rgba(124, 92, 255, 0.4),
+      rgba(47, 227, 198, 0.2)
+    );
+  }
+
+  .conversation-list-back-btn:active {
+    transform: scale(0.98);
   }
 }
 
@@ -345,6 +393,11 @@ body {
   padding-left: 8px;
 }
 
+.message-bubble-user,
+.message-bubble-assistant {
+  border-radius: 18px;
+}
+
 .chat-message-list {
   flex: 1 1 auto;
   min-height: 0;
@@ -355,21 +408,15 @@ body {
   flex-direction: column;
   gap: 12px;
   box-sizing: border-box;
-  /* Override MUI Grid item sizing so this can grow */
-  flex-basis: auto !important;
-  max-width: 100% !important;
   width: 100%;
 }
 
 .chat-input {
   padding: 16px;
   width: 100%;
-  position: sticky;
-  bottom: 0;
+  box-sizing: border-box;
   z-index: 2;
-  flex: 0 0 auto !important;
-  flex-shrink: 0;
-  height: auto !important;
+  flex: 0 0 auto;
   min-height: 72px;
   display: flex;
   align-items: center;
@@ -380,9 +427,6 @@ body {
     rgba(3, 35, 84, 0.72),
     rgba(15, 20, 35, 0.72)
   );
-  /* Override MUI Grid item sizing so it spans the row */
-  flex-basis: auto !important;
-  max-width: 100% !important;
 }
 
 .chat-input form {
@@ -529,6 +573,13 @@ body {
   align-items: center;
 }
 
+@media (max-width: 899px) {
+  .login-grid {
+    min-height: auto;
+    padding: 8px 0;
+  }
+}
+
 .login-grid-item {
   min-width: 0;
 }
@@ -568,24 +619,17 @@ body {
 @media (max-width: 900px) {
   .login-background {
     padding: 16px;
+    align-items: flex-start;
+    padding-top: 40px;
   }
 
   .login-auth-panel {
-    max-width: none;
-    margin-left: 0;
+    max-width: 480px;
+    margin: 0 auto;
   }
 }
 
 @media (max-width: 768px) {
-  .chat-grid {
-    flex-direction: column !important;
-  }
-
-  .chat-messages {
-    width: 100% !important;
-    flex: 1 1 auto !important;
-  }
-
   .chat-input {
     min-height: 60px;
   }

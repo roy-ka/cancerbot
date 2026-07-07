@@ -30,8 +30,8 @@ export default function Login() {
       className="login-background"
     >
       <Grid container spacing={3} className="login-grid">
-        <Grid size={{ xs: 12, md: 6 }} className="login-grid-item">
-          <Box className="login-details-container" sx={{ minHeight: '60dvu' }}>
+        <Grid size={{ xs: 0, md: 6 }} className="login-grid-item" sx={{ display: { xs: 'none', md: 'block' } }}>
+          <Box className="login-details-container" sx={{ minHeight: '60dvh' }}>
             <LoginDetails />
           </Box>
         </Grid>
