@@ -1,7 +1,8 @@
 import { useRef } from 'react'
 import LoginDetails from '../components/LoginDetails'
 import AuthPanel from '../components/AuthPanel'
-import { Box, Grid } from '@mui/material'
+import { Box, Grid, Typography } from '@mui/material'
+import { cancerbotDark } from '../assets'
 
 export default function Login() {
   const bgRef = useRef<HTMLDivElement | null>(null)
@@ -29,20 +30,35 @@ export default function Login() {
       onMouseLeave={onMouseLeave}
       className="login-background"
     >
-      <Grid container spacing={3} className="login-grid">
-        <Grid size={{ xs: 0, md: 6 }} className="login-grid-item" sx={{ display: { xs: 'none', md: 'block' } }}>
-          <Box className="login-details-container" sx={{ minHeight: '60dvh' }}>
-            <LoginDetails />
-          </Box>
-        </Grid>
+      <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%', maxWidth: 1280 }}>
+        <Box sx={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 2, mb: 4 }}>
+          <img src={cancerbotDark} alt="cancerbot" style={{ width: 112, height: 112, borderRadius: 22 }} />
+          <Typography
+            sx={{
+              fontSize: 112,
+              lineHeight: '112px',
+              fontWeight: 900,
+              color: '#ffffff',
+              letterSpacing: '0.04em',
+              fontFamily: '"Nunito", sans-serif',
+            }}
+          >
+            CANCER-BOT
+          </Typography>
+        </Box>
 
-        <Grid
-          size={{ xs: 12, md: 6 }}
-          className="login-grid-item login-auth-panel"
-        >
-          <AuthPanel />
+        <Grid container spacing={3} className="login-grid">
+          <Grid size={{ xs: 0, md: 6 }} className="login-grid-item" sx={{ display: { xs: 'none', md: 'block' } }}>
+            <Box className="login-details-container">
+              <LoginDetails />
+            </Box>
+          </Grid>
+
+          <Grid size={{ xs: 12, md: 6 }} className="login-grid-item login-auth-panel">
+            <AuthPanel />
+          </Grid>
         </Grid>
-      </Grid>
+      </Box>
     </Box>
   )
 }

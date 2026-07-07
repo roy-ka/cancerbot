@@ -1,5 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img">
-  <title>Cancer-bot beach reader, light circular badge</title>
+  <title>Cancer-bot beach reader, light circular badge. Wordmark font: Nunito</title>
+  <style>@import url('https://fonts.googleapis.com/css2?family=Nunito:wght@700&amp;display=swap');</style>
   <circle cx="120" cy="120" r="110" fill="#FFF8EE"/>
   <g transform="translate(120,120) scale(0.8) translate(-120,-120)">
     <g stroke="#22303C" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none">
@@ -15,7 +16,7 @@
     <path d="M128 150 Q118 142 108 146 M132 160 Q122 158 116 164 M188 150 Q198 142 208 146 M184 160 Q194 158 200 164" fill="none" stroke="#22303C" stroke-width="3.5" stroke-linecap="round"/>
     <path d="M126 170 Q142 162 158 166 L158 180 Q142 176 126 186 Z M190 170 Q174 162 158 166 L158 180 Q174 176 190 186 Z" fill="#FFFFFF" stroke="#22303C" stroke-width="3.5" stroke-linejoin="round"/>
     <path d="M148 152 Q158 158 168 152" fill="none" stroke="#22303C" stroke-width="3" stroke-linecap="round"/>
-    <text x="120" y="222" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="26" font-weight="bold" fill="#22303C" letter-spacing="1">cancer-bot</text>
+    <text x="120" y="222" text-anchor="middle" font-family="'Nunito', Helvetica, sans-serif" font-size="26" font-weight="700" fill="#22303C" letter-spacing="1">cancer-bot</text>
   </g>
   <circle cx="120" cy="120" r="110" fill="none" stroke="#22303C" stroke-width="5"/>
 </svg>

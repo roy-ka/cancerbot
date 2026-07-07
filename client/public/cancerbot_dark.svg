@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img">
+  <title>Cancer-bot beach reader, dark navy circular badge. Wordmark font: Nunito</title>
+  <style>@import url('https://fonts.googleapis.com/css2?family=Nunito:wght@700&amp;display=swap');</style>
+  <circle cx="120" cy="120" r="110" fill="#10243A"/>
+  <g transform="translate(120,120) scale(0.8) translate(-120,-120)">
+    <g stroke="#F5EDE0" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none">
+      <line x1="62" y1="150" x2="96" y2="38"/>
+      <path d="M40 68 Q88 -8 152 44 Q134 40 122 52 Q106 40 92 50 Q78 38 62 52 Q52 54 40 68 Z" fill="#FF7A5C"/>
+      <line x1="24" y1="176" x2="216" y2="176"/>
+    </g>
+    <line x1="146" y1="128" x2="140" y2="108" stroke="#F5EDE0" stroke-width="3.5" stroke-linecap="round"/>
+    <line x1="170" y1="128" x2="176" y2="108" stroke="#F5EDE0" stroke-width="3.5" stroke-linecap="round"/>
+    <circle cx="140" cy="104" r="6" fill="#F5EDE0"/>
+    <circle cx="176" cy="104" r="6" fill="#F5EDE0"/>
+    <ellipse cx="158" cy="148" rx="28" ry="19" fill="#FF7A5C" stroke="#F5EDE0" stroke-width="4"/>
+    <path d="M128 150 Q118 142 108 146 M132 160 Q122 158 116 164 M188 150 Q198 142 208 146 M184 160 Q194 158 200 164" fill="none" stroke="#F5EDE0" stroke-width="3.5" stroke-linecap="round"/>
+    <path d="M126 170 Q142 162 158 166 L158 180 Q142 176 126 186 Z M190 170 Q174 162 158 166 L158 180 Q174 176 190 186 Z" fill="#F5EDE0" stroke="#10243A" stroke-width="2.5" stroke-linejoin="round"/>
+    <line x1="158" y1="166" x2="158" y2="180" stroke="#10243A" stroke-width="2.5"/>
+    <path d="M148 152 Q158 158 168 152" fill="none" stroke="#10243A" stroke-width="3" stroke-linecap="round"/>
+    <text x="120" y="222" text-anchor="middle" font-family="'Nunito', Helvetica, sans-serif" font-size="26" font-weight="700" fill="#F5EDE0" letter-spacing="1">cancer-bot</text>
+  </g>
+  <circle cx="120" cy="120" r="110" fill="none" stroke="#F5EDE0" stroke-width="5"/>
+</svg>
