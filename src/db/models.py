@@ -19,6 +19,7 @@ class User(Base):
     name = Column(String(150), nullable=True)
     email = Column(String(320), unique=True, index=True, nullable=False)
     password_hash = Column(String(255), nullable=False)
+    email_verified = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
 
     conversations: Mapped[List["Conversation"]] = relationship(
@@ -143,6 +144,17 @@ class PasswordResetCode(Base):
     used_at = Column(DateTime(timezone=True), nullable=True)
     attempts = Column(Integer, default=0, nullable=False)
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+class EmailVerificationToken(Base):
+    __tablename__ = "email_verification_tokens"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    token_hash = Column(String(64), nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    used_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
+
 
 class LoginAttempt(Base):
     __tablename__ = "login_attempts"

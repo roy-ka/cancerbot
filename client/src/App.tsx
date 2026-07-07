@@ -2,6 +2,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import Login from './pages/Login'
 import Chat from './pages/Chat'
 import Terms from './pages/Terms'
+import VerifyEmail from './pages/VerifyEmail'
 import ProtectedRoute from './components/ProtectedRoute'
 import PublicRoute from './components/PublicRoute'
 import VersionBadge from './components/VersionBadge'
@@ -18,6 +19,7 @@ function App() {
         {/* Public — redirect to /chat if already authenticated */}
         <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
         <Route path="/terms" element={<Terms />} />
+        <Route path="/verify-email" element={<VerifyEmail />} />
 
         {/* Protected App */}
         <Route

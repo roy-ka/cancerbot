@@ -37,6 +37,28 @@ def _send_sendgrid(to: str, subject: str, html: str) -> None:
         raise
 
 
+async def send_verification_email(to: str, token: str, frontend_url: str) -> None:
+    verify_url = f"{frontend_url}/verify-email?token={token}"
+    subject = "Verify your CancerBot email address"
+    html = f"""
+    <div style="font-family:sans-serif;max-width:480px;margin:auto">
+      <h2>Verify your email</h2>
+      <p>Click the button below to verify your email address. This link expires in 24 hours.</p>
+      <div style="text-align:center;margin:32px 0">
+        <a href="{verify_url}"
+           style="background:#1a73e8;color:#fff;padding:14px 32px;border-radius:6px;
+                  text-decoration:none;font-weight:bold;font-size:16px">
+          Verify Email
+        </a>
+      </div>
+      <p style="color:#888;font-size:13px">
+        If you did not create a CancerBot account, you can safely ignore this email.
+      </p>
+    </div>
+    """
+    await asyncio.to_thread(_send_sendgrid, to, subject, html)
+
+
 async def send_password_reset_email(to: str, code: str) -> None:
     subject = "Your CancerBot password reset code"
     html = f"""

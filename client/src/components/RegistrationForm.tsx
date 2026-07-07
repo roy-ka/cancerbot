@@ -3,6 +3,25 @@ import { Stack, TextField, FormControl, Button, Checkbox, FormControlLabel, Link
 import { Link as RouterLink } from 'react-router-dom'
 import type { RegistrationPayload } from '../types'
 
+function EmailSentScreen({ email, onBackToLogin }: { email: string; onBackToLogin: () => void }) {
+  return (
+    <Stack spacing={3} sx={{ width: '100%', textAlign: 'center' }}>
+      <Typography variant="h6" sx={{ fontWeight: 600 }}>Check your email</Typography>
+      <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.7)' }}>
+        We sent a verification link to <strong>{email}</strong>. Click the link to activate your account.
+      </Typography>
+      <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.5)', fontSize: '0.8rem' }}>
+        Didn't receive it? Check your spam folder or{' '}
+        <Link component="button" onClick={onBackToLogin} sx={{ fontSize: '0.8rem' }}>
+          go back to login
+        </Link>
+        .
+      </Typography>
+      <Button variant="outlined" onClick={onBackToLogin}>Back to Login</Button>
+    </Stack>
+  )
+}
+
 interface PasswordRequirement {
   label: string
   met: boolean
@@ -83,6 +102,7 @@ export default function RegistrationForm({
   const [name, setName] = useState('')
   const [termsAccepted, setTermsAccepted] = useState(false)
   const [error, setError] = useState('')
+  const [emailSent, setEmailSent] = useState(false)
   const BASE_URL = import.meta.env.VITE_BASE_URL || ''
 
   const verifyEmail = (email: string) => {
@@ -106,7 +126,7 @@ export default function RegistrationForm({
       const err = await res.json().catch(() => null)
       throw new Error(err?.detail ?? err?.message ?? 'Registration failed')
     }
-    changeToLogin()
+    setEmailSent(true)
   }
 
   const onSubmit = (e: React.SubmitEvent<HTMLFormElement>) => {
@@ -135,6 +155,10 @@ export default function RegistrationForm({
   const changeName = (e: React.ChangeEvent<HTMLInputElement>) => {
     const name = e.target.value
     setName(name)
+  }
+
+  if (emailSent) {
+    return <EmailSentScreen email={email} onBackToLogin={changeToLogin} />
   }
 
   return (
