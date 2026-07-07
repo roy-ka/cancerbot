@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, Response, HTTPException, status
+import os
+
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, Response, HTTPException, status
 from sqlalchemy.orm import Session
 from src.deps.db import get_db
 from src.auth.security import SecurityUtils
@@ -11,15 +13,17 @@ from src.utils.utils import is_prod
 from src.db.repositories.users import (
     create_user,
     get_user_by_email,
+    get_user_by_id,
     update_last_login,
 )
 from src.db.repositories.password_resets import create_reset_code, verify_and_consume_code
+from src.db.repositories.email_verification import create_verification_token, verify_and_consume_token
 from src.db.repositories.login_attempts import (
     increment_failed_attempts,
     reset_failed_attempts,
     is_account_locked,
 )
-from src.utils.email import send_password_reset_email
+from src.utils.email import send_password_reset_email, send_verification_email
 
 PASSWORD_REGEX_PATTERNS = {
     'lowercase': r'[a-z]',
@@ -59,13 +63,11 @@ def validate_password(password: str) -> str:
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 @router.post("/register/", status_code=201)
-async def register_user(req: CreateUserRequest, db: Session = Depends(get_db)):
-    # Validate password requirements
+async def register_user(req: CreateUserRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     password_error = validate_password(req.password)
     if password_error:
         raise HTTPException(status_code=400, detail=password_error)
 
-    # Check for existing email first to return a clean error
     existing = get_user_by_email(db=db, email=req.email)
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -74,9 +76,12 @@ async def register_user(req: CreateUserRequest, db: Session = Depends(get_db)):
         db=db,
         name=req.name,
         email=req.email,
-        password_hash=password_hash ,
+        password_hash=password_hash,
     )
-    return {"message": "User created", "email": user.email, "user_id": str(user.id)}
+    token = create_verification_token(db=db, user_id=user.id)
+    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
+    background_tasks.add_task(send_verification_email, to=user.email, name=user.name, token=token, frontend_url=frontend_url)
+    return {"message": "Please check your email to verify your account.", "email": user.email}
 
 
 @router.post("/login/")
@@ -99,6 +104,9 @@ async def generate_token(req: LoginRequest, response: Response, db: Session = De
                 detail="Too many failed login attempts. Account locked. Please reset your password."
             )
         raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    if not user.email_verified:
+        raise HTTPException(status_code=403, detail="Please verify your email before logging in.")
 
     reset_failed_attempts(db, req.email)
     update_last_login(db=db, user=user)
@@ -146,15 +154,11 @@ class ResetPasswordRequest(BaseModel):
 
 
 @router.post("/forgot-password/")
-async def forgot_password(req: ForgotPasswordRequest, db: Session = Depends(get_db)):
+async def forgot_password(req: ForgotPasswordRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     user = get_user_by_email(db=db, email=req.email)
-    # Always return 200 to avoid leaking which emails are registered
     if user:
         code = create_reset_code(db=db, user_id=user.id)
-        try:
-            await send_password_reset_email(to=user.email, code=code)
-        except Exception as e:
-            logging.warning(f"Failed to send reset email to {user.email}: {e}")
+        background_tasks.add_task(send_password_reset_email, to=user.email, code=code)
     return {"ok": True}
 
 
@@ -174,4 +178,33 @@ async def reset_password(req: ResetPasswordRequest, db: Session = Depends(get_db
 
     user.password_hash = SecurityUtils.hash_password(req.new_password)
     db.commit()
+    return {"ok": True}
+
+
+@router.get("/verify-email/")
+async def verify_email(token: str = Query(...), db: Session = Depends(get_db)):
+    user_id, error = verify_and_consume_token(db=db, token=token)
+    if not user_id:
+        raise HTTPException(status_code=400, detail=error)
+
+    user = get_user_by_id(db=db, user_id=user_id)
+    if not user:
+        raise HTTPException(status_code=400, detail="User not found.")
+
+    user.email_verified = True
+    db.commit()
+    return {"ok": True, "message": "Email verified. You can now log in."}
+
+
+class ResendVerificationRequest(BaseModel):
+    email: EmailStr
+
+
+@router.post("/resend-verification/")
+async def resend_verification(req: ResendVerificationRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    user = get_user_by_email(db=db, email=req.email)
+    if user and not user.email_verified:
+        token = create_verification_token(db=db, user_id=user.id)
+        frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
+        background_tasks.add_task(send_verification_email, to=user.email, name=user.name, token=token, frontend_url=frontend_url)
     return {"ok": True}

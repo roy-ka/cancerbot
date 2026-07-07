@@ -4,8 +4,13 @@ import os
 
 logger = logging.getLogger(__name__)
 
+EMAIL_TEMPLATES = {
+    "verification": "d-6a6d6095e74549fbb91c18e741cef813",
+    # "password_reset": "d-...",
+}
 
-def _send_sendgrid(to: str, subject: str, html: str) -> None:
+
+def _send_sendgrid(to: str, template_id: str, template_data: dict) -> None:
     try:
         from sendgrid import SendGridAPIClient
         from sendgrid.helpers.mail import Mail
@@ -15,41 +20,36 @@ def _send_sendgrid(to: str, subject: str, html: str) -> None:
 
     api_key = os.getenv("SENDGRID_API_KEY")
     if not api_key:
-        logger.warning("[email] SendGrid not configured — would have sent to %s: %s", to, subject)
+        logger.warning("[email] SendGrid not configured — would have sent to %s (template %s)", to, template_id)
         return
 
-    from_email = os.getenv("EMAIL_FROM", "noreply@example.com")
-    from_name = os.getenv("EMAIL_FROM_NAME", "CancerBot")
-
-    message = Mail(
-        from_email=(from_email, from_name),
-        to_emails=to,
-        subject=subject,
-        html_content=html,
-    )
+    message = Mail(from_email=("no-reply@cancer-bot.com", "CancerBot"), to_emails=to)
+    message.template_id = template_id
+    message.dynamic_template_data = template_data
 
     try:
         sg = SendGridAPIClient(api_key)
         sg.send(message)
-        logger.info("[email] sent to=%s subject=%s", to, subject)
+        logger.info("[email] sent to=%s template=%s", to, template_id)
     except Exception as e:
         logger.error("[email] SendGrid error: %s", e)
         raise
 
 
+async def send_verification_email(to: str, name: str, token: str, frontend_url: str) -> None:
+    verify_url = f"{frontend_url}/verify-email?token={token}"
+    if os.getenv("ENV", "development") != "production":
+        logger.info("[email] verification link for %s: %s", to, verify_url)
+    await asyncio.to_thread(
+        _send_sendgrid,
+        to,
+        EMAIL_TEMPLATES["verification"],
+        {"name": name, "link": verify_url},
+    )
+
+
 async def send_password_reset_email(to: str, code: str) -> None:
-    subject = "Your CancerBot password reset code"
-    html = f"""
-    <div style="font-family:sans-serif;max-width:480px;margin:auto">
-      <h2>Reset your password</h2>
-      <p>Enter this 6-digit code to reset your password. It expires in 15 minutes.</p>
-      <div style="font-size:36px;font-weight:bold;letter-spacing:10px;text-align:center;
-                  background:#f4f4f4;padding:20px;border-radius:8px;margin:24px 0">
-        {code}
-      </div>
-      <p style="color:#888;font-size:13px">
-        If you did not request this, you can safely ignore this email.
-      </p>
-    </div>
-    """
-    await asyncio.to_thread(_send_sendgrid, to, subject, html)
+    if os.getenv("ENV", "development") != "production":
+        logger.info("[email] password reset code for %s: %s", to, code)
+    else:
+        logger.warning("[email] password reset template not configured — email not sent to %s", to)
