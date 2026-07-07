@@ -52,5 +52,5 @@ def verify_and_consume_token(db, token: str) -> tuple[str | None, str]:
         return None, "Verification link has expired. Please request a new one."
 
     record.used_at = now
-    db.commit()
+    # caller commits — keeps token consumption and email_verified in one transaction
     return str(record.user_id), ""

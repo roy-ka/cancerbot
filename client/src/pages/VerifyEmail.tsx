@@ -10,6 +10,8 @@ export default function VerifyEmail() {
   const BASE_URL = import.meta.env.VITE_BASE_URL || ''
 
   useEffect(() => {
+    if (status !== 'loading') return
+
     const token = searchParams.get('token')
     if (!token) {
       setStatus('error')
@@ -32,7 +34,7 @@ export default function VerifyEmail() {
         setStatus('error')
         setMessage('Network error. Please try again.')
       })
-  }, [])
+  }, [searchParams])
 
   return (
     <Box

@@ -1,6 +1,6 @@
 import os
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Response, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, Response, HTTPException, status
 from sqlalchemy.orm import Session
 from src.deps.db import get_db
 from src.auth.security import SecurityUtils
@@ -180,8 +180,6 @@ async def reset_password(req: ResetPasswordRequest, db: Session = Depends(get_db
     db.commit()
     return {"ok": True}
 
-
-from fastapi import Query
 
 @router.get("/verify-email/")
 async def verify_email(token: str = Query(...), db: Session = Depends(get_db)):

@@ -13,7 +13,7 @@ EMAIL_TEMPLATES = {
 def _send_sendgrid(to: str, template_id: str, template_data: dict) -> None:
     try:
         from sendgrid import SendGridAPIClient
-        from sendgrid.helpers.mail import Mail, DynamicTemplateData
+        from sendgrid.helpers.mail import Mail
     except ImportError:
         logger.error("SendGrid SDK not installed. Run: pip install sendgrid")
         return
@@ -49,10 +49,7 @@ async def send_verification_email(to: str, name: str, token: str, frontend_url: 
 
 
 async def send_password_reset_email(to: str, code: str) -> None:
-    # TODO: add SendGrid template and move to EMAIL_TEMPLATES
-    await asyncio.to_thread(
-        _send_sendgrid,
-        to,
-        "",  # placeholder until template is created
-        {"code": code},
-    )
+    if os.getenv("ENV", "development") != "production":
+        logger.info("[email] password reset code for %s: %s", to, code)
+    else:
+        logger.warning("[email] password reset template not configured — email not sent to %s", to)
