@@ -258,12 +258,6 @@ _wiki = wikipediaapi.Wikipedia(
     extract_format=wikipediaapi.ExtractFormat.WIKI,
 )
 
-_ONCOLOGY_KEYWORDS = {
-    "cancer", "carcinoma", "tumor", "tumour", "oncol", "leukemia", "lymphoma",
-    "sarcoma", "melanoma", "glioma", "metastasis", "neoplasm", "malignant",
-    "chemotherapy", "radiotherapy", "immunotherapy", "targeted therapy",
-}
-
 _WIKI_SEARCH_URL = "https://en.wikipedia.org/w/api.php"
 
 
@@ -277,7 +271,7 @@ def _pick_oncology_title(candidates: list[dict]) -> str | None:
         title = item.get("title") or ""
         snippet = _strip_wiki_html(item.get("snippet") or "")
         combined = title.lower() + " " + snippet.lower()
-        if title and any(kw in combined for kw in _ONCOLOGY_KEYWORDS):
+        if title and any(kw in combined for kw in CANCER_KEYWORDS):
             return title
     # Fall back to highest-ranked result that has a title
     for item in candidates:
@@ -315,11 +309,20 @@ async def _search_wikipedia_sources(terms: list[str], max_results: int = 3) -> l
         return []
 
     def _fetch() -> list[dict]:
+        from src.retrieval.db_connector import dbConnector
+
+        batch = terms[:10]
+        term_tags = [f"wikipedia:term:{t.lower()}" for t in batch]
+        already_tagged = dbConnector.existing_tags(term_tags)
+
         out: list[dict] = []
         seen: set[str] = set()
-        for term in terms[:10]:
+        for term, term_tag in zip(batch, term_tags):
             if len(out) >= max_results:
                 break
+            if term_tag in already_tagged:
+                logger.debug("[wikipedia] skipping already-indexed term='%s'", term)
+                continue
             try:
                 candidates = _wiki_search(term)
                 title = _pick_oncology_title(candidates) if candidates else term
@@ -342,7 +345,7 @@ async def _search_wikipedia_sources(terms: list[str], max_results: int = 3) -> l
                         "doi": None,
                         "title": page.title,
                         "content_for_embedding": f"{page.title}\n\n{summary}",
-                        "tags": ["wikipedia"],
+                        "tags": ["wikipedia", term_tag],
                         "abstract_source": "wikipedia",
                         "url": page.fullurl,
                     }
@@ -351,7 +354,7 @@ async def _search_wikipedia_sources(terms: list[str], max_results: int = 3) -> l
                 logger.warning(f"[wikipedia] error for term='{term}': {e}")
                 continue
 
-        logger.info(f"[wikipedia] fetched {len(out)} pages")
+        logger.info(f"[wikipedia] fetched %d pages (skipped %d already indexed)", len(out), len(already_tagged))
         return out
 
     return await asyncio.to_thread(_fetch)
@@ -577,7 +580,7 @@ CANCER_KEYWORDS: frozenset[str] = frozenset({
     "glioma", "glioblastoma", "myeloma", "mesothelioma", "neuroblastoma",
     "blastoma", "adenocarcinoma", "squamous cell", "neoplasm", "neoplasia",
     "tumor", "tumour", "malignant", "malignancy", "metastasis", "metastatic",
-    "oncology", "oncologist", "oncogene",
+    "onco", "oncology", "oncologist", "oncogene",
     # Treatment
     "chemotherapy", "radiotherapy", "immunotherapy", "targeted therapy",
     "checkpoint inhibitor", "car-t", "car t", "stem cell transplant",

@@ -218,6 +218,35 @@ class dbConnector:
     return {hit['_source']['id'] for hit in res['hits']['hits'] if hit.get('_source', {}).get('id')}
 
   @classmethod
+  def existing_tags(cls, tags: list[str]) -> set[str]:
+    """Return the subset of `tags` that exist on at least one document in the sources index."""
+    if not tags:
+      return set()
+    cls._initialize()
+    if not cls.db_client:
+      return set()
+    try:
+      res = cls.db_client.search(
+        index=cls._model['sources_index'],
+        body={
+          'size': 0,
+          'query': {'terms': {'tags.keyword': tags}},
+          'aggs': {
+            'found': {
+              'terms': {
+                'field': 'tags.keyword',
+                'include': tags,
+                'size': len(tags),
+              }
+            }
+          },
+        }
+      )
+      return {b['key'] for b in res.get('aggregations', {}).get('found', {}).get('buckets', [])}
+    except Exception:
+      return set()
+
+  @classmethod
   def get_sources_by_id(cls, ids):
     if not ids:
       return {'hits': {'hits': []}}

@@ -494,6 +494,17 @@ else
   fi
 fi
 
+# Run one-off seeds against the live infrastructure (OpenSearch, Postgres)
+# Seeds are non-fatal: a failure logs a warning but does not abort the deploy.
+echo ""
+echo "Running seeds..."
+if docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot \
+    run --rm --no-deps backend python scripts/seed_wikipedia_tags.py 2>&1 | sed 's/^/    /'; then
+  echo "✓ Seeds completed"
+else
+  echo "⚠ Warning: seeds failed (non-critical — deploy continues)"
+fi
+
 # Now start the backend and other prod-profile services
 echo ""
 echo "Starting backend services..."
