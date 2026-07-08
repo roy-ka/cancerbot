@@ -55,6 +55,8 @@ def test_user(db_session):
         email="testuser@example.com",
         password_hash=SecurityUtils.hash_password("TestPass123!"),
     )
+    user.email_verified = True
+    db_session.commit()
     return user
 
 

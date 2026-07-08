@@ -28,6 +28,17 @@ def create_verification_token(db, user_id) -> str:
     return token
 
 
+def find_token_user_id(db, token: str) -> str | None:
+    """Return the user_id for a token regardless of whether it has been used."""
+    token_hash = _hash_token(token)
+    record = (
+        db.query(EmailVerificationToken)
+        .filter(EmailVerificationToken.token_hash == token_hash)
+        .first()
+    )
+    return str(record.user_id) if record else None
+
+
 def verify_and_consume_token(db, token: str) -> tuple[str | None, str]:
     """Returns (user_id, error). user_id is None on failure."""
     token_hash = _hash_token(token)

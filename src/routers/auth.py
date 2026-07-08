@@ -17,7 +17,7 @@ from src.db.repositories.users import (
     update_last_login,
 )
 from src.db.repositories.password_resets import create_reset_code, verify_and_consume_code
-from src.db.repositories.email_verification import create_verification_token, verify_and_consume_token
+from src.db.repositories.email_verification import create_verification_token, verify_and_consume_token, find_token_user_id
 from src.db.repositories.login_attempts import (
     increment_failed_attempts,
     reset_failed_attempts,
@@ -134,8 +134,18 @@ async def generate_token(req: LoginRequest, response: Response, db: Session = De
     return {"token_type": "bearer"}
 
 @router.get("/check/")
-async def check_auth(current_user=Depends(get_current_user)):
-    return {"authenticated": True, "user_id": str(current_user.id), "email": current_user.email, "name": current_user.name}
+async def check_auth(current_user=Depends(get_current_user), db: Session = Depends(get_db)):
+    from src.db.repositories.terms import get_latest_terms
+    latest = get_latest_terms(db)
+    needs_terms_update = latest is not None and current_user.terms_version != latest.version
+    return {
+        "authenticated": True,
+        "user_id": str(current_user.id),
+        "email": current_user.email,
+        "name": current_user.name,
+        "terms_version": current_user.terms_version,
+        "needs_terms_update": needs_terms_update,
+    }
 
 @router.post("/logout/")
 async def logout(response: Response):
@@ -185,6 +195,12 @@ async def reset_password(req: ResetPasswordRequest, db: Session = Depends(get_db
 async def verify_email(token: str = Query(...), db: Session = Depends(get_db)):
     user_id, error = verify_and_consume_token(db=db, token=token)
     if not user_id:
+        # Check if the token was already consumed and the user is already verified
+        existing_user_id = find_token_user_id(db=db, token=token)
+        if existing_user_id:
+            user = get_user_by_id(db=db, user_id=existing_user_id)
+            if user and user.email_verified:
+                return {"ok": True, "already_verified": True, "message": "Your email is already verified."}
         raise HTTPException(status_code=400, detail=error)
 
     user = get_user_by_id(db=db, user_id=user_id)
@@ -193,7 +209,7 @@ async def verify_email(token: str = Query(...), db: Session = Depends(get_db)):
 
     user.email_verified = True
     db.commit()
-    return {"ok": True, "message": "Email verified. You can now log in."}
+    return {"ok": True, "already_verified": False, "message": "Email verified. You can now log in."}
 
 
 class ResendVerificationRequest(BaseModel):

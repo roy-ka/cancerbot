@@ -6,6 +6,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 CancerBot is a Retrieval-Augmented Generation (RAG) chatbot for cancer-related medical information. It uses a hybrid search approach (BM25 + KNN vector search) over a corpus of medical sources and claims in OpenSearch, with Groq (cloud LLM) for generation and Ollama for embeddings only. On every user message, the system also performs live external search (PubMed, CrossRef, Wikipedia), embeds the results, and indexes them into OpenSearch before retrieval.
 
+## Dependencies
+
+Every library or service added to the codebase must be declared in the appropriate file before use:
+- Python packages → `requirements.txt`
+- Frontend packages → `client/package.json` (via `npm install <pkg>`)
+- Docker services → `docker-compose.yml`
+
+Never import a package or depend on a service that is not listed in the relevant file.
+
+## Environment Variables
+
+Every new `.env` entry must also be added to `example.env`:
+- Include the actual value if it is **not secret** (e.g. `FRONTEND_URL=https://cancer-bot.com`, `ENV=production`)
+- Use a placeholder for secrets (e.g. `SENDGRID_API_KEY=your-sendgrid-api-key`, `JWT_SECRET=your-jwt-secret`)
+
+After committing, explicitly remind the user to update their `.env` with the new variable.
+
 ## Code Review Workflow
 
 **Before committing changes, always:**

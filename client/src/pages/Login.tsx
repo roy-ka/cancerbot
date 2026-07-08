@@ -1,11 +1,18 @@
-import { useRef } from 'react'
+import { useRef, useState, useEffect } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import LoginDetails from '../components/LoginDetails'
 import AuthPanel from '../components/AuthPanel'
-import { Box, Grid, Typography } from '@mui/material'
+import { Box, Grid, Typography, Snackbar, Alert } from '@mui/material'
 import { cancerbotDark } from '../assets'
 
 export default function Login() {
   const bgRef = useRef<HTMLDivElement | null>(null)
+  const [searchParams] = useSearchParams()
+  const [toast, setToast] = useState(false)
+
+  useEffect(() => {
+    if (searchParams.get('verified') === '1') setToast(true)
+  }, [])
   const onMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     const el = bgRef.current
     if (!el) return
@@ -30,17 +37,33 @@ export default function Login() {
       onMouseLeave={onMouseLeave}
       className="login-background"
     >
+      <Snackbar
+        open={toast}
+        autoHideDuration={6000}
+        onClose={() => setToast(false)}
+        anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
+      >
+        <Alert severity="success" onClose={() => setToast(false)} sx={{ width: '100%' }}>
+          Thank you for verifying your email! You can now log in.
+        </Alert>
+      </Snackbar>
       <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%', maxWidth: 1280 }}>
         <Box sx={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 2, mb: 4 }}>
-          <img src={cancerbotDark} alt="cancerbot" style={{ width: 112, height: 112, borderRadius: 22 }} />
+          <Box
+            component="img"
+            src={cancerbotDark}
+            alt="cancerbot"
+            sx={{ width: { xs: 40, md: 112 }, height: { xs: 40, md: 112 }, borderRadius: { xs: '10px', md: '22px' } }}
+          />
           <Typography
             sx={{
-              fontSize: 112,
-              lineHeight: '112px',
+              fontSize: { xs: 28, md: 112 },
+              lineHeight: { xs: '40px', md: '112px' },
               fontWeight: 900,
               color: '#ffffff',
               letterSpacing: '0.04em',
               fontFamily: '"Nunito", sans-serif',
+              whiteSpace: 'nowrap',
             }}
           >
             CANCER-BOT

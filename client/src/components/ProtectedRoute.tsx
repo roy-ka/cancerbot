@@ -8,7 +8,7 @@ interface ProtectedRouteProps {
 
 export default function ProtectedRoute({ children }: ProtectedRouteProps) {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null)
-  const [termsAccepted, setTermsAccepted] = useState<boolean | null>(null)
+  const [termsRedirect, setTermsRedirect] = useState<string | null>(null)
 
   useEffect(() => {
     const checkAuth = async () => {
@@ -23,7 +23,19 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
           signal: controller.signal,
         })
         clearTimeout(timeout)
-        setIsAuthenticated(res.ok)
+
+        if (!res.ok) {
+          setIsAuthenticated(false)
+          return
+        }
+
+        const data = await res.json()
+        setIsAuthenticated(true)
+
+        if (data.needs_terms_update) {
+          const isUpdate = data.terms_version != null
+          setTermsRedirect(isUpdate ? '/terms?updated=1' : '/terms')
+        }
       } catch (e) {
         console.error('Auth check failed:', e)
         setIsAuthenticated(false)
@@ -31,13 +43,9 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
     }
 
     checkAuth()
-
-    // Check terms acceptance
-    const accepted = localStorage.getItem('termsAccepted') === 'true'
-    setTermsAccepted(accepted)
   }, [])
 
-  if (isAuthenticated === null || termsAccepted === null) {
+  if (isAuthenticated === null) {
     return <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>Loading...</Box>
   }
 
@@ -45,8 +53,8 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
     return <Navigate to="/login" replace />
   }
 
-  if (!termsAccepted) {
-    return <Navigate to="/terms" replace />
+  if (termsRedirect) {
+    return <Navigate to={termsRedirect} replace />
   }
 
   return <>{children}</>

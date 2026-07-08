@@ -23,6 +23,10 @@ export default function VerifyEmail() {
       .then(async (res) => {
         const data = await res.json().catch(() => null)
         if (res.ok) {
+          if (data?.already_verified) {
+            navigate('/login?verified=1')
+            return
+          }
           setStatus('success')
           setMessage(data?.message ?? 'Email verified successfully.')
         } else {

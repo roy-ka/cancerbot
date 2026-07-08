@@ -4,7 +4,7 @@ import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from src.routers import auth, health, conversations, bug_reports
+from src.routers import auth, health, conversations, bug_reports, terms
 from src.retrieval.db_connector import dbConnector
 from src.utils.utils import is_prod
 logging.basicConfig(
@@ -75,3 +75,4 @@ app.include_router(auth.router)
 app.include_router(health.router)
 app.include_router(conversations.router)
 app.include_router(bug_reports.router)
+app.include_router(terms.router)
