@@ -232,29 +232,11 @@ class TestConversationMessages:
 
 
 class TestFallbackPath:
-    @pytest.mark.skip(reason="Fallback path (search_and_embed) not yet implemented")
-    def test_add_message_insufficient_evidence_triggers_fallback(self, client, test_conversation):
-        with (
-            patch(
-                "src.routers.conversations.OllamaConnector.generate_text",
-                side_effect=[
-                    "Insufficient evidence in provided context.",
-                    "Cancer cells have altered metabolism [src-001].",
-                ],
-            ),
-            patch(
-                "src.routers.conversations.search_and_embed",
-                new=AsyncMock(
-                    return_value={
-                        "indexed": 2,
-                        "terms": ["cancer", "metabolism"],
-                        "pubmed_found": 2,
-                        "crossref_found": 0,
-                        "wikipedia_found": 0,
-                        "skipped": 0,
-                    }
-                ),
-            ),
+    def test_no_data_response_appends_source_citations(self, client, test_conversation):
+        from src.classes.ollama_connector import NO_DATA_RESPONSE
+        with patch(
+            "src.routers.conversations.OllamaConnector.generate_text",
+            return_value=NO_DATA_RESPONSE,
         ):
             response = client.post(
                 f"/conversations/{test_conversation.id}/add_message",
@@ -263,11 +245,10 @@ class TestFallbackPath:
 
             assert response.status_code == 200
             data = response.json()
-            # After fallback, should have an answer (not the "Insufficient" message)
             assistant_msg = data["messages"][-1]
             assert assistant_msg["role"] == "assistant"
-            # Should contain either the fallback answer or fallback metadata
-            assert "Cancer" in assistant_msg["content"] or "fallback" in assistant_msg["content"].lower()
+            # When the LLM has no relevant data, source citations are appended
+            assert "Related sources:" in assistant_msg["content"]
 
 
 class TestWebSocket:

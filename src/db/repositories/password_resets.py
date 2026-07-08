@@ -1,80 +1,68 @@
 import hashlib
-import hmac
 import secrets
-import string
 from datetime import datetime, timedelta, timezone
 
 from src.db.models import PasswordResetCode
 
-
-_CODE_TTL_MINUTES = 15
-_MAX_ATTEMPTS = 5
-
-
-def _hash_code(code: str) -> str:
-    return hashlib.sha256(code.encode()).hexdigest()
+_TOKEN_TTL_MINUTES = 60
+_MAX_USES = 5
 
 
-def generate_code() -> str:
-    alphabet = string.ascii_uppercase + string.digits
-    return "".join(secrets.choice(alphabet) for _ in range(8))
+def _hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
 
 
-def create_reset_code(db, user_id) -> str:
-    """Invalidate any existing unused codes for the user, create a new one, return plain code."""
-    # Invalidate previous unused codes so only one is active at a time
+def create_reset_token(db, user_id) -> str:
+    """Invalidate any existing unused tokens for the user, create a new one, return plain token."""
     db.query(PasswordResetCode).filter(
         PasswordResetCode.user_id == user_id,
         PasswordResetCode.used_at.is_(None),
     ).delete(synchronize_session=False)
 
-    code = generate_code()
+    token = secrets.token_urlsafe(32)
     record = PasswordResetCode(
         user_id=user_id,
-        code_hash=_hash_code(code),
-        expires_at=datetime.now(timezone.utc) + timedelta(minutes=_CODE_TTL_MINUTES),
+        code_hash=_hash_token(token),
+        expires_at=datetime.now(timezone.utc) + timedelta(minutes=_TOKEN_TTL_MINUTES),
     )
     db.add(record)
     db.commit()
-    return code
+    return token
 
 
-def verify_and_consume_code(db, user_id, code: str) -> tuple[bool, str]:
+def verify_reset_token(db, token: str) -> tuple[PasswordResetCode | None, str]:
     """
-    Returns (ok, error_message).
-    On success marks the code as used and returns (True, "").
+    Validate the reset token. Returns (record, "") on success or (None, error) on failure.
+    Does NOT consume the token — call consume_reset_token after a successful password change.
     """
     record = (
         db.query(PasswordResetCode)
         .filter(
-            PasswordResetCode.user_id == user_id,
+            PasswordResetCode.code_hash == _hash_token(token),
             PasswordResetCode.used_at.is_(None),
         )
-        .order_by(PasswordResetCode.created_at.desc())
         .first()
     )
 
     if not record:
-        return False, "No active reset code found."
+        return None, "Invalid or already used reset link."
 
-    # Handle both naive and aware datetimes (SQLite doesn't preserve timezone)
     now = datetime.now(timezone.utc)
     expires_at = record.expires_at
     if expires_at.tzinfo is None:
         expires_at = expires_at.replace(tzinfo=timezone.utc)
 
     if now > expires_at:
-        return False, "Reset code has expired."
+        return None, "Reset link has expired."
 
-    if record.attempts >= _MAX_ATTEMPTS:
-        return False, "Too many incorrect attempts. Please request a new code."
+    if record.use_count >= _MAX_USES:
+        return None, "Reset link has been used too many times. Please request a new one."
 
-    if not hmac.compare_digest(record.code_hash, _hash_code(code)):
-        record.attempts += 1
-        db.commit()
-        remaining = _MAX_ATTEMPTS - record.attempts
-        return False, f"Incorrect code. {remaining} attempt(s) remaining."
+    return record, ""
 
+
+def consume_reset_token(db, record: PasswordResetCode) -> None:
+    """Increment use_count and mark the token as used after a successful password change."""
+    record.use_count += 1
     record.used_at = datetime.now(timezone.utc)
     db.commit()
-    return True, ""

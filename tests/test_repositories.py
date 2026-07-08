@@ -8,7 +8,7 @@ from src.db.repositories.conversations import (
     create_conversation, get_conversation_by_id, soft_delete_conversation, get_conversations_list_by_user_id
 )
 from src.db.repositories.messeges import add_message, get_recent_messages, get_messages_by_conversation_id
-from src.db.repositories.password_resets import create_reset_code, verify_and_consume_code
+from src.db.repositories.password_resets import create_reset_token, verify_reset_token, consume_reset_token
 from src.auth.security import SecurityUtils
 
 
@@ -153,74 +153,84 @@ class TestMessageRepository:
 
 
 class TestPasswordResetRepository:
-    def test_create_reset_code_returns_eight_char_string(self, db_session, test_user):
-        code = create_reset_code(db_session, test_user.id)
-        assert isinstance(code, str)
-        assert code.isalnum()
-        assert len(code) == 8
+    def test_create_reset_token_returns_url_safe_string(self, db_session, test_user):
+        token = create_reset_token(db_session, test_user.id)
+        assert isinstance(token, str)
+        assert len(token) > 20  # secrets.token_urlsafe(32) → ~43 chars
 
-    def test_create_reset_code_invalidates_previous_code(self, db_session, test_user):
-        code1 = create_reset_code(db_session, test_user.id)
+    def test_create_reset_token_invalidates_previous_token(self, db_session, test_user):
+        token1 = create_reset_token(db_session, test_user.id)
         db_session.commit()
-        code2 = create_reset_code(db_session, test_user.id)
+        create_reset_token(db_session, test_user.id)
         db_session.commit()
-        # code1 should be marked as used or expired, code2 should be valid
-        ok, _ = verify_and_consume_code(db_session, test_user.id, code1)
-        assert ok is False
+        # token1 was deleted when token2 was created
+        record, _ = verify_reset_token(db_session, token1)
+        assert record is None
 
-    def test_verify_and_consume_code_success(self, db_session, test_user):
-        code = create_reset_code(db_session, test_user.id)
+    def test_verify_reset_token_success(self, db_session, test_user):
+        token = create_reset_token(db_session, test_user.id)
         db_session.commit()
 
-        # Immediately verify should succeed
-        ok, msg = verify_and_consume_code(db_session, test_user.id, code)
-        assert ok is True
+        record, msg = verify_reset_token(db_session, token)
+        assert record is not None
         assert msg == ""
+        assert str(record.user_id) == str(test_user.id)
 
-    def test_verify_and_consume_code_wrong_code(self, db_session, test_user):
-        create_reset_code(db_session, test_user.id)
+    def test_verify_reset_token_wrong_token(self, db_session, test_user):
+        create_reset_token(db_session, test_user.id)
         db_session.commit()
 
-        ok, msg = verify_and_consume_code(db_session, test_user.id, "999999")
-        assert ok is False
-        assert "attempt" in msg.lower() or "incorrect" in msg.lower()
+        record, msg = verify_reset_token(db_session, "completely-wrong-token")
+        assert record is None
+        assert "invalid" in msg.lower()
 
-    def test_verify_and_consume_code_max_attempts_blocks(self, db_session, test_user):
-        code = create_reset_code(db_session, test_user.id)
+    def test_verify_reset_token_max_uses_blocks(self, db_session, test_user):
+        token = create_reset_token(db_session, test_user.id)
         db_session.commit()
 
-        # Make max attempts
+        # Exhaust uses by calling consume_reset_token 5 times
         for _ in range(5):
-            verify_and_consume_code(db_session, test_user.id, "wrong")
-        db_session.commit()
-
-        # Next attempt should be blocked
-        ok, msg = verify_and_consume_code(db_session, test_user.id, code)
-        assert ok is False
-        assert "too many" in msg.lower() or "exceeded" in msg.lower()
-
-    def test_verify_and_consume_code_expired(self, db_session, test_user):
-        from freezegun import freeze_time
-        with freeze_time("2026-01-01 12:00:00"):
-            code = create_reset_code(db_session, test_user.id)
+            record, _ = verify_reset_token(db_session, token)
+            assert record is not None
+            record.use_count += 1
             db_session.commit()
 
-        # Move time forward past expiration (15+ minutes later)
-        with freeze_time("2026-01-01 12:30:00"):
-            ok, msg = verify_and_consume_code(db_session, test_user.id, code)
+        record, msg = verify_reset_token(db_session, token)
+        assert record is None
+        assert "too many" in msg.lower()
 
-        assert ok is False
+    def test_verify_reset_token_expired(self, db_session, test_user):
+        from freezegun import freeze_time
+        with freeze_time("2026-01-01 12:00:00"):
+            token = create_reset_token(db_session, test_user.id)
+            db_session.commit()
+
+        # Move forward past the 60-minute TTL
+        with freeze_time("2026-01-01 13:30:00"):
+            record, msg = verify_reset_token(db_session, token)
+
+        assert record is None
         assert "expir" in msg.lower()
 
-    def test_verify_and_consume_code_not_reusable(self, db_session, test_user):
-        code = create_reset_code(db_session, test_user.id)
+    def test_consume_reset_token_marks_used_and_increments(self, db_session, test_user):
+        token = create_reset_token(db_session, test_user.id)
         db_session.commit()
 
-        # First use should succeed
-        ok, _ = verify_and_consume_code(db_session, test_user.id, code)
-        assert ok is True
+        record, _ = verify_reset_token(db_session, token)
+        assert record is not None
+        consume_reset_token(db_session, record)
 
-        # Second use should fail
-        ok, msg = verify_and_consume_code(db_session, test_user.id, code)
-        assert ok is False
-        assert "no active" in msg.lower() or "invalid" in msg.lower()
+        # After consuming, token is no longer valid
+        record2, msg = verify_reset_token(db_session, token)
+        assert record2 is None
+        assert "invalid" in msg.lower() or "used" in msg.lower()
+
+    def test_verify_reset_token_not_reusable_after_consume(self, db_session, test_user):
+        token = create_reset_token(db_session, test_user.id)
+        db_session.commit()
+
+        record, _ = verify_reset_token(db_session, token)
+        consume_reset_token(db_session, record)
+
+        record2, msg = verify_reset_token(db_session, token)
+        assert record2 is None

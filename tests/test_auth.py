@@ -111,8 +111,10 @@ class TestForgotPassword:
             response = anon_client.post("/auth/forgot-password/", json={"email": test_user.email})
             assert response.status_code == 200
             mock_send.assert_called_once()
-            call_args = mock_send.call_args
-            assert test_user.email == call_args[1].get("to")  # to address in kwargs
+            call_kwargs = mock_send.call_args[1]
+            assert call_kwargs["to"] == test_user.email
+            assert "token=" in call_kwargs["link"]
+            assert call_kwargs["name"] is not None
 
     def test_forgot_password_missing_email_returns_422(self, anon_client):
         response = anon_client.post("/auth/forgot-password/", json={})
@@ -120,59 +122,35 @@ class TestForgotPassword:
 
 
 class TestResetPassword:
-    def test_reset_password_success(self, anon_client, test_user):
-        with patch("src.routers.auth.verify_and_consume_code") as mock_verify:
-            mock_verify.return_value = (True, "")
-            response = anon_client.post(
-                "/auth/reset-password/",
-                json={
-                    "email": test_user.email,
-                    "code": "123456",
-                    "new_password": "NewSecurePass123!",
-                },
-            )
-            assert response.status_code == 200
-            mock_verify.assert_called_once()
+    def test_reset_password_success(self, anon_client, test_user, db_session):
+        from src.db.repositories.password_resets import create_reset_token
+        token = create_reset_token(db_session, test_user.id)
+        db_session.commit()
 
-    def test_reset_password_wrong_code_returns_400(self, anon_client, test_user):
-        with patch("src.routers.auth.verify_and_consume_code") as mock_verify:
-            mock_verify.return_value = (False, "Invalid code")
-            response = anon_client.post(
-                "/auth/reset-password/",
-                json={
-                    "email": test_user.email,
-                    "code": "999999",
-                    "new_password": "NewPassword123!",
-                },
-            )
-            assert response.status_code == 400
-
-    def test_reset_password_unknown_email_returns_400(self, anon_client):
         response = anon_client.post(
             "/auth/reset-password/",
-            json={
-                "email": "unknown@example.com",
-                "code": "123456",
-                "new_password": "NewPassword123!",
-            },
+            json={"token": token, "new_password": "NewSecurePass123!"},
+        )
+        assert response.status_code == 200
+
+    def test_reset_password_invalid_token_returns_400(self, anon_client):
+        response = anon_client.post(
+            "/auth/reset-password/",
+            json={"token": "invalid-token-xyz", "new_password": "NewPassword123!"},
         )
         assert response.status_code == 400
 
-    def test_reset_password_short_password_returns_400(self, anon_client, test_user):
+    def test_reset_password_short_password_returns_400(self, anon_client):
         response = anon_client.post(
             "/auth/reset-password/",
-            json={
-                "email": test_user.email,
-                "code": "123456",
-                "new_password": "short",
-            },
+            json={"token": "any-token", "new_password": "short"},
         )
         assert response.status_code == 400
 
     def test_reset_password_missing_fields_returns_422(self, anon_client):
         response = anon_client.post(
             "/auth/reset-password/",
-            json={"email": "user@example.com"},
+            json={"token": "some-token"},
         )
         assert response.status_code == 422
 

@@ -16,7 +16,7 @@ from src.db.repositories.users import (
     get_user_by_id,
     update_last_login,
 )
-from src.db.repositories.password_resets import create_reset_code, verify_and_consume_code
+from src.db.repositories.password_resets import create_reset_token, verify_reset_token, consume_reset_token
 from src.db.repositories.email_verification import create_verification_token, verify_and_consume_token, find_token_user_id
 from src.db.repositories.login_attempts import (
     increment_failed_attempts,
@@ -158,8 +158,7 @@ class ForgotPasswordRequest(BaseModel):
 
 
 class ResetPasswordRequest(BaseModel):
-    email: EmailStr
-    code: str
+    token: str
     new_password: str
 
 
@@ -167,27 +166,34 @@ class ResetPasswordRequest(BaseModel):
 async def forgot_password(req: ForgotPasswordRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     user = get_user_by_email(db=db, email=req.email)
     if user:
-        code = create_reset_code(db=db, user_id=user.id)
-        background_tasks.add_task(send_password_reset_email, to=user.email, code=code)
+        token = create_reset_token(db=db, user_id=user.id)
+        frontend_url = os.getenv("FRONTEND_URL", "https://cancer-bot.com")
+        reset_link = f"{frontend_url}/reset-password?token={token}"
+        background_tasks.add_task(
+            send_password_reset_email,
+            to=user.email,
+            name=user.name or "User",
+            link=reset_link,
+        )
     return {"ok": True}
 
 
 @router.post("/reset-password/")
 async def reset_password(req: ResetPasswordRequest, db: Session = Depends(get_db)):
-    user = get_user_by_email(db=db, email=req.email)
-    if not user:
-        raise HTTPException(status_code=400, detail="Invalid code or email.")
-
-    ok, error = verify_and_consume_code(db=db, user_id=user.id, code=req.code)
-    if not ok:
-        raise HTTPException(status_code=400, detail=error)
-
     password_error = validate_password(req.new_password)
     if password_error:
         raise HTTPException(status_code=400, detail=password_error)
 
+    record, error = verify_reset_token(db=db, token=req.token)
+    if not record:
+        raise HTTPException(status_code=400, detail=error)
+
+    user = get_user_by_id(db=db, user_id=record.user_id)
+    if not user:
+        raise HTTPException(status_code=400, detail="User not found.")
+
     user.password_hash = SecurityUtils.hash_password(req.new_password)
-    db.commit()
+    consume_reset_token(db=db, record=record)
     return {"ok": True}
 
 
