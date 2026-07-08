@@ -40,7 +40,7 @@ export default function AuthPanel() {
   const subtitles: Record<View, string> = {
     login: 'Log in to continue to cancerbot.',
     register: 'Register to start saving sources and exploring evidence.',
-    forgot: "We'll send a code to your email.",
+    forgot: "We'll send a reset link to your email.",
   }
 
   return (
