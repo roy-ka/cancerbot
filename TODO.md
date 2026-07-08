@@ -13,3 +13,12 @@
 - [ ] **Multiple language support** — allow users to query and receive responses in languages other than English; consider UI locale switching, multilingual embeddings, and translated MeSH synonyms
 - [x] **Skip Wikipedia search when already indexed** — `dbConnector.existing_tags()` queries by `tags.keyword` aggregation; `_search_wikipedia_sources` checks at start of fetch and skips terms whose `wikipedia:term:<term>` tag is already indexed; tag is written on first index
 - [ ] **Improve search using tags** — enrich OpenSearch documents with structured tags (source type, disease area, publication year, evidence level) so retrieval can filter/boost by tag alongside BM25+KNN; apply equivalent field-level filters when querying PubMed (MeSH terms, publication type) and CrossRef (subject, type) to narrow external results before embedding
+- [ ] **Rate limiting on register and forgot-password** — `/auth/register/` and `/auth/forgot-password/` have no abuse protection; add per-IP or per-email rate limiting consistent with the `LoginAttempt` pattern already used for login
+- [ ] **Retry logic for external APIs** — PubMed, CrossRef, and Wikipedia fetches have no retry on transient errors; a single timeout silently drops that source; add exponential backoff with a small retry budget
+- [ ] **JWT token revocation on password change** — tokens are 60,000-minute JWTs with no invalidation list; resetting or changing password should invalidate all existing sessions
+- [ ] **LLM response streaming** — WebSocket infrastructure already exists; stream Groq tokens incrementally instead of buffering the full response, significantly improving perceived latency
+- [ ] **Conversation title auto-generation** — derive a short title from the first user message (via LLM or heuristic) instead of storing a generic placeholder
+- [ ] **Conversation export** — allow users to download a conversation as markdown or PDF
+- [ ] **Email change** — authenticated endpoint to update email address with re-verification flow (pairs with Change password)
+- [ ] **Source recency scoring** — boost retrieval score for recently published sources; publication year should influence ranking so newer evidence surfaces above old docs with high BM25/KNN scores
+- [ ] **OpenSearch index cleanup** — external sources are indexed on every query but never pruned; implement a TTL or low-quality doc eviction strategy to prevent index bloat
