@@ -111,7 +111,6 @@ class TestAddMessage:
         )
         assert response.status_code == 404
 
-    @pytest.mark.skip(reason="get_conversation_by_id filters by user_id so returns 404 not 403")
     def test_add_message_wrong_user_conversation_returns_403(self, client, db_session, test_user):
         import uuid
         from src.db.repositories.conversations import create_conversation
@@ -272,7 +271,6 @@ class TestFallbackPath:
 
 
 class TestWebSocket:
-    @pytest.mark.skip(reason="WebSocket endpoint not yet implemented")
     def test_websocket_add_message_sends_stages_and_final(self, client, test_conversation):
         conv_id = str(test_conversation.id)
         with client.websocket_connect(f"/conversations/{conv_id}/add_message/ws") as ws:

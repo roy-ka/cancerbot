@@ -84,17 +84,15 @@ async def _process_post_message(
 
     await emit('loading_conversation', {'conversation_id': str(conversation_id)})
 
-    conversation = conversation or get_conversation_by_id(
-        db=db,
-        conversation_id=conversation_id,
-        current_user=current_user,
-    )
-
     if conversation is None:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-
-    if str(conversation.user_id) != str(current_user.id):
-        raise HTTPException(status_code=403, detail="Forbidden")
+        conversation = get_conversation_by_id_no_auth(
+            db=db,
+            conversation_id=conversation_id,
+        )
+        if conversation is None:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        if str(conversation.user_id) != str(current_user.id):
+            raise HTTPException(status_code=403, detail="Forbidden")
 
     await emit('saving_user_message', {})
 

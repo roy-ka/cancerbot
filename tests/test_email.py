@@ -14,7 +14,6 @@ class TestPasswordResetEmail:
             asyncio.run(send_password_reset_email("test@example.com", "123456"))
             mock_client.assert_not_called()
 
-    @pytest.mark.skip(reason="SendGrid mock patching order issue; email delivery tested in integration")
     def test_send_password_reset_email_calls_sendgrid(self, monkeypatch):
         monkeypatch.setenv("SENDGRID_API_KEY", "test-key-123")
         monkeypatch.setenv("EMAIL_FROM", "noreply@test.com")
@@ -33,8 +32,10 @@ class TestPasswordResetEmail:
             # Verify the mail object was constructed correctly
             call_args = mock_sg.send.call_args
             mail_obj = call_args[0][0]
-            assert str(mail_obj.from_email.email) == "noreply@test.com"
-            assert "654321" in mail_obj.html_content
+            mail_dict = mail_obj.get()
+            assert mail_dict["from"]["email"] == "noreply@test.com"
+            html_content = mail_dict["content"][0]["value"]
+            assert "654321" in html_content
 
     def test_send_password_reset_email_raises_on_sendgrid_error(self, monkeypatch):
         monkeypatch.setenv("SENDGRID_API_KEY", "test-key")
@@ -49,7 +50,6 @@ class TestPasswordResetEmail:
             with pytest.raises(Exception, match="SendGrid API error"):
                 asyncio.run(send_password_reset_email("user@example.com", "123456"))
 
-    @pytest.mark.skip(reason="SendGrid mock patching order issue; email delivery tested in integration")
     def test_send_password_reset_email_html_contains_code(self, monkeypatch):
         monkeypatch.setenv("SENDGRID_API_KEY", "test-key")
         monkeypatch.setenv("EMAIL_FROM", "noreply@test.com")
@@ -63,6 +63,8 @@ class TestPasswordResetEmail:
 
             call_args = mock_sg.send.call_args
             mail_obj = call_args[0][0]
-            assert "999888" in mail_obj.html_content
-            assert "reset" in mail_obj.html_content.lower()
-            assert mail_obj.subject == "Your CancerBot password reset code"
+            mail_dict = mail_obj.get()
+            html_content = mail_dict["content"][0]["value"]
+            assert "999888" in html_content
+            assert "reset" in html_content.lower()
+            assert mail_dict["subject"] == "Your CancerBot password reset code"
