@@ -17,12 +17,18 @@ export default function Terms() {
 
   useEffect(() => {
     fetch(`${BASE_URL}/terms/latest`)
-      .then((r) => r.json())
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        return r.json()
+      })
       .then((data) => {
         setTermsText(data.text ?? '')
         setTermsVersion(data.version ?? null)
       })
-      .catch(() => setTermsText('Failed to load terms. Please refresh.'))
+      .catch((e) => {
+        console.error('[Terms] failed to load:', e)
+        setTermsText('Failed to load terms. Please refresh.')
+      })
       .finally(() => setLoading(false))
   }, [])
 
