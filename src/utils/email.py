@@ -48,8 +48,37 @@ async def send_verification_email(to: str, name: str, token: str, frontend_url: 
     )
 
 
+def _send_password_reset(to: str, code: str) -> None:
+    try:
+        from sendgrid import SendGridAPIClient
+        from sendgrid.helpers.mail import Mail
+    except ImportError:
+        logger.error("SendGrid SDK not installed. Run: pip install sendgrid")
+        return
+
+    api_key = os.getenv("SENDGRID_API_KEY")
+    if not api_key:
+        logger.warning("[email] SendGrid not configured — password reset email not sent to %s", to)
+        return
+
+    from_email = os.getenv("EMAIL_FROM", "noreply@cancer-bot.com")
+    from_name = os.getenv("EMAIL_FROM_NAME", "CancerBot")
+    message = Mail(
+        from_email=(from_email, from_name),
+        to_emails=to,
+        subject="Your CancerBot password reset code",
+        html_content=f"<p>Your password reset code is: <strong>{code}</strong></p><p>This code expires in 15 minutes.</p>",
+    )
+    try:
+        sg = SendGridAPIClient(api_key)
+        sg.send(message)
+        logger.info("[email] password reset sent to=%s", to)
+    except Exception as e:
+        logger.error("[email] SendGrid error: %s", e)
+        raise
+
+
 async def send_password_reset_email(to: str, code: str) -> None:
     if os.getenv("ENV", "development") != "production":
         logger.info("[email] password reset code for %s: %s", to, code)
-    else:
-        logger.warning("[email] password reset template not configured — email not sent to %s", to)
+    await asyncio.to_thread(_send_password_reset, to, code)
