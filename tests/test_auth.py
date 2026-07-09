@@ -171,6 +171,45 @@ class TestCheckAuth:
         assert response.status_code == 401
 
 
+class TestRateLimiting:
+    def test_register_blocked_after_limit(self, anon_client):
+        from src.db.repositories.rate_limit import MAX_REGISTER_ATTEMPTS
+        payload = {"name": "User", "email": "x@example.com", "password": "SecurePass123!"}
+        for _ in range(MAX_REGISTER_ATTEMPTS):
+            anon_client.post("/auth/register/", json=payload)
+        response = anon_client.post("/auth/register/", json=payload)
+        assert response.status_code == 429
+
+    def test_register_not_blocked_before_limit(self, anon_client):
+        from src.db.repositories.rate_limit import MAX_REGISTER_ATTEMPTS
+        for i in range(MAX_REGISTER_ATTEMPTS - 1):
+            anon_client.post("/auth/register/", json={"name": "U", "email": f"u{i}@x.com", "password": "SecurePass123!"})
+        response = anon_client.post("/auth/register/", json={"name": "U", "email": "last@x.com", "password": "SecurePass123!"})
+        assert response.status_code != 429
+
+    def test_forgot_password_blocked_after_limit(self, anon_client, test_user):
+        from src.db.repositories.rate_limit import MAX_FORGOT_PASSWORD_ATTEMPTS
+        for _ in range(MAX_FORGOT_PASSWORD_ATTEMPTS):
+            anon_client.post("/auth/forgot-password/", json={"email": test_user.email})
+        response = anon_client.post("/auth/forgot-password/", json={"email": test_user.email})
+        assert response.status_code == 429
+
+    def test_forgot_password_not_blocked_before_limit(self, anon_client, test_user):
+        from src.db.repositories.rate_limit import MAX_FORGOT_PASSWORD_ATTEMPTS
+        for _ in range(MAX_FORGOT_PASSWORD_ATTEMPTS - 1):
+            anon_client.post("/auth/forgot-password/", json={"email": test_user.email})
+        response = anon_client.post("/auth/forgot-password/", json={"email": test_user.email})
+        assert response.status_code == 200
+
+    def test_forgot_password_limit_is_per_email(self, anon_client, test_user):
+        from src.db.repositories.rate_limit import MAX_FORGOT_PASSWORD_ATTEMPTS
+        for _ in range(MAX_FORGOT_PASSWORD_ATTEMPTS):
+            anon_client.post("/auth/forgot-password/", json={"email": test_user.email})
+        # Different email is unaffected
+        response = anon_client.post("/auth/forgot-password/", json={"email": "other@example.com"})
+        assert response.status_code == 200
+
+
 def _make_token(user, tv_override=None):
     expires = datetime.now(timezone.utc) + timedelta(hours=1)
     payload = {"sub": str(user.id), "email": user.email, "tv": tv_override if tv_override is not None else user.token_version, "exp": expires}

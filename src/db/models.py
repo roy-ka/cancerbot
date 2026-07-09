@@ -178,6 +178,16 @@ class LoginAttempt(Base):
     last_attempt_at = Column(DateTime(timezone=True), nullable=True)
 
 
+class RateLimitEntry(Base):
+    __tablename__ = "rate_limit_entries"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    key = Column(String(320), unique=True, index=True, nullable=False)
+    attempts = Column(Integer, default=0, nullable=False)
+    blocked_until = Column(DateTime(timezone=True), nullable=True)
+    last_attempt_at = Column(DateTime(timezone=True), nullable=True)
+
+
 class SearchAnalytic(Base):
     __tablename__ = "search_analytics"
 

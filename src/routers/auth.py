@@ -1,6 +1,6 @@
 import os
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query, Response, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request, Response, HTTPException, status
 from sqlalchemy.orm import Session
 from src.deps.db import get_db
 from src.auth.security import SecurityUtils
@@ -22,6 +22,12 @@ from src.db.repositories.login_attempts import (
     increment_failed_attempts,
     reset_failed_attempts,
     is_account_locked,
+)
+from src.db.repositories.rate_limit import (
+    is_rate_limited,
+    record_attempt,
+    MAX_REGISTER_ATTEMPTS,
+    MAX_FORGOT_PASSWORD_ATTEMPTS,
 )
 from src.utils.email import send_password_reset_email, send_verification_email
 
@@ -60,10 +66,21 @@ def validate_password(password: str) -> str:
         return "Password must contain special characters"
     return ""
 
+def _client_ip(request: Request) -> str:
+    forwarded_for = request.headers.get("X-Forwarded-For")
+    if forwarded_for:
+        return forwarded_for.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 @router.post("/register/", status_code=201)
-async def register_user(req: CreateUserRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+async def register_user(req: CreateUserRequest, request: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    ip = _client_ip(request)
+    if is_rate_limited(db, f"register:{ip}"):
+        raise HTTPException(status_code=429, detail="Too many registration attempts. Please try again later.")
+    record_attempt(db, f"register:{ip}", MAX_REGISTER_ATTEMPTS)
+
     password_error = validate_password(req.password)
     if password_error:
         raise HTTPException(status_code=400, detail=password_error)
@@ -164,6 +181,10 @@ class ResetPasswordRequest(BaseModel):
 
 @router.post("/forgot-password/")
 async def forgot_password(req: ForgotPasswordRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    if is_rate_limited(db, f"forgot-password:{req.email}"):
+        raise HTTPException(status_code=429, detail="Too many password reset requests. Please try again later.")
+    record_attempt(db, f"forgot-password:{req.email}", MAX_FORGOT_PASSWORD_ATTEMPTS)
+
     user = get_user_by_email(db=db, email=req.email)
     if user:
         token = create_reset_token(db=db, user_id=user.id)
