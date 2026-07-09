@@ -3,6 +3,7 @@ pandas
 requests
 ollama
 groq
+openai
 sendgrid
 python-dotenv
 fastapi[standard]

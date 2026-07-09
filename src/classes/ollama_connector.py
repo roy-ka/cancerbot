@@ -1,5 +1,7 @@
 from ollama import Client
 from groq import Groq
+import groq
+import openai
 from dotenv import load_dotenv
 import os
 import re
@@ -45,6 +47,23 @@ class _GroqClientProxy:
     return getattr(self._ensure_client(), name)
 
 
+class _OpenAIClientProxy:
+  """Lazy proxy for OpenAI client (fallback text generation)."""
+  _client = None
+
+  def _ensure_client(self):
+    if _OpenAIClientProxy._client is None:
+      load_dotenv()
+      api_key = os.getenv('OPENAI_API_KEY')
+      if not api_key:
+        raise ValueError("OPENAI_API_KEY is not set — OpenAI fallback unavailable.")
+      _OpenAIClientProxy._client = openai.OpenAI(api_key=api_key)
+    return _OpenAIClientProxy._client
+
+  def __getattr__(self, name):
+    return getattr(self._ensure_client(), name)
+
+
 class OllamaConnector:
   __name__ = 'Ollama_connector'
 
@@ -53,6 +72,7 @@ class OllamaConnector:
   groq_model = os.getenv('GROQ_MODEL_NAME')
   ollama = _OllamaClientProxy()
   groq = _GroqClientProxy()
+  openai = _OpenAIClientProxy()
 
   @classmethod
   def embed_text(cls, text):
@@ -215,25 +235,47 @@ ANSWER (every sentence must have a [R#] citation):
       cls.groq_model, max_tokens, len(full_prompt), len(rendered),
     )
 
-    completion = cls.groq.chat.completions.create(
-      model=cls.groq_model,
-      messages=[{"role": "user", "content": full_prompt}],
-      max_tokens=max_tokens,
-    )
+    raw_answer = None
+    groq_exc = None
 
-    if not completion.choices:
-      raise ValueError("Groq returned an empty choices list — possible content-policy rejection.")
+    try:
+      completion = cls.groq.chat.completions.create(
+        model=cls.groq_model,
+        messages=[{"role": "user", "content": full_prompt}],
+        max_tokens=max_tokens,
+      )
+      if not completion.choices:
+        raise ValueError("Groq returned an empty choices list — possible content-policy rejection.")
+      choice = completion.choices[0]
+      logger.debug(
+        "[groq] response model=%s finish_reason=%s tokens_used=%s",
+        completion.model,
+        choice.finish_reason,
+        getattr(completion.usage, "total_tokens", "?"),
+      )
+      raw_answer = choice.message.content or ""
+    except groq.GroqError as exc:
+      groq_exc = exc
+      logger.warning("[groq] API error (%s: %s), falling back to OpenAI", type(exc).__name__, exc)
 
-    choice = completion.choices[0]
-    logger.debug(
-      "[groq] response model=%s finish_reason=%s tokens_used=%s",
-      completion.model,
-      choice.finish_reason,
-      getattr(completion.usage, "total_tokens", "?"),
-    )
+    if raw_answer is None:
+      openai_model = os.getenv("OPENAI_FALLBACK_MODEL", "gpt-4o-mini")
+      try:
+        completion = cls.openai.chat.completions.create(
+          model=openai_model,
+          messages=[{"role": "user", "content": full_prompt}],
+          max_tokens=max_tokens,
+        )
+        if not completion.choices:
+          raise ValueError("OpenAI returned an empty choices list.")
+        logger.info("[openai-fallback] model=%s finish_reason=%s", openai_model, completion.choices[0].finish_reason)
+        raw_answer = completion.choices[0].message.content or ""
+      except Exception as fallback_exc:
+        raise ValueError(
+          f"AI generation unavailable — Groq: {groq_exc}, OpenAI: {fallback_exc}"
+        ) from fallback_exc
 
-    answer = choice.message.content or ""
-
+    answer = raw_answer
     # Replace alias citations with the original stable IDs.
     for alias, original_id in alias_to_id.items():
       answer = answer.replace(f"[{alias}]", f"[{original_id}]")

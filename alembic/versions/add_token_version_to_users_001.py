@@ -7,7 +7,7 @@ Create Date: 2026-07-09
 from alembic import op
 
 revision = 'add_token_version_to_users_001'
-down_revision = 'add_password_reset_use_count_001'
+down_revision = 'merge_use_count_and_terms_001'
 branch_labels = None
 depends_on = None
 

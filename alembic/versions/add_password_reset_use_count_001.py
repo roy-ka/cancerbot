@@ -7,7 +7,7 @@ Create Date: 2026-07-08
 from alembic import op
 
 revision = "add_password_reset_use_count_001"
-down_revision = "add_terms_and_conditions_001"
+down_revision = "f6a7b8c9d0e1"
 branch_labels = None
 depends_on = None
 
