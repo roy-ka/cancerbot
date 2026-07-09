@@ -1,7 +1,7 @@
 # CancerBot TODO
 
 ## Critical
-- [ ] **Rate limiting on register and forgot-password** — `/auth/register/` and `/auth/forgot-password/` have no abuse protection; add per-IP or per-email rate limiting consistent with the `LoginAttempt` pattern already used for login
+- [x] **Rate limiting on register and forgot-password** — `/auth/register/` and `/auth/forgot-password/` have no abuse protection; add per-IP or per-email rate limiting consistent with the `LoginAttempt` pattern already used for login
 - [x] **JWT token revocation on password change** — tokens are 60,000-minute JWTs with no invalidation list; resetting or changing password should invalidate all existing sessions
 - [ ] **Token budget check + fallback** — before calling Groq, check remaining token quota; if exhausted, fall back to TBD (different model / cached response / graceful error)
 - [ ] **Retry logic for external APIs** — PubMed, CrossRef, and Wikipedia fetches have no retry on transient errors; a single timeout silently drops that source; add exponential backoff with a small retry budget
