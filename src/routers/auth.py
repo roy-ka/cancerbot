@@ -121,7 +121,7 @@ async def generate_token(req: LoginRequest, response: Response, db: Session = De
         expires =  datetime.now(timezone.utc) + timedelta(days=365)
         
 
-    access_token = SecurityUtils.create_jwt_token({"sub": str(user.id), "email": user.email, 'exp': expires})
+    access_token = SecurityUtils.create_jwt_token({"sub": str(user.id), "email": user.email, "tv": user.token_version, 'exp': expires})
     response.set_cookie(
         key="access_token",
         value=access_token,
@@ -193,6 +193,7 @@ async def reset_password(req: ResetPasswordRequest, db: Session = Depends(get_db
         raise HTTPException(status_code=400, detail="User not found.")
 
     user.password_hash = SecurityUtils.hash_password(req.new_password)
+    user.token_version = (user.token_version or 1) + 1
     consume_reset_token(db=db, record=record)
     return {"ok": True}
 

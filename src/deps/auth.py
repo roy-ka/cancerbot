@@ -1,3 +1,4 @@
+from uuid import UUID
 from fastapi import Depends, HTTPException, status, Cookie, Header
 from sqlalchemy.orm import Session
 from jose import JWTError
@@ -25,9 +26,11 @@ def get_current_user(
         user_id = payload.get("sub")
         if not user_id:
             raise HTTPException(status_code=401, detail="Invalid token")
-        user = get_user_by_id(db=db, user_id=user_id)
+        user = get_user_by_id(db=db, user_id=UUID(user_id))
         if user is None:
             raise HTTPException(status_code=401, detail="User not found")
+        if payload.get("tv") != user.token_version:
+            raise HTTPException(status_code=401, detail="Token has been invalidated")
         return user
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid or expired token")

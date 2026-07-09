@@ -30,6 +30,7 @@ class User(Base):
     password_hash = Column(String(255), nullable=False)
     email_verified = Column(Boolean, default=False, nullable=False)
     terms_version = Column(Integer, nullable=True)
+    token_version = Column(Integer, default=1, nullable=False)
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
 
     conversations: Mapped[List["Conversation"]] = relationship(

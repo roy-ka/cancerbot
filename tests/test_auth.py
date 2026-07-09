@@ -1,5 +1,8 @@
 import pytest
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch, AsyncMock
+
+from src.auth.security import SecurityUtils
 
 
 class TestRegister:
@@ -166,3 +169,43 @@ class TestCheckAuth:
     def test_check_auth_unauthenticated_returns_401(self, anon_client):
         response = anon_client.get("/auth/check")
         assert response.status_code == 401
+
+
+def _make_token(user, tv_override=None):
+    expires = datetime.now(timezone.utc) + timedelta(hours=1)
+    payload = {"sub": str(user.id), "email": user.email, "tv": tv_override if tv_override is not None else user.token_version, "exp": expires}
+    return SecurityUtils.create_jwt_token(payload)
+
+
+class TestTokenRevocation:
+    def test_valid_token_accepted(self, anon_client, test_user):
+        token = _make_token(test_user)
+        response = anon_client.get("/auth/check/", headers={"Authorization": f"Bearer {token}"})
+        assert response.status_code == 200
+
+    def test_token_without_tv_rejected(self, anon_client, test_user):
+        expires = datetime.now(timezone.utc) + timedelta(hours=1)
+        token = SecurityUtils.create_jwt_token({"sub": str(test_user.id), "email": test_user.email, "exp": expires})
+        response = anon_client.get("/auth/check/", headers={"Authorization": f"Bearer {token}"})
+        assert response.status_code == 401
+
+    def test_token_with_wrong_tv_rejected(self, anon_client, test_user):
+        token = _make_token(test_user, tv_override=999)
+        response = anon_client.get("/auth/check/", headers={"Authorization": f"Bearer {token}"})
+        assert response.status_code == 401
+
+    def test_reset_password_increments_token_version(self, anon_client, test_user, db_session):
+        from src.db.repositories.password_resets import create_reset_token
+        initial_version = test_user.token_version
+        reset_token = create_reset_token(db_session, test_user.id)
+        anon_client.post("/auth/reset-password/", json={"token": reset_token, "new_password": "NewSecurePass456!"})
+        db_session.refresh(test_user)
+        assert test_user.token_version == initial_version + 1
+
+    def test_reset_password_invalidates_old_token(self, anon_client, test_user, db_session):
+        from src.db.repositories.password_resets import create_reset_token
+        old_token = _make_token(test_user)
+        assert anon_client.get("/auth/check/", headers={"Authorization": f"Bearer {old_token}"}).status_code == 200
+        reset_token = create_reset_token(db_session, test_user.id)
+        anon_client.post("/auth/reset-password/", json={"token": reset_token, "new_password": "NewSecurePass456!"})
+        assert anon_client.get("/auth/check/", headers={"Authorization": f"Bearer {old_token}"}).status_code == 401
