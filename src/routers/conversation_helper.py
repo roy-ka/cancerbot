@@ -3,7 +3,9 @@ import hashlib
 import html as _html
 import ipaddress
 import os
+import random
 import re
+import time
 import xml.etree.ElementTree as ET
 from typing import Any, Awaitable, Callable, Dict, Optional
 from urllib.parse import quote_plus, urlparse
@@ -16,6 +18,40 @@ from src.classes.ollama_connector import OllamaConnector
 logger = logging.getLogger(__name__)
 from src.retrieval.db_connector import dbConnector
 from src.xml_to_source import pubmed_article_xml_to_source
+
+_RETRY_MAX = 2
+_RETRYABLE_HTTP = frozenset({429, 500, 502, 503, 504})
+
+
+async def _retry_get(
+    client: httpx.AsyncClient,
+    url: str,
+    *,
+    retries: int = _RETRY_MAX,
+    **kwargs,
+) -> httpx.Response:
+    """GET with exponential backoff on transient HTTP errors and network failures."""
+    delay = 1.0
+    last_exc: Exception | None = None
+    resp: httpx.Response | None = None
+    for attempt in range(retries):
+        try:
+            resp = await client.get(url, **kwargs)
+            if resp.status_code in _RETRYABLE_HTTP and attempt < retries - 1:
+                logger.warning("[http] %s status=%d, retry %d/%d", url[:80], resp.status_code, attempt + 1, retries)
+                await asyncio.sleep(delay + random.uniform(0, 0.5))
+                delay *= 2
+                continue
+            return resp
+        except (httpx.TimeoutException, httpx.NetworkError, httpx.ConnectError) as exc:
+            last_exc = exc
+            if attempt < retries - 1:
+                logger.warning("[http] %s %s, retry %d/%d", url[:80], exc, attempt + 1, retries)
+                await asyncio.sleep(delay + random.uniform(0, 0.5))
+                delay *= 2
+    if last_exc:
+        raise last_exc
+    return resp  # type: ignore[return-value]
 
 StageEmitter = Callable[[str, Dict[str, Any]], Awaitable[None]]
 
@@ -158,7 +194,7 @@ async def _search_pubmed_sources(client: httpx.AsyncClient, terms: list[str], ma
     )
 
     try:
-        esearch_resp = await client.get(esearch_url)
+        esearch_resp = await _retry_get(client, esearch_url)
         esearch_resp.raise_for_status()
         id_list = (esearch_resp.json().get("esearchresult") or {}).get("idlist") or []
     except Exception as e:
@@ -174,7 +210,7 @@ async def _search_pubmed_sources(client: httpx.AsyncClient, terms: list[str], ma
     )
 
     try:
-        efetch_resp = await client.get(efetch_url)
+        efetch_resp = await _retry_get(client, efetch_url)
         efetch_resp.raise_for_status()
         root = ET.fromstring(efetch_resp.text)
     except Exception as e:
@@ -212,7 +248,7 @@ async def _search_crossref_sources(client: httpx.AsyncClient, terms: list[str], 
         "select": "DOI,title,abstract,URL",
     }
     try:
-        resp = await client.get(url, params=params)
+        resp = await _retry_get(client, url, params=params)
         resp.raise_for_status()
         items = (resp.json().get("message") or {}).get("items") or []
     except Exception as e:
@@ -283,25 +319,41 @@ def _pick_oncology_title(candidates: list[dict]) -> str | None:
 
 def _wiki_search(term: str, limit: int = 5) -> list[dict]:
     """Call Wikipedia's search API and return result items."""
-    try:
-        resp = httpx.get(
-            _WIKI_SEARCH_URL,
-            params={
-                "action": "query",
-                "list": "search",
-                "srsearch": term,
-                "srlimit": limit,
-                "format": "json",
-                "utf8": 1,
-            },
-            headers={"User-Agent": "cancerbot/1.0 (medical-rag-assistant)"},
-            timeout=8,
-        )
-        resp.raise_for_status()
-        return resp.json().get("query", {}).get("search", [])
-    except Exception as e:
-        logger.warning("[wikipedia] search API error for term='%s': %s", term, e)
-        return []
+    delay = 1.0
+    for attempt in range(_RETRY_MAX):
+        try:
+            resp = httpx.get(
+                _WIKI_SEARCH_URL,
+                params={
+                    "action": "query",
+                    "list": "search",
+                    "srsearch": term,
+                    "srlimit": limit,
+                    "format": "json",
+                    "utf8": 1,
+                },
+                headers={"User-Agent": "cancerbot/1.0 (medical-rag-assistant)"},
+                timeout=8,
+            )
+            if resp.status_code in _RETRYABLE_HTTP and attempt < _RETRY_MAX - 1:
+                logger.warning("[wikipedia] search status=%d for term='%s', retry %d/%d", resp.status_code, term, attempt + 1, _RETRY_MAX)
+                time.sleep(delay + random.uniform(0, 0.5))
+                delay *= 2
+                continue
+            resp.raise_for_status()
+            return resp.json().get("query", {}).get("search", [])
+        except (httpx.TimeoutException, httpx.NetworkError, httpx.ConnectError) as exc:
+            if attempt < _RETRY_MAX - 1:
+                logger.warning("[wikipedia] search transient error for term='%s', retry %d/%d: %s", term, attempt + 1, _RETRY_MAX, exc)
+                time.sleep(delay + random.uniform(0, 0.5))
+                delay *= 2
+            else:
+                logger.warning("[wikipedia] search API error for term='%s': %s", term, exc)
+                return []
+        except Exception as e:
+            logger.warning("[wikipedia] search API error for term='%s': %s", term, e)
+            return []
+    return []
 
 
 async def _search_wikipedia_sources(terms: list[str], max_results: int = 3) -> list[dict]:
@@ -517,7 +569,7 @@ async def search_and_embed(
     crossref_sources: list[dict] = []
     wikipedia_sources: list[dict] = []
     if terms:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(20.0)) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(8.0)) as client:
             await emit("searching_pubmed", {"limit": 4})
             await emit("searching_crossref", {"limit": 4})
             await emit("searching_wikipedia", {"limit": 3})
