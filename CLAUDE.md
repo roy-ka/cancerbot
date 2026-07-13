@@ -24,6 +24,7 @@ All SendGrid template IDs must be stored in the `EMAIL_TEMPLATES` dict in `src/u
 Every new `.env` entry must also be added to:
 - `example.env` — include the actual value if not secret, a placeholder if secret
 - `tests/conftest.py` — add a `os.environ.setdefault("VAR", "test-value")` line so tests don't fail in CI due to missing env vars; use a safe dummy value (never a real secret)
+- `.github/workflows/test.yml` — add the var under the `env:` section of the `test` job; use the same safe dummy value as conftest
 
 After committing, explicitly remind the user to update their `.env` with the new variable.
 
