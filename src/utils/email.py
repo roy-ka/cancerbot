@@ -1,13 +1,17 @@
 import asyncio
 import logging
 import os
+import threading
 
 logger = logging.getLogger(__name__)
 
 EMAIL_TEMPLATES = {
     "verification": "d-6a6d6095e74549fbb91c18e741cef813",
-    # "password_reset": "d-...",
+    "password_reset": "d-89a37afdde454f699046dda66cfca385",
+    "fallback_alert": "d-18e52d88f49b4b79b4ff292b1074bd75",
 }
+
+_FALLBACK_ALERT_TO = "roykazaz@gmail.com"
 
 
 def _send_sendgrid(to: str, template_id: str, template_data: dict) -> None:
@@ -36,6 +40,16 @@ def _send_sendgrid(to: str, template_id: str, template_data: dict) -> None:
         raise
 
 
+def send_fallback_alert(model: str) -> None:
+    """Fire-and-forget fallback alert — safe to call from sync worker threads."""
+    def _send():
+        try:
+            _send_sendgrid(_FALLBACK_ALERT_TO, EMAIL_TEMPLATES["fallback_alert"], {"model": model})
+        except Exception as exc:
+            logger.error("[email] fallback alert failed: %s", exc)
+    threading.Thread(target=_send, daemon=True).start()
+
+
 async def send_verification_email(to: str, name: str, token: str, frontend_url: str) -> None:
     verify_url = f"{frontend_url}/verify-email?token={token}"
     if os.getenv("ENV", "development") != "production":
@@ -54,6 +68,6 @@ async def send_password_reset_email(to: str, name: str, link: str) -> None:
     await asyncio.to_thread(
         _send_sendgrid,
         to,
-        "d-89a37afdde454f699046dda66cfca385",
+        EMAIL_TEMPLATES["password_reset"],
         {"name": name, "link": link},
     )

@@ -15,6 +15,10 @@ Every library or service added to the codebase must be declared in the appropria
 
 Never import a package or depend on a service that is not listed in the relevant file.
 
+## Email Templates
+
+All SendGrid template IDs must be stored in the `EMAIL_TEMPLATES` dict in `src/utils/email.py`. Never hardcode a template ID inline elsewhere in the codebase — always reference it via `EMAIL_TEMPLATES["key"]`.
+
 ## Environment Variables
 
 Every new `.env` entry must also be added to `example.env`:
