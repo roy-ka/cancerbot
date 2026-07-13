@@ -8,7 +8,7 @@
 - [x] **OpenSearch index cleanup** — sources chunked (150w/40w overlap) with source_id dedup; search deduped to 1 result per source_id; backfill script migrates existing docs using terms from PostgreSQL messages
 
 ## High
-- [ ] **Change password** — authenticated endpoint allowing users to update their password (current password + new password)
+- [x] **Change password** — authenticated endpoint allowing users to update their password (current password + new password)
 - [ ] **Delete user** — account deletion endpoint: remove user row, cascade conversations/messages, revoke tokens
 - [ ] **Ninja user** — on startup, create a privileged "ninja" user if it doesn't exist; username and password sourced from env vars (e.g. `NINJA_USERNAME`, `NINJA_PASSWORD`)
 - [ ] **LLM response streaming** — WebSocket infrastructure already exists; stream Groq tokens incrementally instead of buffering the full response, significantly improving perceived latency

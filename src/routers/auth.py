@@ -219,6 +219,31 @@ async def reset_password(req: ResetPasswordRequest, db: Session = Depends(get_db
     return {"ok": True}
 
 
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+@router.post("/change-password/")
+async def change_password(
+    req: ChangePasswordRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    if not SecurityUtils.verify_password(req.current_password, current_user.password_hash):
+        raise HTTPException(status_code=401, detail="Current password is incorrect.")
+
+    password_error = validate_password(req.new_password)
+    if password_error:
+        raise HTTPException(status_code=400, detail=password_error)
+
+    user = db.merge(current_user)
+    user.password_hash = SecurityUtils.hash_password(req.new_password)
+    user.token_version = (user.token_version or 1) + 1
+    db.commit()
+    return {"ok": True}
+
+
 @router.get("/verify-email/")
 async def verify_email(token: str = Query(...), db: Session = Depends(get_db)):
     user_id, error = verify_and_consume_token(db=db, token=token)
