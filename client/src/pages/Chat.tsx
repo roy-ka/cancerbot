@@ -191,6 +191,24 @@ export default function Chat() {
     }
   }
 
+  const handleDeleteAccount = async (password: string): Promise<string | null> => {
+    try {
+      const res = await fetch(`${BASE_URL}/auth/user/`, {
+        method: 'DELETE',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+      })
+      if (res.status === 401) return 'Password is incorrect.'
+      if (!res.ok) return 'Something went wrong. Please try again.'
+      localStorage.removeItem('termsAccepted')
+      navigate('/login')
+      return null
+    } catch {
+      return 'Connection error. Please try again.'
+    }
+  }
+
   const sendViaWebSocket = (conversationId: string, message: Message) => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const wsHost = BASE_URL ? new URL(BASE_URL).host : window.location.host
@@ -321,6 +339,7 @@ export default function Chat() {
             selectedConversationId={selectedConversationId}
             conversations={conversations}
             onLogout={handleLogout}
+            onDeleteAccount={handleDeleteAccount}
             onCloseSidebar={() => setSidebarOpen(false)}
           />
         </Box>

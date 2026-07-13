@@ -21,6 +21,9 @@
 
 - [ ] **Split name into first and last** — replace the single `name` field on `User` with `first_name` + `last_name`; update registration, profile, and email templates accordingly
 
+## Bugs
+- [ ] **Delete conversation not visible** — the delete conversation action is not exposed in the UI; users have no way to delete a conversation from the frontend
+
 ## Nice to Have
 - [ ] **Email change** — authenticated endpoint to update email address with re-verification flow (pairs with Change password)
 - [ ] **Conversation export** — allow users to download a conversation as markdown or PDF
