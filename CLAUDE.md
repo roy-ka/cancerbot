@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-CancerBot is a Retrieval-Augmented Generation (RAG) chatbot for cancer-related medical information. It uses a hybrid search approach (BM25 + KNN vector search) over a corpus of medical sources and claims in OpenSearch, with Groq (cloud LLM) for generation and Ollama for embeddings only. On every user message, the system also performs live external search (PubMed, CrossRef, Wikipedia), embeds the results, and indexes them into OpenSearch before retrieval.
+CancerBot is a Retrieval-Augmented Generation (RAG) chatbot for cancer-related medical information. It uses a hybrid search approach (BM25 + KNN vector search) over a corpus of medical sources and claims in OpenSearch, with Groq (cloud LLM) for generation (OpenAI as fallback) and Ollama for embeddings only. On every user message, the system also performs live external search (PubMed, CrossRef, Wikipedia), embeds the results, and indexes them into OpenSearch before retrieval.
 
 ## Dependencies
 
@@ -111,12 +111,12 @@ Frontend first calls `POST /conversations/create/` (lightweight DB-only, returns
 2. User message is saved to PostgreSQL
 3. `src/nlp` calls the NLP microservice (`/extract`) to extract scientific terms and expand them with MeSH synonyms (`extracted_terms` stored on the `Message` row)
 4. **External search** runs in parallel: PubMed (4 results), CrossRef (4 results), Wikipedia (3 results) queried using NLP-extracted terms (`src/routers/conversation_helper.py`). Wikipedia uses the search API first and picks the most oncology-relevant page from candidates.
-5. New external sources are embedded via Ollama (`nomic-embed-text`) and indexed into OpenSearch `sources_index`; duplicates are skipped by stable ID
+5. New external sources are embedded via Ollama (`nomic-embed-text`) and indexed into OpenSearch `sources_index` as **150-word chunks with 40-word overlap**. Each chunk gets `id={base_id}:c{n}`, `source_id={base_id}`, `chunk_index`, `full_text` (original), and `tags` (search terms that retrieved it). Dedup is by `source_id` — if any chunk of a base ID exists, the whole source is skipped.
 6. External search results are recorded in `external_search_results` table
-7. `src/retrieval/__init__.py:run_retrieval` embeds the query and runs hybrid BM25 + KNN search on `sources_index` (top 5 returned)
+7. `src/retrieval/__init__.py:run_retrieval` embeds the query and runs hybrid BM25 + KNN search on `sources_index` with `collapse` on `source_id` — returns top 5 unique sources (1 best chunk per source)
 8. Search analytics recorded in `search_analytics` table
-9. `src/classes/ollama_connector.py` builds a prompt with history + context (cited as `[R1]`, `[R2]`, ...) and calls Groq chat completions (`GROQ_MODEL_NAME`)
-10. Post-processing replaces `[R1]` aliases with stable IDs (`pmid:xxx`, `doi:xxx`, `url:<sha1>`)
+9. `src/classes/ollama_connector.py` builds a prompt with history + context (cited as `[R1]`, `[R2]`, ...) and calls Groq chat completions (`GROQ_MODEL_NAME`). On `groq.GroqError`, falls back to OpenAI (`OPENAI_FALLBACK_MODEL`).
+10. Post-processing replaces `[R1]` aliases with stable IDs (`pmid:xxx:c0`, `doi:xxx:c0`, `url:<sha1>:c0`)
 11. Assistant message + source IDs stored in PostgreSQL
 12. WebSocket emits staged events throughout (see below)
 
@@ -129,10 +129,21 @@ Frontend first calls `POST /conversations/create/` (lightweight DB-only, returns
 
 Indices are auto-created on startup via `dbConnector.ensure_all_indexes()`.
 
+**Source document fields (chunked schema):**
+- `id` — `{base_id}:c{n}` (e.g. `pmid:12345:c0`) — unique per chunk
+- `source_id` — base ID without chunk suffix (e.g. `pmid:12345`) — used for dedup and `collapse`
+- `chunk_index` — position within source (0-based)
+- `full_text` — original full text before chunking
+- `content_for_embedding` — this chunk's 150-word window (what gets embedded and sent to LLM)
+- `tags` — list of NLP-extracted search terms that retrieved this source
+- `pmid`, `doi`, `title`, `url`, `source_type`, `abstract_source` — provenance fields
+
 ### Retrieval
 `src/retrieval/search.py:search_sources` runs a hybrid query against `sources_index` only:
 - KNN vector clause (boost ×2, k=5)
 - BM25 match on `content_for_embedding` (boost ×1) and `title` (boost ×1.5)
+- `collapse` on `source_id` (keyword) — ensures at most 1 chunk per source in the top 5 results
+- Works with Lucene-engine KNN (OpenSearch 3); requires `source_id` to be a `keyword` field
 
 ### Data Files (`data/`)
 - `sources_canonical.jsonl` — deduplicated sources (merged by PMID > DOI > URL > title)
@@ -142,11 +153,12 @@ Indices are auto-created on startup via `dbConnector.ensure_all_indexes()`.
 ### Database Models (`src/db/models.py`)
 | Model | Table | Purpose |
 |-------|-------|---------|
-| `User` | `users` | Auth |
+| `User` | `users` | Auth; has `token_version` (incremented on password reset to invalidate old JWTs) |
 | `Conversation` | `conversations` | Soft-deletable chat threads |
 | `Message` | `messages` | Has `sources_ids` (JSON) and `extracted_terms` (JSON) |
 | `PasswordResetCode` | `password_reset_codes` | Time-limited reset tokens |
-| `LoginAttempt` | `login_attempts` | Brute-force tracking |
+| `LoginAttempt` | `login_attempts` | Brute-force tracking (login) |
+| `RateLimitEntry` | `rate_limit_entries` | Rate limiting for register (per-IP, 10/h) and forgot-password (per-email, 5/h) |
 | `SearchAnalytic` | `search_analytics` | Per-message search metrics |
 | `ExternalSearchResult` | `external_search_results` | Records PubMed/CrossRef/Wikipedia fetches |
 
@@ -194,13 +206,19 @@ EMAIL_FROM_NAME=CancerBot
 # Backups — optional S3 upload
 BACKUP_S3_BUCKET=...
 
+# OpenAI (fallback LLM when Groq is unavailable)
+OPENAI_API_KEY=...
+OPENAI_FALLBACK_MODEL=gpt-4o-mini
+
 # Optional integrations
-OPENAI_API_KEY=
 UNPAYWALL_EMAIL=
 ```
 
 ### Auth
-JWT tokens (HS256) accepted via `Authorization: Bearer <token>` header or `access_token` cookie. Dependency: `Depends(get_current_user)` in `src/deps/auth.py`. Rate-limited login via `LoginAttempt` model. Password reset via time-limited codes (SendGrid email).
+JWT tokens (HS256) accepted via `Authorization: Bearer <token>` header or `access_token` cookie. Dependency: `Depends(get_current_user)` in `src/deps/auth.py`.
+- **JWT revocation**: tokens carry a `tv` (token version) claim. `User.token_version` is incremented on password reset; tokens with a mismatched `tv` are rejected with 401.
+- **Rate limiting**: login uses `LoginAttempt` (5 failures → 15 min lockout); register uses per-IP limit (10/h); forgot-password uses per-email limit (5/h) — both via `RateLimitEntry`.
+- **Password reset**: time-limited codes via SendGrid email.
 
 ### NLP
 `src/nlp/__init__.py` is a thin HTTP client that calls the **NLP microservice** (`nlp_service/`) over HTTP. The microservice runs scispaCy (`en_core_sci_sm`) + SpellChecker in a separate Docker container (`nlp-service`, port 8100). URL configured via `NLP_SERVICE_URL` env var (default `http://localhost:8100`).
@@ -227,5 +245,8 @@ Initialised in `src/main.py` with `enable_logs=True` — standard Python `loggin
 
 ### Deploy Script (`scripts/deploy.sh`)
 - Checks disk free ≥ 100GB before building; runs `docker system prune` and re-checks if low
+- Builds with `--pull` so the base image is refreshed when upstream publishes OS patches (e.g. curl CVEs); intermediate layers still cache when the base digest is unchanged
+- Scans built images with Trivy (`HIGH`/`CRITICAL`, ignore-unfixed); aborts deploy on findings
 - Skips `alembic upgrade heads` if `alembic current` already shows `(head)` — avoids 4 unnecessary Docker container spawns per deploy
+- Runs seeds (non-fatal): `seed_wikipedia_tags.py` then `backfill_chunks.py` (migrates old single-doc OpenSearch entries to chunked schema, idempotent)
 - Prints git commit hash in the success summary
