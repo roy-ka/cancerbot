@@ -356,7 +356,7 @@ if [ "$REQS_HASH_NOW" != "$REQS_HASH_PREV" ]; then
 else
   echo "Requirements unchanged — using Docker layer cache"
 fi
-if docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot --profile prod build --pull $DOCKER_BUILD_FLAGS; then
+if docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot --profile prod build --pull $DOCKER_BUILD_FLAGS --build-arg APT_CACHE_DATE="$(date +%Y%m%d)"; then
   echo "✓ Docker images built successfully"
   echo "$REQS_HASH_NOW" > "$REQS_HASH_FILE"
 else
@@ -389,7 +389,7 @@ if command -v trivy &>/dev/null; then
         continue
       fi
       if ! trivy image --quiet --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed --no-progress --input "$TRIVY_TAR"; then
-        echo "✗ Trivy scan failed for $IMAGE — HIGH/CRITICAL vulnerabilities found"
+        echo "✗ Trivy scan failed for $IMAGE — HIGH/CRITICAL vulnerabilities found (commit: $(git rev-parse HEAD))"
         SCAN_FAILED=true
       else
         echo "✓ $IMAGE passed vulnerability scan"
