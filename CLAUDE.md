@@ -48,6 +48,7 @@ This applies to all commits: features, bug fixes, refactoring, migrations, etc.
 ```bash
 # Install dependencies
 pip install -r requirements.txt
+pip install -r requirements-test.txt
 
 # Run dev server (port 8000)
 uvicorn src.main:app --reload
