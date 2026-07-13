@@ -505,6 +505,16 @@ else
   echo "⚠ Warning: seeds failed (non-critical — deploy continues)"
 fi
 
+# Backfill existing OpenSearch docs to chunked schema (idempotent — skips already-migrated docs)
+echo ""
+echo "Running chunk backfill migration..."
+if docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot \
+    run --rm --no-deps backend python scripts/backfill_chunks.py 2>&1 | sed 's/^/    /'; then
+  echo "✓ Chunk backfill completed"
+else
+  echo "⚠ Warning: chunk backfill failed (non-critical — deploy continues)"
+fi
+
 # Now start the backend and other prod-profile services
 echo ""
 echo "Starting backend services..."

@@ -42,7 +42,7 @@ def search_sources(db, text=None ,vector=None):
       logger.debug("[search] Added text query clauses")
 
     body = {
-      "size": 5,
+      "size": 20,
       "query": {
         'bool':{
           'should':should_clauses,
@@ -57,15 +57,26 @@ def search_sources(db, text=None ,vector=None):
       body = body
     )
     hits = result.get('hits', {}).get('hits', [])
-    logger.debug(f"[search] Got {len(hits)} results from OpenSearch")
+    logger.debug(f"[search] Got {len(hits)} raw results from OpenSearch")
 
-    # Log each result's ID
-    for i, hit in enumerate(hits):
+    # Keep only the highest-scoring chunk per source — old docs without source_id
+    # fall back to their id so each is treated as its own source.
+    seen: set[str] = set()
+    deduped: list = []
+    for hit in hits:
+      src = hit.get('_source', {})
+      group_key = src.get('source_id') or src.get('id')
+      if group_key not in seen:
+        seen.add(group_key)
+        deduped.append(hit)
+
+    logger.debug(f"[search] {len(deduped)} results after source dedup")
+    for i, hit in enumerate(deduped):
       doc_id = hit.get('_source', {}).get('id', hit.get('_id'))
       score = hit.get('_score')
       logger.debug(f"[search]   Result {i+1}: id='{doc_id}', score={score}")
 
-    return hits
+    return deduped
   except Exception as e:
     logger.exception("Search failed for text=%s", text[:100] if text else None)
     return []

@@ -5,7 +5,7 @@
 - [x] **JWT token revocation on password change** — tokens are 60,000-minute JWTs with no invalidation list; resetting or changing password should invalidate all existing sessions
 - [x] **Token budget check + fallback** — catches `groq.GroqError` and retries with OpenAI (`gpt-4o-mini` by default); both providers failing raises a clear error; controlled by `OPENAI_API_KEY` and `OPENAI_FALLBACK_MODEL`
 - [x] **Retry logic for external APIs** — `_retry_get` async helper with exponential backoff (1s → 2s + jitter) retries on 429/5xx and network/timeout errors; used by PubMed and CrossRef; `_wiki_search` has equivalent sync retry; 2 attempts, 8s timeout
-- [ ] **OpenSearch index cleanup** — external sources are indexed on every query but never pruned; implement a TTL or low-quality doc eviction strategy to prevent index bloat
+- [x] **OpenSearch index cleanup** — sources chunked (150w/40w overlap) with source_id dedup; search deduped to 1 result per source_id; backfill script migrates existing docs using terms from PostgreSQL messages
 
 ## High
 - [ ] **Change password** — authenticated endpoint allowing users to update their password (current password + new password)
