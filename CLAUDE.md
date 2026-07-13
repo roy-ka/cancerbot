@@ -27,6 +27,15 @@ Every new `.env` entry must also be added to `example.env`:
 
 After committing, explicitly remind the user to update their `.env` with the new variable.
 
+## Planning Before Coding
+
+Before editing any file or writing any code, present the user with a clear plan:
+- Which files will change and why
+- The approach / key decisions
+- Any trade-offs or open questions
+
+Wait for the user to confirm the plan before proceeding. Do not start coding until approval is given.
+
 ## Code Review Workflow
 
 **Before committing changes, always:**
