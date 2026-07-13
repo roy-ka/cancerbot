@@ -1,14 +1,13 @@
 import pytest
 from unittest.mock import MagicMock, patch
 import groq
-import openai as openai_lib
 
 from src.classes.ollama_connector import OllamaConnector
 
 CONTEXT = [{"id": "src-001", "content_for_embedding": "Cancer cells exhibit the Warburg effect."}]
 
 
-def _make_completion(content):
+def _make_groq_completion(content):
     choice = MagicMock()
     choice.message.content = content
     choice.finish_reason = "stop"
@@ -19,21 +18,27 @@ def _make_completion(content):
     return completion
 
 
+def _make_gemini_response(content):
+    response = MagicMock()
+    response.text = content
+    return response
+
+
 def _groq_mock(content=None, raises=None):
     m = MagicMock()
     if raises is not None:
         m.chat.completions.create.side_effect = raises
     else:
-        m.chat.completions.create.return_value = _make_completion(content)
+        m.chat.completions.create.return_value = _make_groq_completion(content)
     return m
 
 
-def _openai_mock(content=None, raises=None):
+def _gemini_mock(content=None, raises=None):
     m = MagicMock()
     if raises is not None:
-        m.chat.completions.create.side_effect = raises
+        m.models.generate_content.side_effect = raises
     else:
-        m.chat.completions.create.return_value = _make_completion(content)
+        m.models.generate_content.return_value = _make_gemini_response(content)
     return m
 
 
@@ -53,7 +58,7 @@ def _server_error_exc():
     )
 
 
-class TestGroqOpenAIFallback:
+class TestGroqGeminiFallback:
     def test_groq_success_returns_answer(self):
         mock_groq = _groq_mock(content="Warburg effect answer.")
         with patch.object(OllamaConnector, "groq", mock_groq):
@@ -61,48 +66,44 @@ class TestGroqOpenAIFallback:
         assert "Warburg effect answer" in result
         mock_groq.chat.completions.create.assert_called_once()
 
-    def test_groq_rate_limit_falls_back_to_openai(self):
+    def test_groq_rate_limit_falls_back_to_gemini(self):
         mock_groq = _groq_mock(raises=_rate_limit_exc())
-        mock_openai = _openai_mock(content="OpenAI fallback answer.")
+        mock_gemini = _gemini_mock(content="Gemini fallback answer.")
         with patch.object(OllamaConnector, "groq", mock_groq), \
-             patch.object(OllamaConnector, "openai", mock_openai):
+             patch.object(OllamaConnector, "gemini", mock_gemini):
             result = OllamaConnector.generate_text(CONTEXT, "What is cancer?", [])
-        assert "OpenAI fallback answer" in result
-        mock_openai.chat.completions.create.assert_called_once()
+        assert "Gemini fallback answer" in result
+        mock_gemini.models.generate_content.assert_called_once()
 
-    def test_groq_server_error_falls_back_to_openai(self):
+    def test_groq_server_error_falls_back_to_gemini(self):
         mock_groq = _groq_mock(raises=_server_error_exc())
-        mock_openai = _openai_mock(content="OpenAI server fallback.")
+        mock_gemini = _gemini_mock(content="Gemini server fallback.")
         with patch.object(OllamaConnector, "groq", mock_groq), \
-             patch.object(OllamaConnector, "openai", mock_openai):
+             patch.object(OllamaConnector, "gemini", mock_gemini):
             result = OllamaConnector.generate_text(CONTEXT, "What is cancer?", [])
-        assert "OpenAI server fallback" in result
+        assert "Gemini server fallback" in result
 
-    def test_openai_not_called_on_groq_success(self):
+    def test_gemini_not_called_on_groq_success(self):
         mock_groq = _groq_mock(content="Groq answer.")
-        mock_openai = _openai_mock()
+        mock_gemini = _gemini_mock()
         with patch.object(OllamaConnector, "groq", mock_groq), \
-             patch.object(OllamaConnector, "openai", mock_openai):
+             patch.object(OllamaConnector, "gemini", mock_gemini):
             OllamaConnector.generate_text(CONTEXT, "What is cancer?", [])
-        mock_openai.chat.completions.create.assert_not_called()
+        mock_gemini.models.generate_content.assert_not_called()
 
     def test_both_providers_fail_raises_value_error(self):
         mock_groq = _groq_mock(raises=_rate_limit_exc())
-        mock_openai = _openai_mock(raises=openai_lib.RateLimitError(
-            "OpenAI rate limit",
-            response=MagicMock(status_code=429, headers={}),
-            body={},
-        ))
+        mock_gemini = _gemini_mock(raises=Exception("Gemini unavailable"))
         with patch.object(OllamaConnector, "groq", mock_groq), \
-             patch.object(OllamaConnector, "openai", mock_openai), \
+             patch.object(OllamaConnector, "gemini", mock_gemini), \
              pytest.raises(ValueError, match="AI generation unavailable"):
             OllamaConnector.generate_text(CONTEXT, "What is cancer?", [])
 
     def test_alias_replacement_works_on_fallback_path(self):
         mock_groq = _groq_mock(raises=_rate_limit_exc())
-        mock_openai = _openai_mock(content="Cancer uses glucose [R1].")
+        mock_gemini = _gemini_mock(content="Cancer uses glucose [R1].")
         with patch.object(OllamaConnector, "groq", mock_groq), \
-             patch.object(OllamaConnector, "openai", mock_openai):
+             patch.object(OllamaConnector, "gemini", mock_gemini):
             result = OllamaConnector.generate_text(CONTEXT, "What is cancer?", [])
         assert "[src-001]" in result
         assert "[R1]" not in result

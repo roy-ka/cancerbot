@@ -1,7 +1,7 @@
 from ollama import Client
 from groq import Groq
 import groq
-import openai
+from google import genai as google_genai
 from dotenv import load_dotenv
 import os
 import re
@@ -47,21 +47,22 @@ class _GroqClientProxy:
     return getattr(self._ensure_client(), name)
 
 
-class _OpenAIClientProxy:
-  """Lazy proxy for OpenAI client (fallback text generation)."""
+class _GeminiClientProxy:
+  """Lazy proxy for Google Gemini client (second-tier fallback)."""
   _client = None
 
   def _ensure_client(self):
-    if _OpenAIClientProxy._client is None:
+    if _GeminiClientProxy._client is None:
       load_dotenv()
-      api_key = os.getenv('OPENAI_API_KEY')
+      api_key = os.getenv('GEMINI_API_KEY')
       if not api_key:
-        raise ValueError("OPENAI_API_KEY is not set — OpenAI fallback unavailable.")
-      _OpenAIClientProxy._client = openai.OpenAI(api_key=api_key)
-    return _OpenAIClientProxy._client
+        raise ValueError("GEMINI_API_KEY is not set — Gemini fallback unavailable.")
+      _GeminiClientProxy._client = google_genai.Client(api_key=api_key)
+    return _GeminiClientProxy._client
 
   def __getattr__(self, name):
     return getattr(self._ensure_client(), name)
+
 
 
 class OllamaConnector:
@@ -72,7 +73,7 @@ class OllamaConnector:
   groq_model = os.getenv('GROQ_MODEL_NAME')
   ollama = _OllamaClientProxy()
   groq = _GroqClientProxy()
-  openai = _OpenAIClientProxy()
+  gemini = _GeminiClientProxy()
 
   @classmethod
   def embed_text(cls, text):
@@ -256,24 +257,27 @@ ANSWER (every sentence must have a [R#] citation):
       raw_answer = choice.message.content or ""
     except groq.GroqError as exc:
       groq_exc = exc
-      logger.warning("[groq] API error (%s: %s), falling back to OpenAI", type(exc).__name__, exc)
+      logger.warning("[groq] API error (%s: %s), falling back to Gemini", type(exc).__name__, exc)
+
+    gemini_exc = None
+    if raw_answer is None:
+      gemini_model = os.getenv("GEMINI_FALLBACK_MODEL", "gemini-2.5-flash")
+      try:
+        response = cls.gemini.models.generate_content(
+          model=gemini_model,
+          contents=full_prompt,
+          config=google_genai.types.GenerateContentConfig(max_output_tokens=max_tokens),
+        )
+        raw_answer = response.text or ""
+        logger.info("[gemini-fallback] model=%s", gemini_model)
+      except Exception as exc:
+        gemini_exc = exc
+        logger.warning("[gemini-fallback] API error (%s: %s), falling back to OpenAI", type(exc).__name__, exc)
 
     if raw_answer is None:
-      openai_model = os.getenv("OPENAI_FALLBACK_MODEL", "gpt-4o-mini")
-      try:
-        completion = cls.openai.chat.completions.create(
-          model=openai_model,
-          messages=[{"role": "user", "content": full_prompt}],
-          max_tokens=max_tokens,
-        )
-        if not completion.choices:
-          raise ValueError("OpenAI returned an empty choices list.")
-        logger.info("[openai-fallback] model=%s finish_reason=%s", openai_model, completion.choices[0].finish_reason)
-        raw_answer = completion.choices[0].message.content or ""
-      except Exception as fallback_exc:
-        raise ValueError(
-          f"AI generation unavailable — Groq: {groq_exc}, OpenAI: {fallback_exc}"
-        ) from fallback_exc
+      raise ValueError(
+        f"AI generation unavailable — Groq: {groq_exc}, Gemini: {gemini_exc}"
+      )
 
     answer = raw_answer
     # Replace alias citations with the original stable IDs.
