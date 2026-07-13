@@ -27,12 +27,12 @@ After committing, explicitly remind the user to update their `.env` with the new
 
 **Before committing changes, always:**
 
-1. **Ask** - Ask the user for confirmation before creating any commit
+1. **Ask** - Ask the user for explicit confirmation before creating any commit. Wait for a clear "yes" or "commit". This is a ground rule — it cannot be relaxed or skipped without the user's explicit written approval including a timestamp of when the exception was granted.
 2. **Review** - Examine all changed code for correctness, then improve it (remove dead code, simplify logic, fix style)
 3. **Fix Security** - Check for vulnerabilities (SQL injection, XSS, command injection, etc.)
 4. **Test** - Run the test suite and confirm it passes before committing
 5. **Verify** - Test changes work as intended (TypeScript/Python compilation, runtime behavior)
-6. **Push** - After committing, always push to remote (`git push`)
+6. **Ask before push** - After committing, ask the user before pushing to remote (`git push`)
 
 ```bash
 # Run tests
