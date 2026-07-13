@@ -9,6 +9,7 @@ EMAIL_TEMPLATES = {
     "verification": "d-6a6d6095e74549fbb91c18e741cef813",
     "password_reset": "d-89a37afdde454f699046dda66cfca385",
     "fallback_alert": "d-18e52d88f49b4b79b4ff292b1074bd75",
+    "account_deleted": "d-feba610add7d4ad091351504f1a14937",
 }
 
 _FALLBACK_ALERT_TO = "roykazaz@gmail.com"
@@ -70,6 +71,16 @@ async def send_verification_email(to: str, name: str, token: str, frontend_url: 
         to,
         EMAIL_TEMPLATES["verification"],
         {"name": name, "link": verify_url},
+    )
+
+
+async def send_account_deleted_email(to: str, name: str) -> None:
+    await asyncio.to_thread(
+        _send_sendgrid,
+        to,
+        EMAIL_TEMPLATES["account_deleted"],
+        {"name": name},
+        disable_subscription_tracking=True,
     )
 
 

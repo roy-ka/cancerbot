@@ -30,7 +30,7 @@ from src.db.repositories.rate_limit import (
     MAX_REGISTER_ATTEMPTS,
     MAX_FORGOT_PASSWORD_ATTEMPTS,
 )
-from src.utils.email import send_password_reset_email, send_verification_email
+from src.utils.email import send_password_reset_email, send_verification_email, send_account_deleted_email
 
 PASSWORD_REGEX_PATTERNS = {
     'lowercase': r'[a-z]',
@@ -253,12 +253,15 @@ class DeleteUserRequest(BaseModel):
 async def delete_account(
     req: DeleteUserRequest,
     response: Response,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
     if not SecurityUtils.verify_password(req.password, current_user.password_hash):
         raise HTTPException(status_code=401, detail="Password is incorrect.")
+    to, name = current_user.email, current_user.name or "User"
     delete_user(db=db, user_id=current_user.id)
+    background_tasks.add_task(send_account_deleted_email, to=to, name=name)
     response.delete_cookie(key="access_token", path="/", httponly=True, secure=is_prod(), samesite="lax")
     return {"ok": True}
 

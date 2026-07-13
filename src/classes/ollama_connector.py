@@ -9,6 +9,7 @@ import json
 import logging
 from typing import Any, AsyncIterator, Mapping, Sequence
 from src.db.models import Message
+from src.utils.email import send_fallback_alert
 
 logger = logging.getLogger(__name__)
 
@@ -269,7 +270,6 @@ ANSWER (every sentence must have a [source#] citation):
     except groq.GroqError as exc:
       groq_exc = exc
       logger.warning("[groq] API error (%s: %s), falling back to Gemini", type(exc).__name__, exc)
-      from src.utils.email import send_fallback_alert
       send_fallback_alert(cls.groq_model)
 
     gemini_exc = None
@@ -337,7 +337,6 @@ ANSWER (every sentence must have a [source#] citation):
     except groq.GroqError as exc:
       groq_exc = exc
       logger.warning("[groq] stream error (%s: %s), falling back to Gemini", type(exc).__name__, exc)
-      from src.utils.email import send_fallback_alert
       send_fallback_alert(cls.groq_model)
 
     if streaming_started:
