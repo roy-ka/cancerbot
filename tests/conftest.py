@@ -2,6 +2,7 @@ import os
 
 os.environ.setdefault("JWT_SECRET", "test-secret-key-not-for-production")
 os.environ.setdefault("EMBED_MODEL_NAME", "nomic-embed-text")
+os.environ.setdefault("GROQ_MODEL_NAME", "llama-3.3-70b-versatile")
 os.environ.setdefault("ENV", "test")
 os.environ["SENTRY_DSN"] = ""       # disable Sentry during tests
 os.environ["SENDGRID_API_KEY"] = "" # prevent real emails during tests

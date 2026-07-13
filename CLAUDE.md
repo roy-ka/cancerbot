@@ -21,9 +21,9 @@ All SendGrid template IDs must be stored in the `EMAIL_TEMPLATES` dict in `src/u
 
 ## Environment Variables
 
-Every new `.env` entry must also be added to `example.env`:
-- Include the actual value if it is **not secret** (e.g. `FRONTEND_URL=https://cancer-bot.com`, `ENV=production`)
-- Use a placeholder for secrets (e.g. `SENDGRID_API_KEY=your-sendgrid-api-key`, `JWT_SECRET=your-jwt-secret`)
+Every new `.env` entry must also be added to:
+- `example.env` — include the actual value if not secret, a placeholder if secret
+- `tests/conftest.py` — add a `os.environ.setdefault("VAR", "test-value")` line so tests don't fail in CI due to missing env vars; use a safe dummy value (never a real secret)
 
 After committing, explicitly remind the user to update their `.env` with the new variable.
 
