@@ -20,3 +20,11 @@ def get_user_by_id(db, user_id):
 def update_last_login(db, user: User) -> None:
   user.last_login = datetime.now(timezone.utc)
   db.commit()
+
+def delete_user(db, user_id) -> bool:
+  user = db.query(User).filter(User.id == user_id).first()
+  if not user:
+    return False
+  db.delete(user)
+  db.commit()
+  return True

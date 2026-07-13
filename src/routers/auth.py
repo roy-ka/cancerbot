@@ -15,6 +15,7 @@ from src.db.repositories.users import (
     get_user_by_email,
     get_user_by_id,
     update_last_login,
+    delete_user,
 )
 from src.db.repositories.password_resets import create_reset_token, verify_reset_token, consume_reset_token
 from src.db.repositories.email_verification import create_verification_token, verify_and_consume_token, find_token_user_id
@@ -241,6 +242,24 @@ async def change_password(
     user.password_hash = SecurityUtils.hash_password(req.new_password)
     user.token_version = (user.token_version or 1) + 1
     db.commit()
+    return {"ok": True}
+
+
+class DeleteUserRequest(BaseModel):
+    password: str
+
+
+@router.delete("/user/")
+async def delete_account(
+    req: DeleteUserRequest,
+    response: Response,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    if not SecurityUtils.verify_password(req.password, current_user.password_hash):
+        raise HTTPException(status_code=401, detail="Password is incorrect.")
+    delete_user(db=db, user_id=current_user.id)
+    response.delete_cookie(key="access_token", path="/", httponly=True, secure=is_prod(), samesite="lax")
     return {"ok": True}
 
 
