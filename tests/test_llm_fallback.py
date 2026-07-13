@@ -101,9 +101,9 @@ class TestGroqGeminiFallback:
 
     def test_alias_replacement_works_on_fallback_path(self):
         mock_groq = _groq_mock(raises=_rate_limit_exc())
-        mock_gemini = _gemini_mock(content="Cancer uses glucose [R1].")
+        mock_gemini = _gemini_mock(content="Cancer uses glucose [source1].")
         with patch.object(OllamaConnector, "groq", mock_groq), \
              patch.object(OllamaConnector, "gemini", mock_gemini):
             result = OllamaConnector.generate_text(CONTEXT, "What is cancer?", [])
         assert "[src-001]" in result
-        assert "[R1]" not in result
+        assert "[source1]" not in result

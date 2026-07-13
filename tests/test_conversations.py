@@ -3,14 +3,25 @@ from unittest.mock import patch, AsyncMock, MagicMock
 import json
 
 
+_DEFAULT_STREAM_CONTENT = "Cancer cells exhibit the Warburg effect [src-001][src-002]."
+
+
+def _make_stream(content: str):
+    """Return an async generator function that mocks OllamaConnector.stream_text."""
+    async def _gen(*args, **kwargs):
+        yield content
+        yield {}  # alias_to_id sentinel
+    return _gen
+
+
 @pytest.fixture(autouse=True)
 def mock_external_services(mock_retrieval):
     """Auto-mock external services for all conversation tests"""
     with (
         patch("src.routers.conversations.run_retrieval", return_value=mock_retrieval),
         patch(
-            "src.routers.conversations.OllamaConnector.generate_text",
-            return_value="Cancer cells exhibit the Warburg effect [src-001][src-002].",
+            "src.routers.conversations.OllamaConnector.stream_text",
+            new=_make_stream(_DEFAULT_STREAM_CONTENT),
         ),
         patch(
             "src.db.repositories.messeges.dbConnector.get_sources_by_id",
@@ -235,8 +246,8 @@ class TestFallbackPath:
     def test_no_data_response_appends_source_citations(self, client, test_conversation):
         from src.classes.ollama_connector import NO_DATA_RESPONSE
         with patch(
-            "src.routers.conversations.OllamaConnector.generate_text",
-            return_value=NO_DATA_RESPONSE,
+            "src.routers.conversations.OllamaConnector.stream_text",
+            new=_make_stream(NO_DATA_RESPONSE),
         ):
             response = client.post(
                 f"/conversations/{test_conversation.id}/add_message",

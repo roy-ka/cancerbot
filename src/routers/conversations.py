@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from sqlalchemy.orm import Session
-from typing import Literal, Optional, Dict, Any, Awaitable, Callable
+from typing import Literal, Optional, Dict, Any, Awaitable, Callable, Union
 from src.deps.db import get_db
 from src.deps.auth import get_current_user
 import logging
@@ -62,8 +62,12 @@ class Message(BaseModel):
         return v
 
 StageEmitter = Callable[[str, Dict[str, Any] | None], Awaitable[None]]
+SendToken = Callable[[str], Awaitable[None]]
 
 async def _emit_stage_noop(stage: str, data: Dict[str, Any] | None = None) -> None:
+    pass
+
+async def _send_token_noop(token: str) -> None:
     pass
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
@@ -77,6 +81,7 @@ async def _process_post_message(
     current_user,
     conversation=None,
     emit: StageEmitter = _emit_stage_noop,
+    send_token: SendToken = _send_token_noop,
 ):
     t0 = time.time()
 
@@ -196,12 +201,19 @@ async def _process_post_message(
     await emit('generating_answer', {})
 
     try:
-        response = await asyncio.to_thread(
-            OllamaConnector.generate_text,
+        raw_tokens: list[str] = []
+        alias_to_id: dict = {}
+        async for chunk in OllamaConnector.stream_text(
             context=context["generation_context"],
             question=req.content,
             history=history,
-        )
+        ):
+            if isinstance(chunk, dict):
+                alias_to_id = chunk
+            else:
+                raw_tokens.append(chunk)
+                await send_token(chunk)
+        response = OllamaConnector._post_process("".join(raw_tokens), alias_to_id)
     except ValueError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
     logging.info(f"[conversation] answer generated took={int((time.time()-t0)*1000)}ms")
@@ -400,6 +412,9 @@ async def post_message_ws(
             'data': data or {},
         })
 
+    async def send_token(token: str) -> None:
+        await websocket.send_json({'type': 'token', 'token': token})
+
     try:
         if not _check_message_rate(uid):
             await websocket.send_json({'type': 'error', 'message': 'Too many messages. Please wait before sending another.'})
@@ -418,6 +433,7 @@ async def post_message_ws(
             current_user=current_user,
             conversation=None,
             emit=emit,
+            send_token=send_token,
         )
 
         await websocket.send_json({'type': 'final', **result})

@@ -19,6 +19,7 @@ export default function Chat() {
   const [inputValue, setInputValue] = useState<string>('')
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [currentStage, setCurrentStage] = useState<string | null>(null)
+  const [streamingContent, setStreamingContent] = useState<string | null>(null)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
   // Prevent body-level scroll so the chat layout fills the viewport exactly
@@ -207,7 +208,13 @@ export default function Chat() {
 
         if (msg.type === 'stage') {
           setCurrentStage(msg.stage)
+          if (msg.stage === 'generating_answer') {
+            setStreamingContent('')
+          }
+        } else if (msg.type === 'token') {
+          setStreamingContent((prev) => (prev ?? '') + msg.token)
         } else if (msg.type === 'final') {
+          setStreamingContent(null)
           setCurrentStage(null)
           setMessages((prev) => {
             const withoutTemp = prev.slice(0, -1)
@@ -223,6 +230,7 @@ export default function Chat() {
           }
           ws.close()
         } else if (msg.type === 'error') {
+          setStreamingContent(null)
           setCurrentStage(null)
           setMessages((prev) => prev.filter((m) => !m.id?.startsWith('temp-')))
           setErrorMsg(msg.message || 'An error occurred. Please try again.')
@@ -233,6 +241,7 @@ export default function Chat() {
     }
 
     ws.onerror = () => {
+      setStreamingContent(null)
       setCurrentStage(null)
       setMessages((prev) => prev.filter((m) => !m.id?.startsWith('temp-')))
       setErrorMsg('Connection error. Please try again.')
@@ -323,6 +332,7 @@ export default function Chat() {
               hasOlder={!!nextBefore}
               isLoadingOlder={isLoadingOlder}
               currentStage={currentStage}
+              streamingContent={streamingContent}
             />
           </Box>
         </Box>

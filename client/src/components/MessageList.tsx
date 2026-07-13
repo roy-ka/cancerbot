@@ -33,12 +33,14 @@ export default function MessageList({
   hasOlder = false,
   isLoadingOlder = false,
   currentStage = null,
+  streamingContent = null,
 }: {
   messages: Message[]
   onLoadOlder?: () => Promise<boolean> | boolean
   hasOlder?: boolean
   isLoadingOlder?: boolean
   currentStage?: string | null
+  streamingContent?: string | null
 }) {
   const [noOlderOpen, setNoOlderOpen] = useState(false)
   const lastTriggerRef = useRef<number>(0)
@@ -122,7 +124,46 @@ export default function MessageList({
       {messages.map((message) => (
         <MessageItem message={message} key={message.id || 'new'} />
       ))}
-      {currentStage && (
+      {streamingContent !== null ? (
+        <Box
+          sx={{
+            mb: 2,
+            display: 'flex',
+            flexDirection: 'row',
+            alignItems: 'flex-start',
+          }}
+        >
+          <Box
+            className="message-bubble-assistant"
+            sx={{
+              maxWidth: { xs: '90%', sm: '70%' },
+              px: 3,
+              py: 2,
+              backgroundColor: 'rgba(255,255,255,0.15)',
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+            }}
+          >
+            {streamingContent}
+            <Box
+              component="span"
+              sx={{
+                display: 'inline-block',
+                width: '0.5em',
+                height: '1.1em',
+                backgroundColor: 'currentColor',
+                ml: '2px',
+                verticalAlign: 'text-bottom',
+                animation: 'blink 1s step-end infinite',
+                '@keyframes blink': {
+                  '0%, 100%': { opacity: 1 },
+                  '50%': { opacity: 0 },
+                },
+              }}
+            />
+          </Box>
+        </Box>
+      ) : currentStage ? (
         <Box
           sx={{
             mt: 2,
@@ -136,7 +177,7 @@ export default function MessageList({
           <CircularProgress size={14} />
           <span>{getStageMessage(currentStage)}</span>
         </Box>
-      )}
+      ) : null}
     </Box>
   )
 }

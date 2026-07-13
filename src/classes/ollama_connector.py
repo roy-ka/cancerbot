@@ -7,7 +7,7 @@ import os
 import re
 import json
 import logging
-from typing import Any, Mapping, Sequence
+from typing import Any, AsyncIterator, Mapping, Sequence
 from src.db.models import Message
 
 logger = logging.getLogger(__name__)
@@ -64,7 +64,6 @@ class _GeminiClientProxy:
     return getattr(self._ensure_client(), name)
 
 
-
 class OllamaConnector:
   __name__ = 'Ollama_connector'
 
@@ -82,21 +81,17 @@ class OllamaConnector:
     return response.embeddings[0]
 
   @classmethod
-  def generate_text(cls, context: Sequence[Any], question: str, history: Sequence[Message]) -> str:
+  def _build_prompt(
+    cls,
+    context: Sequence[Any],
+    question: str,
+    history: Sequence[Message],
+  ) -> tuple[str, dict[str, str], int]:
+    """Build the full prompt and return (full_prompt, alias_to_id, max_tokens).
 
-    """Generate an answer grounded in the provided context.
-
-    Context must be a list of dict / Mapping items with explicit IDs, e.g.
-         {
-           "id": "SRC_193" or "pmid:12345678" or "url:<sha1>",
-           "content_for_embedding": "...text chunk used for grounding..."
-         }
-
-    To avoid LLM typos on long opaque IDs (especially url:<sha1>), the prompt uses
-    short alias IDs like [R1], [R2] for citations, and the returned answer is
-    post-processed to replace [R#] back to the original stable IDs.
+    Context items must be dict-like with 'id' and 'content_for_embedding' fields.
+    alias_to_id maps short aliases like 'source1' to the stable original IDs.
     """
-
     alias_to_id: dict[str, str] = {}
 
     def _truncate(s: str, n: int = 320) -> str:
@@ -176,7 +171,7 @@ class OllamaConnector:
 
       original_id = str(raw_id).strip()
 
-      alias = f"R{i+1}"
+      alias = f"source{i+1}"
       alias_to_id[alias] = original_id
 
       text = (
@@ -204,10 +199,10 @@ Use ONLY the Scientific Evidence below as factual grounding. Do NOT use your tra
 Conversation History is for user intent only; it is NOT evidence.
 
 CRITICAL — CITATION RULES (you MUST follow these):
-- Every factual sentence MUST end with a citation: [R1], [R2], [R3], etc.
+- Every factual sentence MUST end with a citation: [source1], [source2], [source3], etc.
 - Use ONLY the aliases that appear in the Scientific Evidence section below.
 - Place the citation immediately after the sentence, before the period or after it.
-- Multiple citations allowed: [R1][R2].
+- Multiple citations allowed: [source1][source2].
 - Do NOT invent IDs. Do NOT write sentences without citations.
 - If the evidence conflicts, summarize both sides and cite both.
 - If fewer than 2 sources support the answer, write only: "{NO_DATA_RESPONSE}"
@@ -221,7 +216,7 @@ Conversation History:
 QUESTION:
 {question}
 
-ANSWER (every sentence must have a [R#] citation):
+ANSWER (every sentence must have a [source#] citation):
 """.strip()
 
     if not cls.groq_model:
@@ -231,9 +226,25 @@ ANSWER (every sentence must have a [R#] citation):
 
     max_tokens = int(os.getenv('GROQ_MAX_TOKENS', '1024'))
 
+    return full_prompt, alias_to_id, max_tokens
+
+  @classmethod
+  def _post_process(cls, raw_answer: str, alias_to_id: dict[str, str]) -> str:
+    """Replace short aliases with stable source IDs and strip empty brackets."""
+    answer = raw_answer
+    for alias, original_id in alias_to_id.items():
+      answer = answer.replace(f"[{alias}]", f"[{original_id}]")
+    answer = re.sub(r'\s*\[\]', '', answer)
+    return answer
+
+  @classmethod
+  def generate_text(cls, context: Sequence[Any], question: str, history: Sequence[Message]) -> str:
+    """Generate an answer grounded in the provided context (blocking)."""
+    full_prompt, alias_to_id, max_tokens = cls._build_prompt(context, question, history)
+
     logger.debug(
-      "[groq] generate model=%s max_tokens=%d prompt_len=%d context_items=%d",
-      cls.groq_model, max_tokens, len(full_prompt), len(rendered),
+      "[groq] generate model=%s max_tokens=%d prompt_len=%d",
+      cls.groq_model, max_tokens, len(full_prompt),
     )
 
     raw_answer = None
@@ -274,19 +285,85 @@ ANSWER (every sentence must have a [R#] citation):
         logger.info("[gemini-fallback] model=%s", gemini_model)
       except Exception as exc:
         gemini_exc = exc
-        logger.warning("[gemini-fallback] API error (%s: %s), falling back to OpenAI", type(exc).__name__, exc)
+        logger.warning("[gemini-fallback] API error (%s: %s)", type(exc).__name__, exc)
 
     if raw_answer is None:
       raise ValueError(
         f"AI generation unavailable — Groq: {groq_exc}, Gemini: {gemini_exc}"
       )
 
-    answer = raw_answer
-    # Replace alias citations with the original stable IDs.
-    for alias, original_id in alias_to_id.items():
-      answer = answer.replace(f"[{alias}]", f"[{original_id}]")
+    return cls._post_process(raw_answer, alias_to_id)
 
-    # Remove any empty brackets the LLM generated instead of a valid [R#] alias.
-    answer = re.sub(r'\s*\[\]', '', answer)
+  @classmethod
+  async def stream_text(
+    cls,
+    context: Sequence[Any],
+    question: str,
+    history: Sequence[Message],
+  ) -> AsyncIterator[str | dict]:
+    """Async generator — yields str tokens, then yields alias_to_id dict as the final sentinel.
 
-    return answer
+    Caller should check isinstance(chunk, dict) to detect the end-of-stream sentinel.
+    Tokens are raw LLM output (with [source1] aliases); caller must call _post_process
+    on the assembled text to substitute stable IDs before persisting.
+    """
+    from groq import AsyncGroq
+
+    full_prompt, alias_to_id, max_tokens = cls._build_prompt(context, question, history)
+
+    logger.debug(
+      "[groq] stream model=%s max_tokens=%d prompt_len=%d",
+      cls.groq_model, max_tokens, len(full_prompt),
+    )
+
+    groq_exc = None
+    streaming_started = False
+
+    try:
+      async_groq = AsyncGroq(api_key=os.getenv("GROQ_API_KEY"))
+      stream = await async_groq.chat.completions.create(
+        model=cls.groq_model,
+        messages=[{"role": "user", "content": full_prompt}],
+        max_tokens=max_tokens,
+        stream=True,
+      )
+      async for chunk in stream:
+        token = (chunk.choices[0].delta.content or "") if chunk.choices else ""
+        if token:
+          streaming_started = True
+          yield token
+      yield alias_to_id
+      return
+    except groq.GroqError as exc:
+      groq_exc = exc
+      logger.warning("[groq] stream error (%s: %s), falling back to Gemini", type(exc).__name__, exc)
+      from src.utils.email import send_fallback_alert
+      send_fallback_alert(cls.groq_model)
+
+    if streaming_started:
+      # Already emitted partial tokens; can't restart cleanly — just close the stream
+      yield alias_to_id
+      return
+
+    # Gemini fallback — no streaming SDK support; yield full response as one chunk
+    gemini_exc = None
+    try:
+      gemini_model = os.getenv("GEMINI_FALLBACK_MODEL", "gemini-2.5-flash")
+      response = cls.gemini.models.generate_content(
+        model=gemini_model,
+        contents=full_prompt,
+        config=google_genai.types.GenerateContentConfig(max_output_tokens=max_tokens),
+      )
+      raw_answer = response.text or ""
+      logger.info("[gemini-fallback] model=%s", gemini_model)
+      if raw_answer:
+        yield raw_answer
+      yield alias_to_id
+      return
+    except Exception as exc:
+      gemini_exc = exc
+      logger.warning("[gemini-fallback] API error (%s: %s)", type(exc).__name__, exc)
+
+    raise ValueError(
+      f"AI generation unavailable — Groq: {groq_exc}, Gemini: {gemini_exc}"
+    )
