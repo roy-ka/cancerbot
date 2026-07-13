@@ -48,8 +48,15 @@ def add_claims_and_sources(message: Message):
 
   claims = []
   sources = []
+  seen_source_ids: set[str] = set()
   for res in results:
     data = res['_source']
+    # Deduplicate: one entry per source_id (avoid multiple chunks of the same doc)
+    dedup_key = data.get('source_id') or data.get('id') or ''
+    if dedup_key in seen_source_ids:
+      continue
+    seen_source_ids.add(dedup_key)
+
     url = data.get('url') or data.get('pmid') or data.get('doi')
 
     # Use title for Wikipedia sources, otherwise use the stable id

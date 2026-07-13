@@ -1,6 +1,7 @@
 from dotenv import load_dotenv
 from opensearchpy import OpenSearch
 import os
+import re
 import ssl
 import logging
 from src.utils.utils import is_prod
@@ -327,12 +328,19 @@ class dbConnector:
 
   @classmethod
   def get_claims_and_sources_by_id(cls, ids):
-    """Get claims and sources by their IDs from both indices."""
+    """Get claims and sources by their IDs from both indices.
+
+    Accepts both chunk IDs (e.g. pmid:123:c0) and legacy base IDs (e.g. pmid:123)
+    by querying the `id` field for exact matches and `source_id` for base-ID lookups.
+    """
     if not ids:
       return {'hits': {'hits': []}}
     cls._initialize()
     if not cls.db_client:
       return {'hits': {'hits': []}}
+
+    # Strip :cN suffix to get base IDs for source_id field lookup (handles old messages)
+    base_ids = list({re.sub(r':c\d+$', '', sid) for sid in ids})
 
     return cls.db_client.search(
       index=f"{cls._model['sources_index']}*",
@@ -340,8 +348,12 @@ class dbConnector:
         'size': 200,
         '_source': True,
         'query': {
-          'terms': {
-            'id': ids
+          'bool': {
+            'should': [
+              {'terms': {'id': list(ids)}},
+              {'terms': {'source_id': base_ids}},
+            ],
+            'minimum_should_match': 1,
           }
         }
       }

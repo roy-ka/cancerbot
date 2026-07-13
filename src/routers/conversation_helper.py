@@ -681,6 +681,7 @@ def _is_cancer_related(terms: list[str]) -> bool:
 
 _DOI_IN_URL_RE = re.compile(r'(10\.\d{4,}/[^\s?#&"\'<>]+)', re.IGNORECASE)
 _NATURE_ARTICLE_RE = re.compile(r'nature\.com/articles/(s\d[\w-]+)', re.IGNORECASE)
+_PUBMED_PMID_RE = re.compile(r'(?:pubmed\.ncbi\.nlm\.nih\.gov|ncbi\.nlm\.nih\.gov/pubmed)/(\d+)', re.IGNORECASE)
 
 
 def _extract_doi_from_url(url: str) -> str | None:
@@ -693,6 +694,30 @@ def _extract_doi_from_url(url: str) -> str | None:
     m = _NATURE_ARTICLE_RE.search(url)
     if m:
         return f"10.1038/{m.group(1)}"
+    return None
+
+
+def _extract_pmid_from_url(url: str) -> str | None:
+    """Return a PubMed ID if the URL points to a PubMed article page."""
+    m = _PUBMED_PMID_RE.search(url)
+    return m.group(1) if m else None
+
+
+async def _fetch_pubmed_by_pmid(client: httpx.AsyncClient, pmid: str) -> dict | None:
+    """Fetch a PubMed article by PMID and return a source dict."""
+    try:
+        resp = await client.get(
+            "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi",
+            params={"db": "pubmed", "id": pmid, "retmode": "xml"},
+            timeout=httpx.Timeout(15.0),
+        )
+        resp.raise_for_status()
+        root = ET.fromstring(resp.text)
+        article_xml = root.find(".//PubmedArticle")
+        if article_xml is not None:
+            return pubmed_article_xml_to_source(ET.tostring(article_xml, encoding="unicode"))
+    except Exception as e:
+        logger.warning(f"[fetch_url] PubMed PMID fetch failed pmid={pmid}: {e}")
     return None
 
 
@@ -809,34 +834,49 @@ async def fetch_url_contents(urls: list[str]) -> list[dict]:
     async def _fetch_one(client: httpx.AsyncClient, url: str) -> dict | None:
         title: str | None = None
         text: str | None = None
+        pmid: str | None = None
+        doi: str | None = None
 
-        # --- Path 1: DOI-based resolution (structured, paywall-free) ---
-        doi = _extract_doi_from_url(url)
-        if doi:
-            resolved = await _resolve_doi(client, doi)
-            if resolved:
-                title = resolved.get("title")
-                abstract = resolved.get("abstract") or ""
+        # --- Path 0: PubMed URL — extract PMID and fetch structured abstract ---
+        pmid = _extract_pmid_from_url(url)
+        if pmid:
+            source = await _fetch_pubmed_by_pmid(client, pmid)
+            if source:
+                title = source.get("title")
+                abstract = source.get("abstract") or ""
+                doi = source.get("doi")
                 if abstract:
                     text = f"{title}\n\n{abstract}" if title else abstract
-                    logger.info(f"[fetch_url] DOI path succeeded for {url} ({len(text)} chars)")
+                    logger.info(f"[fetch_url] PMID path succeeded for {url} pmid={pmid} ({len(text)} chars)")
 
-            # No abstract from CrossRef/PubMed — try Unpaywall for an OA URL to scrape
-            if not text:
-                oa_url = await _unpaywall_oa_url(client, doi)
-                if oa_url and oa_url != url:
-                    try:
-                        oa_resp = await client.get(oa_url, headers=HEADERS, follow_redirects=True)
-                        oa_resp.raise_for_status()
-                        oa_title, oa_text = await asyncio.to_thread(
-                            _scrape_html, oa_resp.content, oa_resp.encoding or "utf-8", title or url
-                        )
-                        if oa_text:
-                            title = title or oa_title
-                            text = oa_text
-                            logger.info(f"[fetch_url] Unpaywall OA scrape succeeded for {url} ({len(text)} chars)")
-                    except Exception as e:
-                        logger.warning(f"[fetch_url] OA scrape failed for {oa_url}: {e}")
+        # --- Path 1: DOI-based resolution (structured, paywall-free) ---
+        if not text:
+            doi = doi or _extract_doi_from_url(url)
+            if doi:
+                resolved = await _resolve_doi(client, doi)
+                if resolved:
+                    title = resolved.get("title")
+                    abstract = resolved.get("abstract") or ""
+                    if abstract:
+                        text = f"{title}\n\n{abstract}" if title else abstract
+                        logger.info(f"[fetch_url] DOI path succeeded for {url} ({len(text)} chars)")
+
+                # No abstract from CrossRef/PubMed — try Unpaywall for an OA URL to scrape
+                if not text:
+                    oa_url = await _unpaywall_oa_url(client, doi)
+                    if oa_url and oa_url != url:
+                        try:
+                            oa_resp = await client.get(oa_url, headers=HEADERS, follow_redirects=True)
+                            oa_resp.raise_for_status()
+                            oa_title, oa_text = await asyncio.to_thread(
+                                _scrape_html, oa_resp.content, oa_resp.encoding or "utf-8", title or url
+                            )
+                            if oa_text:
+                                title = title or oa_title
+                                text = oa_text
+                                logger.info(f"[fetch_url] Unpaywall OA scrape succeeded for {url} ({len(text)} chars)")
+                        except Exception as e:
+                            logger.warning(f"[fetch_url] OA scrape failed for {oa_url}: {e}")
 
         # --- Path 2: Plain web scraping fallback ---
         if not text:
@@ -865,11 +905,21 @@ async def fetch_url_contents(urls: list[str]) -> list[dict]:
             f"Use with caution.]\n{text}"
         )
 
-        doc_id = "url:" + hashlib.sha1(url.encode("utf-8")).hexdigest()
+        # Prefer stable structured IDs: pmid > doi > url hash
+        if pmid:
+            doc_id = f"pmid:{pmid}"
+        elif doi:
+            doc_id = f"doi:{doi}"
+        else:
+            doc_id = "url:" + hashlib.sha1(url.encode("utf-8")).hexdigest()
+
         await asyncio.to_thread(_enqueue_url_classification, url=url, content_text=text, title=title)
 
         return {
             "id": doc_id,
+            "pmid": pmid,
+            "doi": doi,
+            "source_type": "pubmed" if pmid else ("crossref" if doi else "url"),
             "content_for_embedding": content,
             "title": title or url,
             "url": url,
