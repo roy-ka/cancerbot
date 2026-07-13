@@ -122,7 +122,48 @@ class dbConnector:
         cls.logger.error(f"Failed to ensure index {index_key}: {e}")
         all_created = False
 
+    cls._ensure_chunk_fields_mapping()
     return all_created
+
+  @classmethod
+  def _ensure_chunk_fields_mapping(cls) -> None:
+    """Add source_id, chunk_index, full_text fields to sources index mapping (idempotent)."""
+    if not cls.db_client or not cls._model:
+      return
+    index_name = cls._model['sources_index']
+    try:
+      cls.db_client.indices.put_mapping(
+        index=index_name,
+        body={"properties": {
+          "source_id":   {"type": "keyword"},
+          "chunk_index": {"type": "integer"},
+          "full_text":   {"type": "text"},
+        }},
+      )
+    except Exception as exc:
+      cls.logger.debug("put_mapping chunk fields on %s: %s", index_name, exc)
+
+  @classmethod
+  def existing_base_source_ids(cls, base_ids: list) -> set:
+    """Return the subset of base_ids that already have at least one chunk in the sources index."""
+    if not base_ids:
+      return set()
+    cls._initialize()
+    if not cls.db_client:
+      return set()
+    res = cls.db_client.search(
+      index=cls._model['sources_index'],
+      body={
+        'size': len(base_ids),
+        '_source': ['source_id'],
+        'query': {'terms': {'source_id': base_ids}},
+      }
+    )
+    return {
+      hit['_source']['source_id']
+      for hit in res['hits']['hits']
+      if hit.get('_source', {}).get('source_id')
+    }
 
   @classmethod
   def create_index(cls, index_name):

@@ -55,6 +55,21 @@ async def _retry_get(
 
 StageEmitter = Callable[[str, Dict[str, Any]], Awaitable[None]]
 
+
+def _chunk_text(text: str, max_words: int = 150, overlap: int = 40) -> list[str]:
+    """Split text into overlapping word-window chunks."""
+    words = text.split()
+    if len(words) <= max_words:
+        return [text]
+    chunks = []
+    step = max_words - overlap
+    for start in range(0, len(words), step):
+        chunk = " ".join(words[start : start + max_words])
+        chunks.append(chunk)
+        if start + max_words >= len(words):
+            break
+    return chunks
+
 _URL_RE = re.compile(r'https?://\S+', re.IGNORECASE)
 
 _PRIVATE_NETS = [
@@ -361,26 +376,17 @@ async def _search_wikipedia_sources(terms: list[str], max_results: int = 3) -> l
         return []
 
     def _fetch() -> list[dict]:
-        from src.retrieval.db_connector import dbConnector
-
         batch = terms[:10]
-        term_tags = [f"wikipedia:term:{t.lower()}" for t in batch]
-        already_tagged = dbConnector.existing_tags(term_tags)
-
         out: list[dict] = []
         seen: set[str] = set()
-        for term, term_tag in zip(batch, term_tags):
+        for term in batch:
             if len(out) >= max_results:
                 break
-            if term_tag in already_tagged:
-                logger.debug("[wikipedia] skipping already-indexed term='%s'", term)
-                continue
             try:
                 candidates = _wiki_search(term)
                 title = _pick_oncology_title(candidates) if candidates else term
                 page = _wiki.page(title)
                 if not page.exists():
-                    # If search picked a bad title, try the raw term as fallback
                     page = _wiki.page(term)
                     if not page.exists():
                         continue
@@ -397,7 +403,6 @@ async def _search_wikipedia_sources(terms: list[str], max_results: int = 3) -> l
                         "doi": None,
                         "title": page.title,
                         "content_for_embedding": f"{page.title}\n\n{summary}",
-                        "tags": ["wikipedia", term_tag],
                         "abstract_source": "wikipedia",
                         "url": page.fullurl,
                     }
@@ -406,13 +411,13 @@ async def _search_wikipedia_sources(terms: list[str], max_results: int = 3) -> l
                 logger.warning(f"[wikipedia] error for term='{term}': {e}")
                 continue
 
-        logger.info(f"[wikipedia] fetched %d pages (skipped %d already indexed)", len(out), len(already_tagged))
+        logger.info("[wikipedia] fetched %d pages", len(out))
         return out
 
     return await asyncio.to_thread(_fetch)
 
 
-def _embed_and_index_sources(sources: list[dict]) -> tuple[int, int]:
+def _embed_and_index_sources(sources: list[dict], terms: list[str] | None = None) -> tuple[int, int]:
     if not sources:
         return 0, 0
 
@@ -420,52 +425,57 @@ def _embed_and_index_sources(sources: list[dict]) -> tuple[int, int]:
     db.create_index("sources_index")
     indexed = 0
     skipped = 0
+    clean_terms = [t.strip() for t in (terms or []) if t and len(t.strip()) >= 2]
 
-    # Assign stable IDs and deduplicate within the batch
+    # Assign stable base IDs and deduplicate within the batch
     candidate: list[tuple[str, dict]] = []
-    seen_ids: set[str] = set()
+    seen_base_ids: set[str] = set()
     for source in sources:
         content = (source.get("content_for_embedding") or "").strip()
         if len(content) < 40:
             logger.debug(f"[index] skipping source '{source.get('title','?')[:60]}' — content too short")
             skipped += 1
             continue
-        source_id = _stable_source_id(source)
-        if source_id in seen_ids:
-            logger.debug(f"[index] skipping duplicate id={source_id}")
+        base_id = _stable_source_id(source)
+        if base_id in seen_base_ids:
+            logger.debug(f"[index] skipping duplicate base_id={base_id}")
             skipped += 1
             continue
-        seen_ids.add(source_id)
-        candidate.append((source_id, source))
+        seen_base_ids.add(base_id)
+        candidate.append((base_id, source))
 
-    # Check which IDs already exist in OpenSearch
-    already_indexed = db.existing_source_ids([sid for sid, _ in candidate])
+    # Check which base IDs are already indexed (any chunk present)
+    already_indexed = db.existing_base_source_ids([bid for bid, _ in candidate])
 
-    for source_id, source in candidate:
-        if source_id in already_indexed:
+    for base_id, source in candidate:
+        if base_id in already_indexed:
             skipped += 1
             continue
-        content = (source.get("content_for_embedding") or "").strip()
+        full_text = (source.get("content_for_embedding") or "").strip()
+        chunks = _chunk_text(full_text)
 
-        try:
-            doc = {
-                "id": source_id,
-                "index": "sources_index",
-                "source_type": source.get("source_type") or "source",
-                "pmid": source.get("pmid"),
-                "doi": source.get("doi"),
-                "title": source.get("title"),
-                "content_for_embedding": content,
-                "tags": source.get("tags") or ["primary_academic"],
-                "abstract_source": source.get("abstract_source") or source.get("source_type"),
-                "url": source.get("url"),
-                "embedding": OllamaConnector.embed_text(content),
-            }
-            db.index_to_db("sources_index", doc)
-            indexed += 1
-        except Exception as e:
-            logger.warning(f"[index] failed to index '{source.get('title','?')[:60]}': {e}")
-            skipped += 1
+        for chunk_index, chunk_text in enumerate(chunks):
+            try:
+                doc = {
+                    "id": f"{base_id}:c{chunk_index}",
+                    "source_id": base_id,
+                    "chunk_index": chunk_index,
+                    "source_type": source.get("source_type") or "source",
+                    "pmid": source.get("pmid"),
+                    "doi": source.get("doi"),
+                    "title": source.get("title"),
+                    "full_text": full_text,
+                    "content_for_embedding": chunk_text,
+                    "tags": clean_terms,
+                    "abstract_source": source.get("abstract_source") or source.get("source_type"),
+                    "url": source.get("url"),
+                    "embedding": OllamaConnector.embed_text(chunk_text),
+                }
+                db.index_to_db("sources_index", doc)
+                indexed += 1
+            except Exception as e:
+                logger.warning(f"[index] failed to index '{source.get('title','?')[:60]}' chunk={chunk_index}: {e}")
+                skipped += 1
 
     return indexed, skipped
 
@@ -601,7 +611,7 @@ async def search_and_embed(
 
     merged_sources = [*url_sources, *pubmed_sources, *crossref_sources, *wikipedia_sources]
     await emit("embedding_and_indexing_sources", {"total_sources": len(merged_sources)})
-    indexed, skipped = await asyncio.to_thread(_embed_and_index_sources, merged_sources)
+    indexed, skipped = await asyncio.to_thread(_embed_and_index_sources, merged_sources, terms)
     await emit("sources_indexed", {"indexed": indexed, "skipped": skipped})
     logger.info(f"[search] indexed={indexed} skipped={skipped}")
 
