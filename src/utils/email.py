@@ -14,10 +14,16 @@ EMAIL_TEMPLATES = {
 _FALLBACK_ALERT_TO = "roykazaz@gmail.com"
 
 
-def _send_sendgrid(to: str, template_id: str, template_data: dict) -> None:
+def _send_sendgrid(
+    to: str,
+    template_id: str,
+    template_data: dict,
+    *,
+    disable_subscription_tracking: bool = False,
+) -> None:
     try:
         from sendgrid import SendGridAPIClient
-        from sendgrid.helpers.mail import Mail
+        from sendgrid.helpers.mail import Mail, TrackingSettings, SubscriptionTracking
     except ImportError:
         logger.error("SendGrid SDK not installed. Run: pip install sendgrid")
         return
@@ -30,6 +36,11 @@ def _send_sendgrid(to: str, template_id: str, template_data: dict) -> None:
     message = Mail(from_email=("no-reply@cancer-bot.com", "CancerBot"), to_emails=to)
     message.template_id = template_id
     message.dynamic_template_data = template_data
+
+    if disable_subscription_tracking:
+        ts = TrackingSettings()
+        ts.subscription_tracking = SubscriptionTracking(enable=False)
+        message.tracking_settings = ts
 
     try:
         sg = SendGridAPIClient(api_key)
@@ -70,4 +81,5 @@ async def send_password_reset_email(to: str, name: str, link: str) -> None:
         to,
         EMAIL_TEMPLATES["password_reset"],
         {"name": name, "link": link},
+        disable_subscription_tracking=True,
     )
