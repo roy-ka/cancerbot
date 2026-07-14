@@ -332,7 +332,7 @@ ANSWER (every sentence must have a [source#] citation):
         if token:
           streaming_started = True
           yield token
-      yield alias_to_id
+      yield {**alias_to_id, "_model": cls.groq_model}
       return
     except groq.GroqError as exc:
       groq_exc = exc
@@ -341,7 +341,7 @@ ANSWER (every sentence must have a [source#] citation):
 
     if streaming_started:
       # Already emitted partial tokens; can't restart cleanly — just close the stream
-      yield alias_to_id
+      yield {**alias_to_id, "_model": cls.groq_model}
       return
 
     # Gemini fallback — no streaming SDK support; yield full response as one chunk
@@ -357,7 +357,7 @@ ANSWER (every sentence must have a [source#] citation):
       logger.info("[gemini-fallback] model=%s", gemini_model)
       if raw_answer:
         yield raw_answer
-      yield alias_to_id
+      yield {**alias_to_id, "_model": gemini_model}
       return
     except Exception as exc:
       gemini_exc = exc

@@ -85,6 +85,7 @@ class Message(Base):
     sources_ids = Column(JSON, nullable=True)
     extracted_terms = Column(JSON, nullable=True)
     urls = Column(JSON, nullable=True)
+    model_name = Column(String(100), nullable=True)
 
     # --- Virtual fields (not stored as separate DB columns) ---
     # Stored in DB: sources_ids (JSON)

@@ -83,7 +83,7 @@ def add_claims_and_sources(message: Message):
     message.sources = sources
 
 
-def add_message(db, conversation_id, role, content, sources_ids='', urls=None):
+def add_message(db, conversation_id, role, content, sources_ids='', urls=None, model_name=None):
   # Convert string sources_ids to lists for JSON column compatibility
   if isinstance(sources_ids, str):
     sources_ids = [s.strip() for s in sources_ids.split(',') if s.strip()] if sources_ids else []
@@ -94,6 +94,7 @@ def add_message(db, conversation_id, role, content, sources_ids='', urls=None):
     content=content,
     sources_ids=sources_ids if sources_ids else None,
     urls=urls if urls else None,
+    model_name=model_name if role == 'assistant' else None,
   )
   db.add(new_message)
   db.commit()

@@ -213,6 +213,7 @@ async def _process_post_message(
             else:
                 raw_tokens.append(chunk)
                 await send_token(chunk)
+        model_name: str | None = alias_to_id.pop("_model", None)
         response = OllamaConnector._post_process("".join(raw_tokens), alias_to_id)
     except ValueError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
@@ -257,6 +258,7 @@ async def _process_post_message(
             role="assistant",
             content=response,
             sources_ids=context.get('sources_ids'),
+            model_name=model_name,
         )
 
         db.commit()
