@@ -191,6 +191,20 @@ export default function Chat() {
     }
   }
 
+  const handleDeleteConversation = async (id: string): Promise<void> => {
+    try {
+      const res = await fetch(`${BASE_URL}/conversations/${id}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      })
+      if (!res.ok) return
+      setConversations((prev) => prev.filter((c) => c.id !== id))
+      if (selectedConversationId === id) setSelectedConversationId('new')
+    } catch (e) {
+      console.error('delete conversation failed:', e)
+    }
+  }
+
   const handleDeleteAccount = async (password: string): Promise<string | null> => {
     try {
       const res = await fetch(`${BASE_URL}/auth/user/`, {
@@ -340,6 +354,7 @@ export default function Chat() {
             conversations={conversations}
             onLogout={handleLogout}
             onDeleteAccount={handleDeleteAccount}
+            onDeleteConversation={handleDeleteConversation}
             onCloseSidebar={() => setSidebarOpen(false)}
           />
         </Box>

@@ -393,6 +393,15 @@ body {
   padding-left: 8px;
 }
 
+.conversation-item-delete-btn {
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.conversation-item:hover .conversation-item-delete-btn {
+  opacity: 1;
+}
+
 .message-bubble-user,
 .message-bubble-assistant {
   border-radius: 18px;

@@ -45,6 +45,7 @@ export default function ConversationList({
   setSelectedConversationId,
   onLogout,
   onDeleteAccount,
+  onDeleteConversation,
   onCloseSidebar,
 }: {
   conversations?: Conversation[]
@@ -52,6 +53,7 @@ export default function ConversationList({
   setSelectedConversationId: React.Dispatch<React.SetStateAction<string>>
   onLogout?: () => void
   onDeleteAccount?: (password: string) => Promise<string | null>
+  onDeleteConversation?: (id: string) => Promise<void>
   onCloseSidebar?: () => void
 }) {
   const [aboutOpen, setAboutOpen] = useState(false)
@@ -61,6 +63,7 @@ export default function ConversationList({
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [deleteLoading, setDeleteLoading] = useState(false)
   const [menuAnchor, setMenuAnchor] = useState<null | HTMLElement>(null)
+  const [deleteConvTarget, setDeleteConvTarget] = useState<{ id: string; title: string } | null>(null)
 
   const onclick = (id: string) => {
     setSelectedConversationId(id)
@@ -184,6 +187,7 @@ export default function ConversationList({
               conversation={conv}
               selected={selectedConversationId === conv.id}
               onClick={() => onclick(conv.id)}
+              onDelete={(id, title) => setDeleteConvTarget({ id, title })}
             />
           ))}
       </Box>
@@ -202,6 +206,45 @@ export default function ConversationList({
           </button>
         </Box>
       )}
+
+      {/* Delete conversation confirmation */}
+      <Dialog
+        open={Boolean(deleteConvTarget)}
+        onClose={() => setDeleteConvTarget(null)}
+        slotProps={{
+          backdrop: { sx: { backgroundColor: 'rgba(0,0,0,0.3)' } },
+          paper: { sx: DIALOG_PAPER_SX },
+        }}
+      >
+        <DialogTitle sx={{ color: 'rgba(255,255,255,0.92)' }}>Delete conversation?</DialogTitle>
+        <DialogContent sx={{ color: 'rgba(255,255,255,0.66)' }}>
+          Delete{' '}
+          <Typography component="span" sx={{ color: 'rgba(255,255,255,0.9)', fontWeight: 600 }}>
+            "{deleteConvTarget?.title}"
+          </Typography>
+          ? This cannot be undone.
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2, gap: 1 }}>
+          <Button
+            onClick={() => setDeleteConvTarget(null)}
+            sx={{ textTransform: 'none', color: 'rgba(255,255,255,0.6)' }}
+          >
+            Cancel
+          </Button>
+          <Button
+            onClick={async () => {
+              if (!deleteConvTarget) return
+              await onDeleteConversation?.(deleteConvTarget.id)
+              setDeleteConvTarget(null)
+            }}
+            variant="contained"
+            color="error"
+            sx={{ textTransform: 'none' }}
+          >
+            Delete
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       {/* Logout confirmation */}
       <Dialog
