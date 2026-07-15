@@ -16,6 +16,7 @@ from sentry_sdk.integrations.starlette import StarletteIntegration
 from sentry_sdk.integrations.logging import LoggingIntegration
 
 load_dotenv()
+ENV = os.getenv("ENV")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -27,7 +28,7 @@ logger = logging.getLogger(__name__)
 class _HealthFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         msg = record.getMessage()
-        return not ("/health" in msg and '" 200"' in msg)
+        return not ("/health" in msg and " 200" in msg)
 
 
 if os.getenv("ENV", "").lower() in ("prod", "production"):
@@ -46,7 +47,7 @@ def _init_sentry() -> None:
             StarletteIntegration(),
             LoggingIntegration(sentry_logs_level=logging.INFO, event_level=logging.ERROR),
         ],
-        environment="production",
+        environment=ENV,
         traces_sample_rate=0.1,
         send_default_pii=False,
         enable_logs=True,
@@ -54,8 +55,7 @@ def _init_sentry() -> None:
     logger.info("[NLP] Sentry initialized")
 
 
-if os.getenv("ENV", "").lower() in ("prod", "production"):
-    _init_sentry()
+_init_sentry()
 
 
 STOP_ENTS = frozenset({

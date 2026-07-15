@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 class _HealthFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         msg = record.getMessage()
-        return not ("/health" in msg and '" 200"' in msg)
+        return not ("/health" in msg and " 200" in msg)
 
 
 if is_prod():
@@ -37,22 +37,19 @@ def _init_sentry() -> None:
     dsn = os.getenv("SENTRY_DSN")
     if not dsn:
         return
-    try:
-        sentry_sdk.init(
-            dsn=dsn,
-            integrations=[
-                FastApiIntegration(),
-                StarletteIntegration(),
-                LoggingIntegration(sentry_logs_level=logging.INFO, event_level=logging.ERROR),
-            ],
-            environment=ENV,
-            traces_sample_rate=0.1,
-            send_default_pii=False,
-            enable_logs=True,
-        )
-        logger.info("Sentry initialized (env=%s)", ENV)
-    except Exception as exc:
-        logger.warning("Failed to initialize Sentry: %s", exc)
+    sentry_sdk.init(
+        dsn=dsn,
+        integrations=[
+            FastApiIntegration(),
+            StarletteIntegration(),
+            LoggingIntegration(sentry_logs_level=logging.INFO, event_level=logging.ERROR),
+        ],
+        environment=ENV,
+        traces_sample_rate=0.1,
+        send_default_pii=False,
+        enable_logs=True,
+    )
+    logger.info("Sentry initialized (env=%s)", ENV)
 
 _init_sentry()
 
