@@ -7,5 +7,5 @@ numpy>=1.24.0,<2.0.0
 requests
 conllu
 pyspellchecker>=0.8.2
-sentry-sdk[fastapi]>=2.35.0
+sentry-sdk[fastapi]==2.35.0
 https://s3-us-west-2.amazonaws.com/ai2-s2-scispacy/releases/v0.5.4/en_core_sci_sm-0.5.4.tar.gz
