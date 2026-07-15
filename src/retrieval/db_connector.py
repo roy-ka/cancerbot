@@ -146,25 +146,33 @@ class dbConnector:
 
   @classmethod
   def existing_base_source_ids(cls, base_ids: list) -> set:
-    """Return the subset of base_ids that already have at least one chunk in the sources index."""
+    """Return the subset of base_ids that already have at least one chunk in the sources index.
+
+    Checks for the presence of the :c0 chunk ID in the `id` keyword field rather than
+    querying `source_id`, which may be mapped as text (not keyword) in existing indices
+    and therefore unreliable for exact-match terms queries.
+    """
     if not base_ids:
       return set()
     cls._initialize()
     if not cls.db_client:
       return set()
+    chunk_ids = [f"{bid}:c0" for bid in base_ids]
     res = cls.db_client.search(
       index=cls._model['sources_index'],
       body={
-        'size': len(base_ids),
-        '_source': ['source_id'],
-        'query': {'terms': {'source_id': base_ids}},
+        'size': len(chunk_ids),
+        '_source': ['id'],
+        'query': {'terms': {'id': chunk_ids}},
       }
     )
-    return {
-      hit['_source']['source_id']
-      for hit in res['hits']['hits']
-      if hit.get('_source', {}).get('source_id')
-    }
+    found_base_ids = set()
+    for hit in res['hits']['hits']:
+      doc_id = hit.get('_source', {}).get('id') or ''
+      base = re.sub(r':c\d+$', '', doc_id)
+      if base:
+        found_base_ids.add(base)
+    return found_base_ids
 
   @classmethod
   def create_index(cls, index_name):
