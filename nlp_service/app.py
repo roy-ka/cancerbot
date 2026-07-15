@@ -43,7 +43,7 @@ def _init_sentry() -> None:
         integrations=[
             FastApiIntegration(),
             StarletteIntegration(),
-            LoggingIntegration(level=logging.INFO, event_level=logging.ERROR),
+            LoggingIntegration(sentry_logs_level=logging.INFO, event_level=logging.ERROR),
         ],
         environment="production",
         traces_sample_rate=0.1,
