@@ -81,9 +81,9 @@ def add_claims_and_sources(message: Message):
       'title': data.get('title'),
       'source_type': source_type,
     }
-    if data.get('index') == 'claims_index':
+    if 'claims' in res.get('_index', ''):
       claims.append(entry)
-    elif data.get('index') == 'sources_index':
+    else:
       sources.append(entry)
 
   # Only set if we found something; don't overwrite with empty lists
