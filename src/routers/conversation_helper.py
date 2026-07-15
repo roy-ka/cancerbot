@@ -325,8 +325,14 @@ async def _search_crossref_sources(client: httpx.AsyncClient, terms: list[str], 
     return out
 
 
+_WIKI_USER_AGENT = (
+    "cancerbot/1.0 (medical-rag-assistant; "
+    + os.getenv("EMAIL_FROM", "contact@cancerbot.app")
+    + ")"
+)
+
 _wiki = wikipediaapi.Wikipedia(
-    user_agent="cancerbot/1.0 (medical-rag-assistant)",
+    user_agent=_WIKI_USER_AGENT,
     language="en",
     extract_format=wikipediaapi.ExtractFormat.WIKI,
 )
@@ -369,7 +375,7 @@ def _wiki_search(term: str, limit: int = 5) -> list[dict]:
                     "format": "json",
                     "utf8": 1,
                 },
-                headers={"User-Agent": "cancerbot/1.0 (medical-rag-assistant)"},
+                headers={"User-Agent": _WIKI_USER_AGENT},
                 timeout=8,
             )
             if resp.status_code in _RETRYABLE_HTTP and attempt < _RETRY_MAX - 1:

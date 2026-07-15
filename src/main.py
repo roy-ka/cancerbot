@@ -7,9 +7,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from src.routers import auth, health, conversations, bug_reports, terms
 from src.retrieval.db_connector import dbConnector
 from src.utils.utils import is_prod
+import sentry_sdk
+from sentry_sdk.integrations.fastapi import FastApiIntegration
+from sentry_sdk.integrations.starlette import StarletteIntegration
+from sentry_sdk.integrations.logging import LoggingIntegration
+from dotenv import load_dotenv
+
+load_dotenv()
+ENV = os.getenv('ENV')
+
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 
 logger = logging.getLogger(__name__)
@@ -29,10 +38,6 @@ def _init_sentry() -> None:
     if not dsn:
         return
     try:
-        import sentry_sdk
-        from sentry_sdk.integrations.logging import LoggingIntegration
-        from sentry_sdk.integrations.fastapi import FastApiIntegration
-        from sentry_sdk.integrations.starlette import StarletteIntegration
         sentry_sdk.init(
             dsn=dsn,
             integrations=[
@@ -40,12 +45,12 @@ def _init_sentry() -> None:
                 StarletteIntegration(),
                 LoggingIntegration(sentry_logs_level=logging.INFO, event_level=logging.ERROR),
             ],
-            environment="production" if is_prod() else "development",
+            environment=ENV,
             traces_sample_rate=0.1,
             send_default_pii=False,
             enable_logs=True,
         )
-        logger.info("Sentry initialized (env=%s)", "production" if is_prod() else "development")
+        logger.info("Sentry initialized (env=%s)", ENV)
     except Exception as exc:
         logger.warning("Failed to initialize Sentry: %s", exc)
 

@@ -10,6 +10,11 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 from starlette.concurrency import run_in_threadpool
 from synonyms import get_synonyms, _FORWARD, _REVERSE
+import sentry_sdk
+from sentry_sdk.integrations.fastapi import FastApiIntegration
+from sentry_sdk.integrations.starlette import StarletteIntegration
+from sentry_sdk.integrations.logging import LoggingIntegration
+from src.utils.utils import is_prod
 
 load_dotenv()
 
@@ -26,7 +31,7 @@ class _HealthFilter(logging.Filter):
         return not ("/health" in msg and '" 200"' in msg)
 
 
-if os.getenv("ENV", "").lower() in ("prod", "production"):
+if is_prod():
     logging.getLogger("uvicorn.access").addFilter(_HealthFilter())
 
 
@@ -34,10 +39,7 @@ def _init_sentry() -> None:
     dsn = os.getenv("SENTRY_DSN")
     if not dsn:
         return
-    import sentry_sdk
-    from sentry_sdk.integrations.fastapi import FastApiIntegration
-    from sentry_sdk.integrations.starlette import StarletteIntegration
-    from sentry_sdk.integrations.logging import LoggingIntegration
+    
     sentry_sdk.init(
         dsn=dsn,
         integrations=[
@@ -53,7 +55,7 @@ def _init_sentry() -> None:
     logger.info("[NLP] Sentry initialized")
 
 
-if os.getenv("ENV", "").lower() in ("prod", "production"):
+if is_prod():
     _init_sentry()
 
 
