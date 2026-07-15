@@ -20,6 +20,16 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+class _HealthFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        return not ("/health" in msg and '" 200"' in msg)
+
+
+if os.getenv("ENV", "").lower() in ("prod", "production"):
+    logging.getLogger("uvicorn.access").addFilter(_HealthFilter())
+
+
 def _init_sentry() -> None:
     dsn = os.getenv("SENTRY_DSN")
     if not dsn:
