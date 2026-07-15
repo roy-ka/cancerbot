@@ -467,14 +467,22 @@ def _embed_and_index_sources(sources: list[dict], terms: list[str] | None = None
         candidate.append((base_id, source))
 
     # Check which base IDs are already indexed (any chunk present)
-    already_indexed = db.existing_base_source_ids([bid for bid, _ in candidate])
+    candidate_ids = [bid for bid, _ in candidate]
+    already_indexed = db.existing_base_source_ids(candidate_ids)
+    new_ids = [bid for bid in candidate_ids if bid not in already_indexed]
+    logger.info(
+        "[index] candidates=%d already_indexed=%d to_index=%d — already_indexed=%s",
+        len(candidate_ids), len(already_indexed), len(new_ids), sorted(already_indexed),
+    )
 
     for base_id, source in candidate:
         if base_id in already_indexed:
+            logger.info("[index] skip %s (already indexed)", base_id)
             skipped += 1
             continue
         full_text = (source.get("content_for_embedding") or "").strip()
         chunks = _chunk_text(full_text)
+        logger.info("[index] indexing %s — %d chunk(s)", base_id, len(chunks))
 
         for chunk_index, chunk_text in enumerate(chunks):
             try:
@@ -494,6 +502,7 @@ def _embed_and_index_sources(sources: list[dict], terms: list[str] | None = None
                     "embedding": OllamaConnector.embed_text(chunk_text),
                 }
                 db.index_to_db("sources_index", doc)
+                logger.info("[index] indexed %s:c%d", base_id, chunk_index)
                 indexed += 1
             except Exception as e:
                 logger.warning(f"[index] failed to index '{source.get('title','?')[:60]}' chunk={chunk_index}: {e}")

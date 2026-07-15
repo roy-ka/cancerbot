@@ -54,18 +54,21 @@ def search_sources(db, text=None ,vector=None):
       }
     }
 
-    logger.debug(f"[search] Executing search with {len(should_clauses)} clauses")
+    logger.info("[search] executing: text='%s' vector=%s clauses=%d",
+                text[:80] if text else None, bool(vector), len(should_clauses))
     result = db.search(
       index_type = 'sources_index',
       body = body
     )
     hits = result.get('hits', {}).get('hits', [])
-    logger.debug(f"[search] Got {len(hits)} results from OpenSearch")
+    total = result.get('hits', {}).get('total', {}).get('value', '?')
+    logger.info("[search] returned %d hits (total_matching=%s)", len(hits), total)
 
     for i, hit in enumerate(hits):
       doc_id = hit.get('_source', {}).get('id', hit.get('_id'))
+      source_id = hit.get('_source', {}).get('source_id', '(none)')
       score = hit.get('_score')
-      logger.debug(f"[search]   Result {i+1}: id='{doc_id}', score={score}")
+      logger.info("[search]   hit %d: id='%s' source_id='%s' score=%s", i + 1, doc_id, source_id, score)
 
     return hits
   except Exception as e:
