@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
 """
-One-time migration: backfill existing OpenSearch source docs to the new chunked schema.
+Migration: backfill ALL old-format OpenSearch source docs to the new chunked schema.
 
-For each source referenced by an assistant message:
-  1. Tags it with the extracted_terms from the preceding user message (union across all messages)
-  2. Splits the content into 150-word chunks with 40-word overlap
-  3. Indexes the chunks under new IDs ({source_id}:c0, :c1, …)
-  4. Deletes the original single-doc entry
+Scrolls the entire sources index and migrates every document that lacks a
+`source_id` field (i.e. was indexed before the chunked schema was introduced).
 
-Safe to re-run: already-migrated docs (those that have a source_id field) are skipped.
+For each such doc:
+  1. Tags it with extracted_terms from PostgreSQL messages that cited it (if any),
+     falling back to the doc's existing `tags` field.
+  2. Splits content into 150-word chunks with 40-word overlap.
+  3. Indexes the chunks under new IDs ({source_id}:c0, :c1, …).
+  4. Deletes the original single-doc entry.
+
+Safe to re-run: docs that already have a `source_id` field are skipped by the
+scroll query itself.
 """
 import logging
 import os
@@ -28,20 +33,43 @@ from src.retrieval.db_connector import dbConnector
 from src.classes.ollama_connector import OllamaConnector
 from src.routers.conversation_helper import _chunk_text
 
-
-def _fetch_doc(source_id: str) -> dict | None:
-    """Fetch a single old-style doc from OpenSearch by its id field."""
-    res = dbConnector.get_sources_by_id([source_id])
-    for hit in res.get("hits", {}).get("hits", []):
-        src = hit.get("_source", {})
-        if src.get("id") == source_id:
-            return src
-    return None
+_SCROLL_TTL = "5m"
+_BATCH_SIZE = 100
 
 
-def _is_old_doc(doc: dict) -> bool:
-    """Return True if this is a pre-migration single doc (no source_id field)."""
-    return "source_id" not in doc
+def _scroll_old_docs(db_client, index_name):
+    """Yield all docs without a `source_id` field (old-format) via scroll."""
+    scroll_id = None
+    try:
+        resp = db_client.search(
+            index=index_name,
+            scroll=_SCROLL_TTL,
+            body={
+                "size": _BATCH_SIZE,
+                "_source": True,
+                "query": {
+                    "bool": {
+                        "must_not": [{"exists": {"field": "source_id"}}]
+                    }
+                },
+            },
+        )
+        scroll_id = resp.get("_scroll_id")
+        hits = resp["hits"]["hits"]
+        while hits:
+            for hit in hits:
+                yield hit
+            if not scroll_id:
+                break
+            resp = db_client.scroll(scroll_id=scroll_id, scroll=_SCROLL_TTL)
+            scroll_id = resp.get("_scroll_id")
+            hits = resp["hits"]["hits"]
+    finally:
+        if scroll_id:
+            try:
+                db_client.clear_scroll(scroll_id=scroll_id)
+            except Exception:
+                pass
 
 
 def main() -> None:
@@ -51,77 +79,81 @@ def main() -> None:
         logger.error("OpenSearch not available — aborting")
         sys.exit(1)
 
+    index_name = dbConnector._model["sources_index"]
+
     # ------------------------------------------------------------------ #
     # Step 1: build source_id → set(terms) from PostgreSQL messages table #
+    # (used to enrich tags on migrated chunks when available)             #
     # ------------------------------------------------------------------ #
     source_terms: dict[str, set[str]] = {}
 
-    with SessionLocal() as session:
-        assistant_msgs = (
-            session.query(Message)
-            .filter(Message.role == "assistant", Message.sources_ids.isnot(None))
-            .all()
-        )
-        logger.info("Found %d assistant messages with sources", len(assistant_msgs))
-
-        for msg in assistant_msgs:
-            source_ids = msg.source_ids
-            if not source_ids:
-                continue
-
-            # Find the immediately preceding user message in the same conversation
-            user_msg = (
+    try:
+        with SessionLocal() as session:
+            assistant_msgs = (
                 session.query(Message)
-                .filter(
-                    Message.conversation_id == msg.conversation_id,
-                    Message.role == "user",
-                    Message.created_at < msg.created_at,
+                .filter(Message.role == "assistant", Message.sources_ids.isnot(None))
+                .all()
+            )
+            logger.info("Found %d assistant messages with sources", len(assistant_msgs))
+
+            for msg in assistant_msgs:
+                source_ids = msg.source_ids
+                if not source_ids:
+                    continue
+
+                user_msg = (
+                    session.query(Message)
+                    .filter(
+                        Message.conversation_id == msg.conversation_id,
+                        Message.role == "user",
+                        Message.created_at < msg.created_at,
+                    )
+                    .order_by(Message.created_at.desc())
+                    .first()
                 )
-                .order_by(Message.created_at.desc())
-                .first()
-            )
 
-            terms: list[str] = []
-            if user_msg and isinstance(user_msg.extracted_terms, list):
-                terms = [t.strip() for t in user_msg.extracted_terms if t and t.strip()]
+                terms: list[str] = []
+                if user_msg and isinstance(user_msg.extracted_terms, list):
+                    terms = [t.strip() for t in user_msg.extracted_terms if t and t.strip()]
 
-            for sid in source_ids:
-                source_terms.setdefault(sid, set()).update(terms)
+                for sid in source_ids:
+                    source_terms.setdefault(sid, set()).update(terms)
 
-    logger.info("Collected terms for %d unique source IDs", len(source_terms))
+        logger.info("Collected terms for %d unique source IDs from messages", len(source_terms))
+    except Exception as exc:
+        logger.warning("Could not load terms from PostgreSQL (%s) — proceeding without enrichment", exc)
 
     # ------------------------------------------------------------------ #
-    # Step 2: migrate each un-migrated source                             #
+    # Step 2: scroll ALL old-format docs and migrate them                 #
     # ------------------------------------------------------------------ #
-    migrated = skipped_missing = skipped_already = errors = 0
+    migrated = skipped = errors = 0
 
-    for source_id, terms in source_terms.items():
+    for hit in _scroll_old_docs(dbConnector.db_client, index_name):
+        doc = hit.get("_source", {})
+        source_id = (doc.get("id") or "").strip()
+
+        if not source_id:
+            logger.warning("Doc with OpenSearch _id=%s has no 'id' field — skipping", hit.get("_id"))
+            skipped += 1
+            continue
+
+        full_text = (doc.get("content_for_embedding") or "").strip()
+        if not full_text:
+            logger.warning("No content for %s — skipping", source_id)
+            skipped += 1
+            continue
+
+        # Prefer terms from PostgreSQL messages; fall back to the doc's existing tags
+        if source_id in source_terms:
+            clean_terms = sorted(source_terms[source_id])
+        else:
+            existing_tags = doc.get("tags") or []
+            clean_terms = sorted(set(existing_tags)) if isinstance(existing_tags, list) else []
+
+        chunks = _chunk_text(full_text)
+        logger.info("Migrating %s — %d chunk(s), %d term(s)", source_id, len(chunks), len(clean_terms))
+
         try:
-            doc = _fetch_doc(source_id)
-
-            if doc is None:
-                logger.debug("Not found in OpenSearch, skipping: %s", source_id)
-                skipped_missing += 1
-                continue
-
-            if not _is_old_doc(doc):
-                logger.debug("Already migrated, skipping: %s", source_id)
-                skipped_already += 1
-                continue
-
-            full_text = (doc.get("content_for_embedding") or "").strip()
-            if not full_text:
-                logger.warning("No content for %s, skipping", source_id)
-                skipped_missing += 1
-                continue
-
-            chunks = _chunk_text(full_text)
-            clean_terms = sorted(terms)
-
-            logger.info(
-                "Migrating %s — %d chunk(s), %d term(s)", source_id, len(chunks), len(clean_terms)
-            )
-
             for chunk_index, chunk_text in enumerate(chunks):
                 embedding = OllamaConnector.embed_text(chunk_text)
                 dbConnector.index_to_db(
@@ -145,16 +177,14 @@ def main() -> None:
 
             dbConnector.delete_source_by_id(source_id)
             migrated += 1
-
         except Exception as exc:
             logger.error("Failed to migrate %s: %s", source_id, exc)
             errors += 1
 
     logger.info(
-        "Done — migrated=%d  skipped_missing=%d  skipped_already=%d  errors=%d",
+        "Done — migrated=%d  skipped=%d  errors=%d",
         migrated,
-        skipped_missing,
-        skipped_already,
+        skipped,
         errors,
     )
 
