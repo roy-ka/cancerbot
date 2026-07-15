@@ -14,7 +14,6 @@ import sentry_sdk
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 from sentry_sdk.integrations.logging import LoggingIntegration
-from src.utils.utils import is_prod
 
 load_dotenv()
 
@@ -31,7 +30,7 @@ class _HealthFilter(logging.Filter):
         return not ("/health" in msg and '" 200"' in msg)
 
 
-if is_prod():
+if os.getenv("ENV", "").lower() in ("prod", "production"):
     logging.getLogger("uvicorn.access").addFilter(_HealthFilter())
 
 
@@ -55,7 +54,7 @@ def _init_sentry() -> None:
     logger.info("[NLP] Sentry initialized")
 
 
-if is_prod():
+if os.getenv("ENV", "").lower() in ("prod", "production"):
     _init_sentry()
 
 
