@@ -1,6 +1,7 @@
 from src.db.models import Message
 from src.retrieval.db_connector import dbConnector
 import logging
+import re
 from typing import Optional, Tuple
 from datetime import datetime
 import uuid
@@ -57,19 +58,28 @@ def add_claims_and_sources(message: Message):
       continue
     seen_source_ids.add(dedup_key)
 
+    # Strip :cN chunk suffix — base ID is the stable identifier
+    base_id = re.sub(r':c\d+$', '', data.get('id') or '')
+
     url = data.get('url') or data.get('pmid') or data.get('doi')
 
-    # Use title for Wikipedia sources, otherwise use the stable id
-    name = data.get('title') if data.get('source_type') == 'wikipedia' else data.get('id')
+    source_type = data.get('source_type')
+    if source_type == 'wikipedia':
+      name = data.get('title')
+    elif source_type == 'url':
+      # Use title if available, otherwise extract the domain from the actual URL
+      name = data.get('title') or _extract_source_name(data.get('url'))
+    else:
+      name = base_id
 
     entry = {
       'evidence_score_0_5': data.get('evidence_score_0_5'),
       'text': data.get('content_for_embedding'),
-      'id': data.get('id'),
+      'id': base_id,
       'url': url,
       'name': name,
       'title': data.get('title'),
-      'source_type': data.get('source_type'),
+      'source_type': source_type,
     }
     if data.get('index') == 'claims_index':
       claims.append(entry)

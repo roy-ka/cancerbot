@@ -4,6 +4,7 @@ from .db_connector import dbConnector
 from concurrent.futures import ThreadPoolExecutor
 
 import logging
+import re
 logger = logging.getLogger(__name__)
 
 db = dbConnector()
@@ -37,7 +38,7 @@ def run_retrieval(query: str, k_primary: int = 5, k_secondary: int = 3) -> dict:
   source_ids = []
   for i, source in enumerate(sources):
     source_obj = source.get('_source', {})
-    doc_id = source_obj.get('id')
+    doc_id = re.sub(r':c\d+$', '', source_obj.get('id') or '')
     if doc_id:
       source_ids.append(doc_id)
     else:

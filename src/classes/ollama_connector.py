@@ -170,7 +170,7 @@ class OllamaConnector:
           "Context item missing 'id'. Provide item['id'] or an OpenSearch hit with '_source.id' or '_id'."
         )
 
-      original_id = str(raw_id).strip()
+      original_id = re.sub(r':c\d+$', '', str(raw_id).strip())
 
       alias = f"source{i+1}"
       alias_to_id[alias] = original_id
