@@ -20,7 +20,11 @@ services:
     volumes:
       - os-data1:/usr/share/opensearch/data
     healthcheck:
-      test: ['CMD-SHELL', 'curl -sf --insecure -u admin:${OPENSEARCH_INITIAL_ADMIN_PASSWORD} "https://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s" || exit 1']
+      test:
+        [
+          'CMD-SHELL',
+          'curl -sf --insecure -u admin:${OPENSEARCH_INITIAL_ADMIN_PASSWORD} "https://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s" || exit 1',
+        ]
       interval: 15s
       timeout: 10s
       retries: 20
@@ -77,7 +81,6 @@ services:
     networks: [osnet]
 
   nlp-service:
-    profiles: ['prod']
     build:
       context: ./nlp_service
       dockerfile: Dockerfile
@@ -87,7 +90,11 @@ services:
     ports:
       - '8100:8100'
     healthcheck:
-      test: ['CMD-SHELL', 'python -c "import urllib.request; urllib.request.urlopen(\"http://localhost:8100/health\")" || exit 1']
+      test:
+        [
+          'CMD-SHELL',
+          'python -c "import urllib.request; urllib.request.urlopen(\"http://localhost:8100/health\")" || exit 1',
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -108,10 +115,10 @@ services:
     env_file: .env
     environment:
       ENV: production
-      POSTGRES_URL: "postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}"
-      OPENSEARCH_URL: "https://opensearch-node1:9200"
-      OLLAMA_URL: "http://172.30.0.1:11434"
-      NLP_SERVICE_URL: "http://nlp-service:8100"
+      POSTGRES_URL: 'postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}'
+      OPENSEARCH_URL: 'https://opensearch-node1:9200'
+      OLLAMA_URL: 'http://172.30.0.1:11434'
+      NLP_SERVICE_URL: 'http://nlp-service:8100'
     ports:
       - '8000:8000'
     depends_on:
@@ -144,10 +151,10 @@ services:
     env_file: .env
     environment:
       ENV: production
-      POSTGRES_URL: "postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}"
-      OPENSEARCH_URL: "https://opensearch-node1:9200"
-      OLLAMA_URL: "http://172.30.0.1:11434"
-      URL_CLASSIFIER_POLL_INTERVAL: "10"
+      POSTGRES_URL: 'postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}'
+      OPENSEARCH_URL: 'https://opensearch-node1:9200'
+      OLLAMA_URL: 'http://172.30.0.1:11434'
+      URL_CLASSIFIER_POLL_INTERVAL: '10'
     depends_on:
       postgres:
         condition: service_healthy

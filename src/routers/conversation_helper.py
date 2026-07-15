@@ -189,8 +189,10 @@ def _stable_source_id(source: dict) -> str:
 
 async def _extract_terms_from_message(text: str) -> list[str]:
     from src.nlp import extract_terms
+    logger.info("[conversation_helper] _extract_terms_from_message input: %r", (text or "")[:200])
     try:
         result = await extract_terms(text or "")
+        logger.info("[conversation_helper] _extract_terms_from_message output: %s", result)
         return result
     except Exception as e:
         logger.error(f"[nlp] extract_terms failed: {type(e).__name__}: {e}")

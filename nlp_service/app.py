@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from starlette.concurrency import run_in_threadpool
-from synonyms import get_synonyms
+from synonyms import get_synonyms, _FORWARD, _REVERSE
 
 load_dotenv()
 
@@ -54,6 +54,9 @@ STOP_ENTS = frozenset({
     "can", "could", "will", "would", "should", "may", "might",
     "not", "no", "yes", "also", "just", "very", "more", "most",
     "about", "like", "such", "than", "then", "there", "here",
+    "tell", "give", "show", "explain", "describe", "list", "find",
+    "know", "need", "want", "help", "make", "look", "take", "get",
+    "use", "see", "say", "let", "put", "ask",
 })
 
 
@@ -111,6 +114,7 @@ def _preserve_case(original: str, corrected: str) -> str:
 @app.post("/extract")
 async def extract(req: ExtractReq):
     t0 = time.time()
+    logger.info("[extract] input: %r", (req.text or "")[:200])
     doc = await run_in_threadpool(nlp, req.text or "")
 
     entities = [
@@ -125,19 +129,38 @@ async def extract(req: ExtractReq):
         if str(a).strip() and str(a._.long_form).strip()
     }
 
+    # Also scan every token against the synonym map so known abbreviations and
+    # oncology terms (e.g. "GBM", "NSCLC") are caught even when scispaCy NER misses them.
+    ent_keys = {e.lower() for e in entities}
+    for token in doc:
+        word = token.text.strip()
+        if not word or word.lower() in STOP_ENTS or word.lower() in ent_keys:
+            continue
+        if word.lower() in _FORWARD or word.lower() in _REVERSE:
+            entities.append(word)
+            ent_keys.add(word.lower())
+
     expanded = [abbr_found.get(e.lower()) or e for e in entities]
 
     synonyms: list[str] = []
     for e in entities:
         synonyms.extend(get_synonyms(e))
 
-    logger.info("[extract] %.3fs — %d entities %d synonyms", time.time() - t0, len(entities), len(synonyms))
-    return {
+    result = {
         "entities": _dedupe(entities),
         "expanded_entities": _dedupe(expanded),
         "synonyms": _dedupe(synonyms),
         "abbreviations_found": abbr_found,
     }
+    logger.info(
+        "[extract] %.3fs — entities=%s abbr=%s expanded=%s synonyms=%s",
+        time.time() - t0,
+        result["entities"],
+        abbr_found,
+        result["expanded_entities"],
+        result["synonyms"],
+    )
+    return result
 
 
 @app.post("/spelling/correct")

@@ -25,10 +25,12 @@ def load_models() -> None:
 async def extract_terms(text: str) -> list[str]:
     if not text:
         return []
+    logger.info("[nlp] extract_terms input: %r", text[:200])
     try:
         resp = await _get_client().post("/extract", json={"text": text})
         resp.raise_for_status()
         data = resp.json()
+        logger.info("[nlp] extract_terms raw response: %s", data)
         base = data.get("expanded_entities") or data.get("entities") or []
         synonyms = data.get("synonyms") or []
         seen: set[str] = {t.lower() for t in base}
@@ -37,6 +39,7 @@ async def extract_terms(text: str) -> list[str]:
             if s.lower() not in seen:
                 seen.add(s.lower())
                 merged.append(s)
+        logger.info("[nlp] extract_terms output: %s", merged)
         return merged
     except Exception as e:
         logger.error("[nlp] extract_terms failed: %s: %s", type(e).__name__, e)

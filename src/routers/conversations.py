@@ -120,15 +120,34 @@ async def _process_post_message(
     try:
         from src.routers.conversation_helper import _extract_terms_from_message
         extracted_terms = await _extract_terms_from_message(req.content)
+        logging.info("[conversation] extracted_terms for message %s: %s", user_message.id, extracted_terms)
         user_message.extracted_terms = extracted_terms if extracted_terms else None
         db.add(user_message)
         db.commit()
+        logging.info("[conversation] saved extracted_terms=%s to message %s", user_message.extracted_terms, user_message.id)
     except Exception as e:
         logging.warning(f"[conversation] term extraction failed: {type(e).__name__}: {e}")
         db.rollback()
 
     await emit('fallback_triggered', {'reason': 'always_search_external'})
     search_meta = await search_and_embed(conversation, emit=emit)
+
+    # Backfill extracted_terms on the user message if NLP returned empty (e.g. short
+    # abbreviation like "gbm") but search_and_embed produced fallback terms.
+    actual_terms = search_meta.get('terms', [])
+    if actual_terms and not user_message.extracted_terms:
+        try:
+            user_message.extracted_terms = actual_terms
+            db.add(user_message)
+            db.commit()
+            logging.info(
+                "[conversation] backfilled extracted_terms=%s on message %s",
+                actual_terms,
+                user_message.id,
+            )
+        except Exception as e:
+            logging.warning("[conversation] backfill extracted_terms failed: %s: %s", type(e).__name__, e)
+            db.rollback()
 
     # Record external search results using the current db session
     external_data = search_meta.get('external_search_data', {})

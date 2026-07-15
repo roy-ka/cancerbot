@@ -99,7 +99,10 @@ async def register_user(req: CreateUserRequest, request: Request, background_tas
     token = create_verification_token(db=db, user_id=user.id)
     frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
     background_tasks.add_task(send_verification_email, to=user.email, name=user.name, token=token, frontend_url=frontend_url)
-    return {"message": "Please check your email to verify your account.", "email": user.email}
+    resp: dict = {"message": "Please check your email to verify your account.", "email": user.email}
+    if not is_prod():
+        resp["verification_token"] = token
+    return resp
 
 
 @router.post("/login/")
