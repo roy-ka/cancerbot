@@ -33,12 +33,13 @@ async def extract_terms(text: str) -> list[str]:
         logger.info("[nlp] extract_terms raw response: %s", data)
         base = data.get("expanded_entities") or data.get("entities") or []
         synonyms = data.get("synonyms") or []
-        seen: set[str] = {t.lower() for t in base}
-        merged = list(base)
-        for s in synonyms:
-            if s.lower() not in seen:
-                seen.add(s.lower())
-                merged.append(s)
+        seen: set[str] = set()
+        merged: list[str] = []
+        for t in (*base, *synonyms):
+            key = t.lower()
+            if key not in seen:
+                seen.add(key)
+                merged.append(t)
         logger.info("[nlp] extract_terms output: %s", merged)
         return merged
     except Exception as e:
