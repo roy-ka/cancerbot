@@ -193,7 +193,11 @@ async def _process_post_message(
     # retrieval query so KNN/BM25 can find semantically related sources instead of
     # searching with a meaningless URL string.
     url_context_items: list[dict] = search_meta.get('url_context_items', [])
-    retrieval_query = req.content
+    # Prefer extracted terms as retrieval query so BM25/KNN search on the
+    # medical concepts rather than the raw message (which may contain noise
+    # words like "tell" that skew BM25 toward unrelated indexed documents).
+    extracted_query_terms = search_meta.get('terms', [])
+    retrieval_query = ' '.join(extracted_query_terms) if extracted_query_terms else req.content
     if url_context_items:
         first_title = (url_context_items[0].get('title') or '').strip()
         if first_title and first_title != req.content:

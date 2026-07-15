@@ -147,6 +147,26 @@ def _url_fetch_to_source(result: dict) -> dict:
     }
 
 
+# Stop words that must never be used as search terms even if NLP mis-tags them.
+# Mirrors STOP_ENTS in nlp_service/app.py plus the fallback extraction stop list.
+_TERM_STOP_WORDS: frozenset[str] = frozenset({
+    # Common English function words / fallback stop list
+    'the', 'and', 'or', 'is', 'are', 'was', 'were', 'be', 'been',
+    'what', 'that', 'this', 'from', 'with', 'for', 'but', 'not',
+    'has', 'have', 'had', 'can', 'could', 'will', 'would', 'should',
+    'may', 'might', 'do', 'does', 'did', 'get', 'got', 'use', 'used',
+    'how', 'why', 'when', 'where', 'who', 'which', 'there', 'here',
+    'also', 'just', 'very', 'more', 'most', 'such', 'than', 'then',
+    'about', 'like', 'into', 'over', 'after', 'some', 'any', 'all',
+    # Request / imperative verbs (NLP STOP_ENTS)
+    'tell', 'give', 'show', 'explain', 'describe', 'list', 'find',
+    'know', 'need', 'want', 'help', 'make', 'look', 'take',
+    'see', 'say', 'let', 'put', 'ask',
+    # Other frequent false positives
+    'no', 'yes', 'not', 'also', 'just',
+})
+
+
 async def _emit_noop(stage: str, data: Dict[str, Any] | None = None) -> None:
     return
 
@@ -505,13 +525,15 @@ async def search_and_embed(
             "skipped": 0,
         }
 
-    # Collect stored terms from recent messages
+    # Collect stored terms from recent messages, filtering out generic stop words
+    # that scispaCy sometimes mis-tags (e.g. "tell", "give") so they don't
+    # poison subsequent searches in the same conversation.
     stored_terms: list[str] = []
     for msg in last_messages:
         msg_terms = getattr(msg, 'extracted_terms', None)
         if msg_terms and isinstance(msg_terms, list):
             stored_terms.extend(msg_terms)
-    stored_terms = _dedupe_terms(stored_terms)
+    stored_terms = [t for t in _dedupe_terms(stored_terms) if t.lower() not in _TERM_STOP_WORDS]
 
     # Use stored terms if available, otherwise extract them
     if stored_terms:
