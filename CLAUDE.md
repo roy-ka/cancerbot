@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-CancerBot is a Retrieval-Augmented Generation (RAG) chatbot for cancer-related medical information. It uses a hybrid search approach (BM25 + KNN vector search) over a corpus of medical sources and claims in OpenSearch, with Groq (cloud LLM) for generation (OpenAI as fallback) and Ollama for embeddings only. On every user message, the system also performs live external search (PubMed, CrossRef, Wikipedia), embeds the results, and indexes them into OpenSearch before retrieval.
+CancerBot is a Retrieval-Augmented Generation (RAG) chatbot for cancer-related medical information. It uses a hybrid search approach (BM25 + KNN vector search) over a corpus of medical sources and claims in OpenSearch, with Groq (cloud LLM) for generation (Gemini as fallback) and Ollama for embeddings only. On every user message, the system also performs live external search (PubMed, CrossRef, Wikipedia), embeds the results, and indexes them into OpenSearch before retrieval.
 
 ## Dependencies
 
@@ -130,8 +130,8 @@ Frontend first calls `POST /conversations/create/` (lightweight DB-only, returns
 6. External search results are recorded in `external_search_results` table
 7. `src/retrieval/__init__.py:run_retrieval` embeds the query and runs hybrid BM25 + KNN search on `sources_index` with `collapse` on `source_id` — returns top 5 unique sources (1 best chunk per source)
 8. Search analytics recorded in `search_analytics` table
-9. `src/classes/ollama_connector.py` builds a prompt with history + context (cited as `[R1]`, `[R2]`, ...) and calls Groq chat completions (`GROQ_MODEL_NAME`). On `groq.GroqError`, falls back to OpenAI (`OPENAI_FALLBACK_MODEL`).
-10. Post-processing replaces `[R1]` aliases with stable IDs (`pmid:xxx:c0`, `doi:xxx:c0`, `url:<sha1>:c0`)
+9. `src/classes/ollama_connector.py` builds a prompt with history + context (cited as `[source1]`, `[source2]`, ...) and calls Groq chat completions (`GROQ_MODEL_NAME`). On `groq.GroqError`, falls back to Gemini (`GEMINI_FALLBACK_MODEL`).
+10. Post-processing replaces `[source1]` aliases with stable base IDs (`pmid:xxx`, `doi:xxx`, `url:<sha1>`) — the `:cN` chunk suffix is stripped before aliases are built
 11. Assistant message + source IDs stored in PostgreSQL
 12. WebSocket emits staged events throughout (see below)
 
@@ -159,6 +159,7 @@ Indices are auto-created on startup via `dbConnector.ensure_all_indexes()`.
 - BM25 match on `content_for_embedding` (boost ×1) and `title` (boost ×1.5)
 - `collapse` on `source_id` (keyword) — ensures at most 1 chunk per source in the top 5 results
 - Works with Lucene-engine KNN (OpenSearch 3); requires `source_id` to be a `keyword` field
+- **Caveat**: OpenSearch silently drops documents that have no value for the collapse field. Docs indexed by `embedding.py` before the chunked schema was introduced lack `source_id` and are therefore invisible to retrieval until `backfill_chunks.py` migrates them.
 
 ### Data Files (`data/`)
 - `sources_canonical.jsonl` — deduplicated sources (merged by PMID > DOI > URL > title)
@@ -176,6 +177,7 @@ Indices are auto-created on startup via `dbConnector.ensure_all_indexes()`.
 | `RateLimitEntry` | `rate_limit_entries` | Rate limiting for register (per-IP, 10/h) and forgot-password (per-email, 5/h) |
 | `SearchAnalytic` | `search_analytics` | Per-message search metrics |
 | `ExternalSearchResult` | `external_search_results` | Records PubMed/CrossRef/Wikipedia fetches |
+| `UrlClassificationJob` | `url_classification_jobs` | Queue of URLs pending cancer-relevance classification |
 
 ### Key Environment Variables (`.env`)
 ```
@@ -184,8 +186,7 @@ OPENSEARCH_URL=https://localhost:9200
 OPENSEARCH_INITIAL_ADMIN_PASSWORD=...
 
 # Ollama (embeddings only)
-OLLAMA_URL=http://localhost:11434       # used in dev
-OLLAMA_URL_PROD=http://...             # used in prod (is_prod() check)
+OLLAMA_URL=http://localhost:11434       # dev; set to http://ollama:11434 in Docker prod
 EMBED_MODEL_NAME=nomic-embed-text
 OLLAMA_CONTEXT_ITEMS=6                 # number of context chunks sent to LLM
 
@@ -221,9 +222,9 @@ EMAIL_FROM_NAME=CancerBot
 # Backups — optional S3 upload
 BACKUP_S3_BUCKET=...
 
-# OpenAI (fallback LLM when Groq is unavailable)
-OPENAI_API_KEY=...
-OPENAI_FALLBACK_MODEL=gpt-4o-mini
+# Gemini (fallback LLM when Groq is unavailable)
+GEMINI_API_KEY=...
+GEMINI_FALLBACK_MODEL=gemini-2.5-flash
 
 # Optional integrations
 UNPAYWALL_EMAIL=
@@ -263,5 +264,5 @@ Initialised in `src/main.py` with `enable_logs=True` — standard Python `loggin
 - Builds with `--pull` so the base image is refreshed when upstream publishes OS patches (e.g. curl CVEs); intermediate layers still cache when the base digest is unchanged
 - Scans built images with Trivy (`HIGH`/`CRITICAL`, ignore-unfixed); aborts deploy on findings
 - Skips `alembic upgrade heads` if `alembic current` already shows `(head)` — avoids 4 unnecessary Docker container spawns per deploy
-- Runs seeds (non-fatal): `seed_wikipedia_tags.py` then `backfill_chunks.py` (migrates old single-doc OpenSearch entries to chunked schema, idempotent)
+- Runs seeds (non-fatal): `seed_wikipedia_tags.py` then `backfill_chunks.py` (scrolls the entire sources index and migrates every doc without a `source_id` field to the chunked schema; idempotent)
 - Prints git commit hash in the success summary
