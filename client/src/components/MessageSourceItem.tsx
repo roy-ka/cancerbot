@@ -22,7 +22,7 @@ export default function MessageSourceItem({
   const popupText = source.text
   const url = source.url ?? ''
   const name =
-    source.name === 'unknown'
+    !source.name || source.name === 'unknown'
       ? text
       : source.source_type === 'wikipedia'
         ? `wiki: ${source.name}`
