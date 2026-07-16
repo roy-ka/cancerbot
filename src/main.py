@@ -7,14 +7,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from src.routers import auth, health, conversations, bug_reports, terms
 from src.retrieval.db_connector import dbConnector
 from src.utils.utils import is_prod
-import sentry_sdk
-from sentry_sdk.integrations.fastapi import FastApiIntegration
-from sentry_sdk.integrations.starlette import StarletteIntegration
-from sentry_sdk.integrations.logging import LoggingIntegration
+import axiom_py
+from axiom_py.logging import AxiomHandler
 from dotenv import load_dotenv
 
 load_dotenv()
-ENV = os.getenv('ENV')
 
 logging.basicConfig(
     level=logging.INFO,
@@ -33,27 +30,18 @@ class _HealthFilter(logging.Filter):
 if is_prod():
     logging.getLogger("uvicorn.access").addFilter(_HealthFilter())
 
-def _init_sentry() -> None:
-    dsn = os.getenv("SENTRY_DSN")
-    if not dsn:
+def _init_axiom_logging() -> None:
+    token = os.getenv("AXIOM_TOKEN")
+    dataset = os.getenv("AXIOM_DATASET")
+    if not token or not dataset:
         return
-    sentry_sdk.init(
-        dsn=dsn,
-        integrations=[
-            FastApiIntegration(),
-            StarletteIntegration(),
-            LoggingIntegration(sentry_logs_level=logging.INFO, event_level=logging.ERROR),
-        ],
-        environment=ENV,
-        traces_sample_rate=0.1,
-        send_default_pii=False,
-        enable_logs=True,
-    )
-    logging.getLogger().setLevel(logging.INFO)
-    sentry_sdk.capture_message("backend-sentry-test", level="info")
-    logger.info("Sentry initialized (env=%s)", ENV)
+    client = axiom_py.Client(token=token)
+    handler = AxiomHandler(client, dataset)
+    handler.setLevel(logging.INFO)
+    logging.getLogger().addHandler(handler)
+    logger.info("Axiom logging initialized (dataset=%s)", dataset)
 
-_init_sentry()
+_init_axiom_logging()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

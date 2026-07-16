@@ -312,16 +312,13 @@ if [ -z "$NODE_PATH" ]; then
   exit 1
 fi
 
-# Read build-time env vars from server .env (keep secrets out of git)
-SENTRY_DSN_VAL=$(grep -E '^SENTRY_DSN=' "$PROJECT_DIR/.env" 2>/dev/null | cut -d'=' -f2- | tr -d '"'"'")
 export VITE_BASE_URL=""
-export VITE_SENTRY_DSN="$SENTRY_DSN_VAL"
 
 # Run npm as the actual user (not root) to avoid permission issues
 # Pass VITE_* vars explicitly so they survive sudo's env reset
 _npm() { "$NPM_PATH" "$@"; }
 if [ "$(whoami)" = "root" ] && [ -n "$SUDO_USER" ]; then
-  _npm() { sudo -u "$SUDO_USER" env VITE_BASE_URL="$VITE_BASE_URL" VITE_SENTRY_DSN="$VITE_SENTRY_DSN" "$NPM_PATH" "$@"; }
+  _npm() { sudo -u "$SUDO_USER" env VITE_BASE_URL="$VITE_BASE_URL" "$NPM_PATH" "$@"; }
 fi
 
 if [ "$NPM_NEEDS_INSTALL" = true ]; then

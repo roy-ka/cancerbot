@@ -10,13 +10,10 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 from starlette.concurrency import run_in_threadpool
 from synonyms import get_synonyms, _FORWARD, _REVERSE
-import sentry_sdk
-from sentry_sdk.integrations.fastapi import FastApiIntegration
-from sentry_sdk.integrations.starlette import StarletteIntegration
-from sentry_sdk.integrations.logging import LoggingIntegration
+import axiom_py
+from axiom_py.logging import AxiomHandler
 
 load_dotenv()
-ENV = os.getenv("ENV")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -35,27 +32,19 @@ if os.getenv("ENV", "").lower() in ("prod", "production"):
     logging.getLogger("uvicorn.access").addFilter(_HealthFilter())
 
 
-def _init_sentry() -> None:
-    dsn = os.getenv("SENTRY_DSN")
-    if not dsn:
+def _init_axiom_logging() -> None:
+    token = os.getenv("AXIOM_TOKEN")
+    dataset = os.getenv("AXIOM_DATASET")
+    if not token or not dataset:
         return
-    
-    sentry_sdk.init(
-        dsn=dsn,
-        integrations=[
-            FastApiIntegration(),
-            StarletteIntegration(),
-            LoggingIntegration(sentry_logs_level=logging.INFO, event_level=logging.ERROR),
-        ],
-        environment=ENV,
-        traces_sample_rate=0.1,
-        send_default_pii=False,
-        enable_logs=True,
-    )
-    logger.info("[NLP] Sentry initialized")
+    client = axiom_py.Client(token=token)
+    handler = AxiomHandler(client, dataset)
+    handler.setLevel(logging.INFO)
+    logging.getLogger().addHandler(handler)
+    logger.info("[NLP] Axiom logging initialized (dataset=%s)", dataset)
 
 
-_init_sentry()
+_init_axiom_logging()
 
 
 STOP_ENTS = frozenset({

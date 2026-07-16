@@ -18,7 +18,7 @@ wikipedia-api
 lxml
 tldextract
 freezegun
-sentry-sdk[fastapi]==2.65.0
+axiom-py
 spacy>=3.7.5,<3.8.0
 scispacy==0.5.5
 numpy>=1.24.0,<2.0.0

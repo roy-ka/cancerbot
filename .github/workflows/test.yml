@@ -33,6 +33,8 @@ jobs:
       GROQ_MODEL_NAME: llama-3.3-70b-versatile
       ENV: test
       SENDGRID_API_KEY: ""
+      AXIOM_TOKEN: ""
+      AXIOM_DATASET: ""
       PYTHONPATH: ${{ github.workspace }}
 
     steps:
