@@ -49,6 +49,8 @@ def _init_sentry() -> None:
         send_default_pii=False,
         enable_logs=True,
     )
+    logging.getLogger().setLevel(logging.INFO)
+    sentry_sdk.capture_message("backend-sentry-test", level="info")
     logger.info("Sentry initialized (env=%s)", ENV)
 
 _init_sentry()
