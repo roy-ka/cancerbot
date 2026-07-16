@@ -74,7 +74,7 @@ def add_claims_and_sources(message: Message):
 
     entry = {
       'evidence_score_0_5': data.get('evidence_score_0_5'),
-      'text': data.get('content_for_embedding'),
+      'text': data.get('full_text'),
       'id': base_id,
       'url': url,
       'name': name,

@@ -335,6 +335,28 @@ class dbConnector:
       return 0
 
   @classmethod
+  def delete_chunks_by_source_id(cls, source_id: str) -> int:
+    """Delete every chunk belonging to source_id (matches the source_id keyword field).
+
+    Unlike delete_source_by_id (exact `id` match, for single-doc pre-chunk-schema
+    entries), this removes all `{source_id}:cN` chunks so a source's content can be
+    re-fetched and re-indexed with a different chunk count.
+    """
+    cls._initialize()
+    if not cls.db_client or not cls._model:
+      return 0
+    try:
+      res = cls.db_client.delete_by_query(
+        index=cls._model['sources_index'],
+        body={"query": {"term": {"source_id": source_id}}},
+        wait_for_completion=True,
+      )
+      return res.get("deleted", 0)
+    except Exception as exc:
+      cls.logger.warning("delete_chunks_by_source_id failed for source_id=%s: %s", source_id, exc)
+      return 0
+
+  @classmethod
   def get_claims_and_sources_by_id(cls, ids):
     """Get claims and sources by their IDs from both indices.
 

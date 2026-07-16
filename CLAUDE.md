@@ -93,9 +93,11 @@ docker-compose --profile prod up --build
 
 ### Data Pipeline
 ```bash
-python -m src.enricher       # Fetch missing abstracts from PubMed/CrossRef/Wikipedia
 python -m src.embedding      # Embed documents into OpenSearch via Ollama
 ```
+
+Abstract fetching (PubMed/CrossRef/Wikipedia) happens live per-query via `src/routers/conversation_helper.py`
+during the chat flow — there is no longer a standalone offline enrichment script.
 
 ### Backup / Restore
 ```bash
@@ -103,6 +105,15 @@ python scripts/backup_db.py   # Dump PostgreSQL to file (optionally upload to S3
 python scripts/restore_db.py  # Restore from a dump file
 bash scripts/daily_backup.sh  # Cron-friendly wrapper for backup
 ```
+
+### Data Migrations
+```bash
+python scripts/backfill_chunks.py          # Migrate pre-chunked-schema docs (idempotent; run automatically on deploy)
+python scripts/fix_crossref_abstracts.py   # Re-fetch + re-clean all CrossRef sources (manual, one-off; use --dry-run / --limit N)
+```
+`fix_crossref_abstracts.py` is not run automatically by `deploy.sh` — it makes a
+live CrossRef + Unpaywall + Ollama round trip per source, so it's meant to be run
+by hand when needed rather than on every deploy.
 
 ## Architecture
 
@@ -256,8 +267,8 @@ In production with self-signed certs, `verify_certs=False` alone is insufficient
 ### Migrations — Idempotency Pattern
 New migrations that create tables or indexes must use raw SQL with `IF NOT EXISTS` via `op.execute()`, not `op.create_table()` / `op.create_index()`. This avoids `DuplicateTable` errors when revision IDs change between deploys. See `add_bug_reports_table_001.py` as the canonical example.
 
-### Sentry
-Initialised in `src/main.py` with `enable_logs=True` — standard Python `logging` calls at INFO+ are forwarded to Sentry Logs (Explore → Logs). `LoggingIntegration(event_level=logging.ERROR)` creates Sentry Issues for ERROR+. No custom bridge handler is needed. The nginx CSP must include `https://*.ingest.de.sentry.io https://*.ingest.sentry.io` in `connect-src` (already set in `nginx.conf`).
+### Axiom
+Initialised in `src/main.py` and `nlp_service/app.py` via `_init_axiom_logging()` — an `AxiomHandler` is attached to the root logger, forwarding standard Python `logging` calls at INFO+ to the Axiom dataset named by `AXIOM_DATASET`, authenticated via `AXIOM_TOKEN`. Both env vars must be set for logging to activate; init is skipped silently (no error) if either is missing. Log records carry no explicit environment tag — the logger `name` field (e.g. `src.main`, `nlp_service.app`) is the only built-in way to distinguish sources when querying.
 
 ### Deploy Script (`scripts/deploy.sh`)
 - Checks disk free ≥ 100GB before building; runs `docker system prune` and re-checks if low

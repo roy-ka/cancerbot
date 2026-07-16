@@ -12,6 +12,7 @@ from urllib.parse import quote_plus, urlparse
 import httpx
 import logging
 import wikipediaapi
+from bs4 import BeautifulSoup
 
 from src.classes.ollama_connector import OllamaConnector
 
@@ -184,10 +185,36 @@ def _dedupe_terms(items: list[str]) -> list[str]:
     return out
 
 
-def _strip_markup(text: Optional[str]) -> Optional[str]:
-    if not text:
+def _clean_crossref_text(raw: Optional[str]) -> Optional[str]:
+    """Parse CrossRef's JATS/HTML-tagged title or abstract into clean, readable text.
+
+    CrossRef abstracts are wrapped in JATS tags, e.g.
+    "<jats:title>Abstract</jats:title><jats:p>...</jats:p>". A blunt tag-strip
+    leaves the redundant "Abstract" label as a literal prefix in the output, so
+    this drops <jats:title>/<title> elements whose text is just that generic
+    label while keeping meaningful structured-abstract headers (Background,
+    Methods, Results, ...). Titles carry simpler inline markup (e.g. "<i>gene</i>"
+    for italicized gene names), which falls through to the blunt-strip fallback.
+    """
+    if not raw:
         return None
-    cleaned = re.sub(r"<[^>]+>", " ", text)
+    try:
+        soup = BeautifulSoup(raw, "html.parser")
+        parts: list[str] = []
+        for el in soup.find_all(["jats:title", "title", "jats:p", "p"]):
+            text = el.get_text(" ", strip=True)
+            if not text:
+                continue
+            if el.name in ("jats:title", "title") and text.lower() == "abstract":
+                continue
+            parts.append(text)
+        cleaned = " ".join(" ".join(parts).split()).strip()
+        if cleaned:
+            return cleaned
+    except Exception:
+        pass
+    # Fallback: blunt tag strip (handles malformed/unexpected markup)
+    cleaned = re.sub(r"<[^>]+>", " ", raw)
     cleaned = " ".join(cleaned.split()).strip()
     return cleaned or None
 
@@ -296,8 +323,9 @@ async def _search_crossref_sources(client: httpx.AsyncClient, terms: list[str], 
     for item in items:
         doi = (item.get("DOI") or "").strip()
         title_arr = item.get("title") or []
-        title = (title_arr[0] if isinstance(title_arr, list) and title_arr else "") or ""
-        abstract = _strip_markup(item.get("abstract"))
+        raw_title = (title_arr[0] if isinstance(title_arr, list) and title_arr else "") or ""
+        title = _clean_crossref_text(raw_title) or raw_title.strip()
+        abstract = _clean_crossref_text(item.get("abstract"))
         content_for_embedding = (
             f"{title}\n\n{abstract}".strip() if abstract else title.strip()
         )
@@ -320,6 +348,19 @@ async def _search_crossref_sources(client: httpx.AsyncClient, terms: list[str], 
         )
         if len(out) >= max_results:
             break
+
+    async def _supplement_with_oa_fulltext(entry: dict) -> None:
+        doi = entry.get("doi")
+        if not doi:
+            return
+        remaining = MAX_FULLTEXT_WORDS - len(entry["content_for_embedding"].split())
+        if remaining <= 0:
+            return
+        excerpt = await _fetch_oa_fulltext_excerpt(client, doi, entry.get("url"), remaining)
+        if excerpt:
+            entry["content_for_embedding"] = f"{entry['content_for_embedding']}\n\n{excerpt}".strip()
+
+    await asyncio.gather(*[_supplement_with_oa_fulltext(entry) for entry in out])
 
     logger.info(f"[crossref] fetched {len(out)} items")
     return out
@@ -771,8 +812,9 @@ async def _resolve_doi(client: httpx.AsyncClient, doi: str) -> dict | None:
         if resp.status_code == 200:
             item = resp.json().get("message") or {}
             title_arr = item.get("title") or []
-            title = (title_arr[0] if title_arr else "").strip()
-            abstract = _strip_markup(item.get("abstract"))
+            raw_title = (title_arr[0] if title_arr else "").strip()
+            title = _clean_crossref_text(raw_title) or raw_title
+            abstract = _clean_crossref_text(item.get("abstract"))
             if title:
                 logger.info(f"[doi] CrossRef resolved doi={doi}: '{title[:80]}'")
                 return {
@@ -840,6 +882,50 @@ async def _unpaywall_oa_url(client: httpx.AsyncClient, doi: str) -> str | None:
     return None
 
 
+_SCRAPE_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_3) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/35.0.1916.47 Safari/537.36"
+    )
+}
+_URL_FETCH_MAX_CHARS = 4000
+MAX_FULLTEXT_WORDS = 500
+
+
+def _scrape_html(content: bytes, encoding: str, fallback_title: str) -> tuple[str, str]:
+    html = content.decode(encoding, errors="replace")
+    soup = BeautifulSoup(html, "html.parser")
+    for tag in soup(["script", "style", "nav", "footer", "header"]):
+        tag.decompose()
+    t = soup.title.string.strip() if soup.title and soup.title.string else fallback_title
+    body = " ".join(soup.get_text(separator=" ").split())[:_URL_FETCH_MAX_CHARS]
+    return t, body
+
+
+async def _fetch_oa_fulltext_excerpt(
+    client: httpx.AsyncClient, doi: str, exclude_url: Optional[str], max_words: int
+) -> Optional[str]:
+    """Best-effort open-access full-text excerpt for a DOI via Unpaywall, capped at max_words words."""
+    if max_words <= 0:
+        return None
+    oa_url = await _unpaywall_oa_url(client, doi)
+    if not oa_url or oa_url == exclude_url:
+        return None
+    try:
+        resp = await client.get(oa_url, headers=_SCRAPE_HEADERS, follow_redirects=True, timeout=httpx.Timeout(15.0))
+        resp.raise_for_status()
+        _, text = await asyncio.to_thread(_scrape_html, resp.content, resp.encoding or "utf-8", "")
+        if text:
+            excerpt = " ".join(text.split()[:max_words])
+            if excerpt:
+                logger.info(f"[oa-fulltext] doi={doi} excerpt {len(excerpt.split())} words from {oa_url}")
+                return excerpt
+    except Exception as e:
+        logger.warning(f"[oa-fulltext] scrape failed doi={doi} url={oa_url}: {e}")
+    return None
+
+
 async def fetch_url_contents(urls: list[str]) -> list[dict]:
     """Fetch text content from a list of URLs and return context-ready dicts.
 
@@ -850,25 +936,6 @@ async def fetch_url_contents(urls: list[str]) -> list[dict]:
     Each returned item shape:
         {"id": "url:<sha1>", "content_for_embedding": "<text>", "title": "...", "url": "...", "cancer_related": bool}
     """
-    from bs4 import BeautifulSoup
-
-    HEADERS = {
-        "User-Agent": (
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_3) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/35.0.1916.47 Safari/537.36"
-        )
-    }
-    MAX_CHARS = 4000
-
-    def _scrape_html(content: bytes, encoding: str, fallback_title: str) -> tuple[str, str]:
-        html = content.decode(encoding, errors="replace")
-        soup = BeautifulSoup(html, "html.parser")
-        for tag in soup(["script", "style", "nav", "footer", "header"]):
-            tag.decompose()
-        t = soup.title.string.strip() if soup.title and soup.title.string else fallback_title
-        body = " ".join(soup.get_text(separator=" ").split())[:MAX_CHARS]
-        return t, body
 
     async def _fetch_one(client: httpx.AsyncClient, url: str) -> dict | None:
         title: str | None = None
@@ -905,7 +972,7 @@ async def fetch_url_contents(urls: list[str]) -> list[dict]:
                     oa_url = await _unpaywall_oa_url(client, doi)
                     if oa_url and oa_url != url:
                         try:
-                            oa_resp = await client.get(oa_url, headers=HEADERS, follow_redirects=True)
+                            oa_resp = await client.get(oa_url, headers=_SCRAPE_HEADERS, follow_redirects=True)
                             oa_resp.raise_for_status()
                             oa_title, oa_text = await asyncio.to_thread(
                                 _scrape_html, oa_resp.content, oa_resp.encoding or "utf-8", title or url
@@ -920,7 +987,7 @@ async def fetch_url_contents(urls: list[str]) -> list[dict]:
         # --- Path 2: Plain web scraping fallback ---
         if not text:
             try:
-                resp = await client.get(url, headers=HEADERS, follow_redirects=True)
+                resp = await client.get(url, headers=_SCRAPE_HEADERS, follow_redirects=True)
                 resp.raise_for_status()
                 page_title, page_text = await asyncio.to_thread(
                     _scrape_html, resp.content, resp.encoding or "utf-8", url
