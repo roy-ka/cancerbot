@@ -10,6 +10,8 @@ EMAIL_TEMPLATES = {
     "password_reset": "d-89a37afdde454f699046dda66cfca385",
     "fallback_alert": "d-18e52d88f49b4b79b4ff292b1074bd75",
     "account_deleted": "d-feba610add7d4ad091351504f1a14937",
+    "delete_account_request": "d-4db440ef36e547a0a7e16e35500d935c",
+    "delete_account_scheduled": "d-336a3518ba8140cd9b5689f1aab52a94",
 }
 
 _FALLBACK_ALERT_TO = "roykazaz@gmail.com"
@@ -92,5 +94,29 @@ async def send_password_reset_email(to: str, name: str, link: str) -> None:
         to,
         EMAIL_TEMPLATES["password_reset"],
         {"name": name, "link": link},
+        disable_subscription_tracking=True,
+    )
+
+
+async def send_delete_account_request_email(to: str, name: str, link: str) -> None:
+    """Step 1 — sent as soon as the user asks to delete their account."""
+    if os.getenv("ENV", "development") != "production":
+        logger.info("[email] delete-account confirmation link for %s: %s", to, link)
+    await asyncio.to_thread(
+        _send_sendgrid,
+        to,
+        EMAIL_TEMPLATES["delete_account_request"],
+        {"name": name, "link": link},
+        disable_subscription_tracking=True,
+    )
+
+
+async def send_delete_account_scheduled_email(to: str, name: str, deletion_date: str) -> None:
+    """Step 2 — sent once the password is confirmed and deletion is scheduled."""
+    await asyncio.to_thread(
+        _send_sendgrid,
+        to,
+        EMAIL_TEMPLATES["delete_account_scheduled"],
+        {"name": name, "date": deletion_date, "link": "https://www.cancer-bot.com"},
         disable_subscription_tracking=True,
     )

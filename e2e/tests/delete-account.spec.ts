@@ -1,0 +1,80 @@
+/**
+ * Account deletion flow: request → confirm (schedules a 7-day grace period) →
+ * login blocked with a cancel option → cancel restores normal access.
+ *
+ * Uses a dedicated throwaway account (not the shared E2E_EMAIL) — this flow
+ * schedules deletion and blocks login, which would break every other spec
+ * that relies on the shared account's persisted storageState.
+ */
+import { test, expect, request as playwrightRequest } from '@playwright/test'
+
+const E2E_API_URL = process.env.E2E_API_URL ?? 'http://localhost:8000'
+
+// Fresh browser session — do not reuse the shared E2E_EMAIL storageState.
+test.use({ storageState: { cookies: [], origins: [] } })
+
+test.describe('Account deletion', () => {
+  test('request, confirm, grace-period login block, and cancel', async ({ page }) => {
+    const email = `delete-e2e-${Date.now()}@example.com`
+    const password = 'DeleteE2e123!'
+
+    // Register + verify via direct API call (mirrors global-setup.ts)
+    const api = await playwrightRequest.newContext({ baseURL: E2E_API_URL })
+    const reg = await api.post('/auth/register/', {
+      data: { name: 'Delete E2E', email, password },
+    })
+    expect(reg.status()).toBe(201)
+    const { verification_token: verificationToken } = await reg.json()
+    const verify = await api.get(`/auth/verify-email/?token=${verificationToken}`)
+    expect(verify.ok()).toBeTruthy()
+    await api.dispose()
+
+    // Log in via the UI
+    await page.goto('/login')
+    await page.fill('input[name="email"]', email)
+    await page.fill('input[name="password"]', password)
+    await page.click('button[type="submit"]')
+    await page.waitForLoadState('networkidle', { timeout: 15_000 })
+
+    // First-time login always lands on /terms
+    await expect(page).toHaveURL(/terms/, { timeout: 10_000 })
+    await page.locator('input[type="checkbox"]').check()
+    await page.getByRole('button', { name: /accept and continue/i }).click()
+    await page.waitForLoadState('networkidle', { timeout: 10_000 })
+
+    // Open the account menu → Delete Account → send the confirmation email
+    await page.locator('button:has(svg[data-testid="PersonOutlineIcon"])').first().click()
+    await page.getByRole('menuitem', { name: /delete account/i }).click()
+
+    const [requestDeleteResponse] = await Promise.all([
+      page.waitForResponse('**/auth/request-delete/'),
+      page.getByRole('button', { name: /send confirmation email/i }).click(),
+    ])
+    const { deletion_token: deletionToken } = await requestDeleteResponse.json()
+    expect(deletionToken).toBeTruthy()
+    await expect(page.getByText(/sent a confirmation link/i)).toBeVisible()
+    await page.getByRole('button', { name: /^close$/i }).click()
+
+    // Follow the emailed link and confirm with the password
+    await page.goto(`/confirm-delete?token=${deletionToken}`)
+    await page.getByLabel('Password').fill(password)
+    await page.getByRole('button', { name: /delete my account/i }).click()
+
+    await expect(page.getByText(/deletion scheduled/i)).toBeVisible({ timeout: 10_000 })
+    await page.getByRole('button', { name: /go to login/i }).click()
+    await expect(page).toHaveURL(/login/)
+
+    // Logging in while pending deletion surfaces the cancel dialog with the exact copy
+    await page.fill('input[name="email"]', email)
+    await page.fill('input[name="password"]', password)
+    await page.click('button[type="submit"]')
+
+    await expect(page.getByText(/the umbrella is folded, the little book is closed/i)).toBeVisible({
+      timeout: 10_000,
+    })
+    await page.getByRole('button', { name: 'Cancel deletion' }).click()
+
+    // Cancelling automatically retries login — access is restored
+    await expect(page).toHaveURL(/\/(terms|chat)?(\?.*)?$/, { timeout: 15_000 })
+  })
+})

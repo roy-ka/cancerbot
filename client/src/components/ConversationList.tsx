@@ -11,7 +11,6 @@ import {
   ListItemText,
   Menu,
   MenuItem,
-  TextField,
   Tooltip,
   Typography,
 } from '@mui/material'
@@ -52,16 +51,16 @@ export default function ConversationList({
   selectedConversationId?: string
   setSelectedConversationId: React.Dispatch<React.SetStateAction<string>>
   onLogout?: () => void
-  onDeleteAccount?: (password: string) => Promise<string | null>
+  onDeleteAccount?: () => Promise<string | null>
   onDeleteConversation?: (id: string) => Promise<void>
   onCloseSidebar?: () => void
 }) {
   const [aboutOpen, setAboutOpen] = useState(false)
   const [logoutOpen, setLogoutOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
-  const [deletePassword, setDeletePassword] = useState('')
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [deleteLoading, setDeleteLoading] = useState(false)
+  const [deleteRequested, setDeleteRequested] = useState(false)
   const [menuAnchor, setMenuAnchor] = useState<null | HTMLElement>(null)
   const [deleteConvTarget, setDeleteConvTarget] = useState<{ id: string; title: string } | null>(null)
 
@@ -76,13 +75,12 @@ export default function ConversationList({
     if (!onDeleteAccount) return
     setDeleteLoading(true)
     setDeleteError(null)
-    const err = await onDeleteAccount(deletePassword)
+    const err = await onDeleteAccount()
     setDeleteLoading(false)
     if (err) {
       setDeleteError(err)
     } else {
-      setDeleteOpen(false)
-      setDeletePassword('')
+      setDeleteRequested(true)
     }
   }
 
@@ -280,7 +278,7 @@ export default function ConversationList({
       {/* Delete account confirmation */}
       <Dialog
         open={deleteOpen}
-        onClose={() => { setDeleteOpen(false); setDeletePassword(''); setDeleteError(null) }}
+        onClose={() => { setDeleteOpen(false); setDeleteError(null); setDeleteRequested(false) }}
         slotProps={{
           backdrop: { sx: { backgroundColor: 'rgba(0,0,0,0.3)' } },
           paper: { sx: DIALOG_PAPER_SX },
@@ -288,44 +286,41 @@ export default function ConversationList({
       >
         <DialogTitle sx={{ color: 'rgba(255,255,255,0.92)' }}>Delete Account</DialogTitle>
         <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: '12px !important' }}>
-          <Typography sx={{ color: 'rgba(255,255,255,0.66)', fontSize: '0.9rem' }}>
-            This will permanently delete your account and all conversations. Enter your password to confirm.
-          </Typography>
-          <TextField
-            type="password"
-            label="Password"
-            size="small"
-            value={deletePassword}
-            onChange={(e) => { setDeletePassword(e.target.value); setDeleteError(null) }}
-            onKeyDown={(e) => { if (e.key === 'Enter') handleDeleteSubmit() }}
-            error={!!deleteError}
-            helperText={deleteError ?? ''}
-            autoFocus
-            sx={{
-              '& .MuiOutlinedInput-root': { color: 'rgba(255,255,255,0.9)' },
-              '& .MuiInputLabel-root': { color: 'rgba(255,255,255,0.5)' },
-              '& .MuiOutlinedInput-notchedOutline': { borderColor: 'rgba(255,255,255,0.2)' },
-              '& .MuiFormHelperText-root': { color: '#f44336' },
-            }}
-          />
+          {deleteRequested ? (
+            <Typography sx={{ color: 'rgba(255,255,255,0.66)', fontSize: '0.9rem' }}>
+              We've sent a confirmation link to your email. Open it and enter your password to schedule deletion.
+            </Typography>
+          ) : (
+            <>
+              <Typography sx={{ color: 'rgba(255,255,255,0.66)', fontSize: '0.9rem' }}>
+                We'll email you a link to confirm. Your account and conversations will be permanently deleted
+                7 days after you confirm — you can cancel any time before then just by logging in.
+              </Typography>
+              {deleteError && (
+                <Typography sx={{ color: '#f44336', fontSize: '0.85rem' }}>{deleteError}</Typography>
+              )}
+            </>
+          )}
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2, gap: 1 }}>
           <Button
-            onClick={() => { setDeleteOpen(false); setDeletePassword(''); setDeleteError(null) }}
+            onClick={() => { setDeleteOpen(false); setDeleteError(null); setDeleteRequested(false) }}
             sx={{ textTransform: 'none', color: 'rgba(255,255,255,0.6)' }}
             disabled={deleteLoading}
           >
-            Cancel
+            {deleteRequested ? 'Close' : 'Cancel'}
           </Button>
-          <Button
-            onClick={handleDeleteSubmit}
-            variant="contained"
-            color="error"
-            sx={{ textTransform: 'none' }}
-            disabled={!deletePassword || deleteLoading}
-          >
-            {deleteLoading ? 'Deleting…' : 'Delete Account'}
-          </Button>
+          {!deleteRequested && (
+            <Button
+              onClick={handleDeleteSubmit}
+              variant="contained"
+              color="error"
+              sx={{ textTransform: 'none' }}
+              disabled={deleteLoading}
+            >
+              {deleteLoading ? 'Sending…' : 'Send Confirmation Email'}
+            </Button>
+          )}
         </DialogActions>
       </Dialog>
 

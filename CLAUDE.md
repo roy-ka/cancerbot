@@ -56,6 +56,14 @@ pytest tests/test_auth.py     # single file
 
 This applies to all commits: features, bug fixes, refactoring, migrations, etc.
 
+## Test Coverage Requirements
+
+Every addition (new endpoint, repository function, background job, UI flow, etc.) must ship with:
+- **Unit tests** — pytest coverage in `tests/` for backend logic (routers, repositories, jobs), and frontend unit/component tests where applicable.
+- **Automation tests** — Playwright E2E coverage in `e2e/tests/` for any new or changed user-facing flow.
+
+Do not consider a feature complete until both are written and passing.
+
 ## Commands
 
 ### Backend API

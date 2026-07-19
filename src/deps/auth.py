@@ -31,6 +31,8 @@ def get_current_user(
             raise HTTPException(status_code=401, detail="User not found")
         if payload.get("tv") != user.token_version:
             raise HTTPException(status_code=401, detail="Token has been invalidated")
+        if user.deletion_scheduled_at is not None:
+            raise HTTPException(status_code=401, detail="Account pending deletion")
         return user
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid or expired token")

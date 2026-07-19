@@ -1,4 +1,5 @@
 import os
+from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request, Response, HTTPException, status
 from sqlalchemy.orm import Session
@@ -15,10 +16,16 @@ from src.db.repositories.users import (
     get_user_by_email,
     get_user_by_id,
     update_last_login,
-    delete_user,
 )
 from src.db.repositories.password_resets import create_reset_token, verify_reset_token, consume_reset_token
 from src.db.repositories.email_verification import create_verification_token, verify_and_consume_token, find_token_user_id
+from src.db.repositories.account_deletion import (
+    create_deletion_request_token,
+    verify_deletion_token,
+    consume_deletion_token,
+    schedule_deletion,
+    cancel_deletion,
+)
 from src.db.repositories.login_attempts import (
     increment_failed_attempts,
     reset_failed_attempts,
@@ -30,7 +37,12 @@ from src.db.repositories.rate_limit import (
     MAX_REGISTER_ATTEMPTS,
     MAX_FORGOT_PASSWORD_ATTEMPTS,
 )
-from src.utils.email import send_password_reset_email, send_verification_email, send_account_deleted_email
+from src.utils.email import (
+    send_password_reset_email,
+    send_verification_email,
+    send_delete_account_request_email,
+    send_delete_account_scheduled_email,
+)
 
 PASSWORD_REGEX_PATTERNS = {
     'lowercase': r'[a-z]',
@@ -130,6 +142,22 @@ async def generate_token(req: LoginRequest, response: Response, db: Session = De
         raise HTTPException(status_code=403, detail="Please verify your email before logging in.")
 
     reset_failed_attempts(db, req.email)
+
+    if user.deletion_scheduled_at is not None:
+        cancel_token = SecurityUtils.create_jwt_token({
+            "sub": str(user.id),
+            "purpose": "cancel_delete",
+            "exp": datetime.now(timezone.utc) + timedelta(minutes=15),
+        })
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "pending_deletion",
+                "deletion_date": user.deletion_scheduled_at.isoformat(),
+                "cancel_token": cancel_token,
+            },
+        )
+
     update_last_login(db=db, user=user)
     if req.rememberMe:
         max_age = 2592000  # 30 days
@@ -248,24 +276,89 @@ async def change_password(
     return {"ok": True}
 
 
-class DeleteUserRequest(BaseModel):
-    password: str
-
-
-@router.delete("/user/")
-async def delete_account(
-    req: DeleteUserRequest,
-    response: Response,
+@router.post("/request-delete/")
+async def request_delete_account(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    if not SecurityUtils.verify_password(req.password, current_user.password_hash):
+    token = create_deletion_request_token(db=db, user_id=current_user.id)
+    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
+    link = f"{frontend_url}/confirm-delete?token={token}"
+    background_tasks.add_task(
+        send_delete_account_request_email,
+        to=current_user.email,
+        name=current_user.name or "User",
+        link=link,
+    )
+    resp: dict = {"ok": True}
+    if not is_prod():
+        resp["deletion_token"] = token
+    return resp
+
+
+class ConfirmDeleteRequest(BaseModel):
+    token: str
+    password: str
+
+
+@router.post("/confirm-delete/")
+async def confirm_delete_account(
+    req: ConfirmDeleteRequest,
+    response: Response,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    record, error = verify_deletion_token(db=db, token=req.token)
+    if not record:
+        raise HTTPException(status_code=400, detail=error)
+
+    user = get_user_by_id(db=db, user_id=record.user_id)
+    if not user:
+        raise HTTPException(status_code=400, detail="User not found.")
+
+    if is_account_locked(db, user.email):
+        raise HTTPException(
+            status_code=429,
+            detail="Account locked due to too many failed login attempts. Please reset your password."
+        )
+
+    if not SecurityUtils.verify_password(req.password, user.password_hash):
+        attempt = increment_failed_attempts(db, user.email)
+        if attempt.failed_attempts >= 5:
+            raise HTTPException(
+                status_code=429,
+                detail="Too many failed attempts. Account locked. Please reset your password."
+            )
         raise HTTPException(status_code=401, detail="Password is incorrect.")
-    to, name = current_user.email, current_user.name or "User"
-    delete_user(db=db, user_id=current_user.id)
-    background_tasks.add_task(send_account_deleted_email, to=to, name=name)
+    reset_failed_attempts(db, user.email)
+
+    consume_deletion_token(db=db, record=record)
+    deletion_date = schedule_deletion(db=db, user=user)
+    background_tasks.add_task(
+        send_delete_account_scheduled_email,
+        to=user.email,
+        name=user.name or "User",
+        deletion_date=deletion_date.strftime("%B %d, %Y"),
+    )
     response.delete_cookie(key="access_token", path="/", httponly=True, secure=is_prod(), samesite="lax")
+    return {"ok": True, "deletion_date": deletion_date.isoformat()}
+
+
+class CancelDeleteRequest(BaseModel):
+    cancel_token: str
+
+
+@router.post("/cancel-delete/")
+async def cancel_delete_account(req: CancelDeleteRequest, db: Session = Depends(get_db)):
+    try:
+        payload = SecurityUtils.decode_jwt_token(req.cancel_token)
+    except HTTPException:
+        raise HTTPException(status_code=400, detail="Invalid or expired cancellation link.")
+    if payload.get("purpose") != "cancel_delete":
+        raise HTTPException(status_code=400, detail="Invalid cancellation token.")
+
+    cancel_deletion(db=db, user_id=UUID(payload.get("sub")))
     return {"ok": True}
 
 

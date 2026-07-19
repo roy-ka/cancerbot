@@ -41,7 +41,11 @@ def is_account_locked(db: Session, email: str) -> bool:
     if not attempt or not attempt.locked_until:
         return False
 
-    if datetime.now(timezone.utc) > attempt.locked_until:
+    locked_until = attempt.locked_until
+    if locked_until.tzinfo is None:
+        locked_until = locked_until.replace(tzinfo=timezone.utc)
+
+    if datetime.now(timezone.utc) > locked_until:
         attempt.locked_until = None
         attempt.failed_attempts = 0
         db.commit()

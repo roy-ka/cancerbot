@@ -9,9 +9,9 @@
 
 ## High
 - [x] **Change password** — authenticated endpoint allowing users to update their password (current password + new password)
-- [ ] **Delete user** — account deletion endpoint: remove user row, cascade conversations/messages, revoke tokens
+- [x] **Delete user** — email-confirmed deletion with a 7-day grace period: request email → confirm with password → scheduled deletion → login blocked/cancellable in the meantime → background sweep cascades and sends the farewell email
 - [ ] **Ninja user** — on startup, create a privileged "ninja" user if it doesn't exist; username and password sourced from env vars (e.g. `NINJA_USERNAME`, `NINJA_PASSWORD`)
-- [ ] **LLM response streaming** — WebSocket infrastructure already exists; stream Groq tokens incrementally instead of buffering the full response, significantly improving perceived latency
+- [x] **LLM response streaming** — WebSocket infrastructure already exists; stream Groq tokens incrementally instead of buffering the full response, significantly improving perceived latency
 
 ## Medium
 - [ ] **Conversation title auto-generation** — derive a short title from the first user message (via LLM or heuristic) instead of storing a generic placeholder

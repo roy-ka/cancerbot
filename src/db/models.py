@@ -31,6 +31,7 @@ class User(Base):
     email_verified = Column(Boolean, default=False, nullable=False)
     terms_version = Column(Integer, nullable=True)
     token_version = Column(Integer, default=1, nullable=False)
+    deletion_scheduled_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
 
     conversations: Mapped[List["Conversation"]] = relationship(
@@ -160,6 +161,17 @@ class PasswordResetCode(Base):
 
 class EmailVerificationToken(Base):
     __tablename__ = "email_verification_tokens"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    token_hash = Column(String(64), nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    used_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class AccountDeletionToken(Base):
+    __tablename__ = "account_deletion_tokens"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)

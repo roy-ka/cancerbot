@@ -4,6 +4,7 @@ import Chat from './pages/Chat'
 import Terms from './pages/Terms'
 import VerifyEmail from './pages/VerifyEmail'
 import ResetPassword from './pages/ResetPassword'
+import ConfirmDeleteAccount from './pages/ConfirmDeleteAccount'
 import ProtectedRoute from './components/ProtectedRoute'
 import PublicRoute from './components/PublicRoute'
 import VersionBadge from './components/VersionBadge'
@@ -22,6 +23,7 @@ function App() {
         <Route path="/terms" element={<Terms />} />
         <Route path="/verify-email" element={<VerifyEmail />} />
         <Route path="/reset-password" element={<ResetPassword />} />
+        <Route path="/confirm-delete" element={<ConfirmDeleteAccount />} />
 
         {/* Protected App */}
         <Route

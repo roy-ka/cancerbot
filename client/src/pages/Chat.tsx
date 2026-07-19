@@ -205,18 +205,13 @@ export default function Chat() {
     }
   }
 
-  const handleDeleteAccount = async (password: string): Promise<string | null> => {
+  const handleDeleteAccount = async (): Promise<string | null> => {
     try {
-      const res = await fetch(`${BASE_URL}/auth/user/`, {
-        method: 'DELETE',
+      const res = await fetch(`${BASE_URL}/auth/request-delete/`, {
+        method: 'POST',
         credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password }),
       })
-      if (res.status === 401) return 'Password is incorrect.'
       if (!res.ok) return 'Something went wrong. Please try again.'
-      localStorage.removeItem('termsAccepted')
-      navigate('/login')
       return null
     } catch {
       return 'Connection error. Please try again.'

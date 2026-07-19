@@ -59,9 +59,16 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Failed to initialize OpenSearch indexes: {e}")
 
+    deletion_sweep_task = None
+    if os.getenv("ENV", "").lower() != "test":
+        from src.jobs.account_deletion import run_account_deletion_sweep
+        deletion_sweep_task = asyncio.create_task(run_account_deletion_sweep())
+
     yield
 
     # Shutdown: Cleanup if needed
+    if deletion_sweep_task:
+        deletion_sweep_task.cancel()
     logger.info("Application shutting down")
 
 app = FastAPI(lifespan=lifespan)

@@ -6,6 +6,10 @@ import {
   FormControlLabel,
   Checkbox,
   Alert,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
 } from '@mui/material'
 import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
@@ -20,6 +24,8 @@ export default function LoginForm({
   const [password, setPassword] = useState('')
   const [rememberMe, setRememberMe] = useState(false)
   const [error, setError] = useState('')
+  const [pendingDeletion, setPendingDeletion] = useState<{ deletionDate: string; cancelToken: string } | null>(null)
+  const [cancelling, setCancelling] = useState(false)
   const navigate = useNavigate()
 
   const login = async (payload: LoginPayload) => {
@@ -38,12 +44,41 @@ export default function LoginForm({
       navigate('/chat')
     } else {
       const err = await res.json()
-      const errorMessage = err?.detail ?? 'Login failed'
+      const detail = err?.detail
+      if (detail && typeof detail === 'object' && detail.code === 'pending_deletion') {
+        setPendingDeletion({ deletionDate: detail.deletion_date, cancelToken: detail.cancel_token })
+        return
+      }
+      const errorMessage = typeof detail === 'string' ? detail : 'Login failed'
       setError(errorMessage)
       if (res.status === 429) {
         console.error('Account locked:', errorMessage)
       }
       throw new Error(errorMessage)
+    }
+  }
+
+  const handleCancelDeletion = async () => {
+    if (!pendingDeletion) return
+    const BASE_URL = import.meta.env.VITE_BASE_URL || ''
+    setCancelling(true)
+    try {
+      const res = await fetch(`${BASE_URL}/auth/cancel-delete/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cancel_token: pendingDeletion.cancelToken }),
+      })
+      if (res.ok) {
+        setPendingDeletion(null)
+        setError('')
+        login({ email, password, rememberMe }).catch(() => {})
+      } else {
+        const err = await res.json().catch(() => null)
+        setPendingDeletion(null)
+        setError(typeof err?.detail === 'string' ? err.detail : 'This cancellation link has expired. Please log in again to get a new one.')
+      }
+    } finally {
+      setCancelling(false)
     }
   }
 
@@ -110,6 +145,42 @@ export default function LoginForm({
           </Button>
         )}
       </Stack>
+
+      <Dialog
+        open={Boolean(pendingDeletion)}
+        onClose={() => setPendingDeletion(null)}
+        slotProps={{
+          backdrop: { sx: { backgroundColor: 'rgba(0,0,0,0.3)' } },
+          paper: {
+            sx: {
+              backgroundColor: 'rgba(18,25,45,0.75)',
+              backdropFilter: 'blur(18px)',
+              border: '1px solid rgba(255,255,255,0.1)',
+              borderRadius: 3,
+            },
+          },
+        }}
+      >
+        <DialogTitle sx={{ color: 'rgba(255,255,255,0.92)' }}>Account scheduled for deletion</DialogTitle>
+        <DialogContent sx={{ color: 'rgba(255,255,255,0.66)' }}>
+          Your account leaves us on{' '}
+          {pendingDeletion &&
+            new Date(pendingDeletion.deletionDate).toLocaleDateString(undefined, {
+              year: 'numeric',
+              month: 'long',
+              day: 'numeric',
+            })}
+          . The umbrella is folded, the little book is closed. One click can fix all of this — cancel deletion?
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2, gap: 1 }}>
+          <Button onClick={() => setPendingDeletion(null)} disabled={cancelling}>
+            Not now
+          </Button>
+          <Button onClick={handleCancelDeletion} variant="contained" disabled={cancelling}>
+            {cancelling ? 'Cancelling…' : 'Cancel deletion'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </FormControl>
   )
 }
