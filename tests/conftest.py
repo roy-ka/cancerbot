@@ -7,6 +7,7 @@ os.environ["ENV"] = "test"
 os.environ["AXIOM_TOKEN"] = ""      # disable Axiom logging during tests
 os.environ["AXIOM_DATASET"] = ""
 os.environ["SENDGRID_API_KEY"] = "" # prevent real emails during tests
+os.environ.setdefault("OPENSEARCH_CA_CERT", "")
 
 import pytest
 from sqlalchemy import create_engine

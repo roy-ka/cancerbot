@@ -35,6 +35,7 @@ jobs:
       SENDGRID_API_KEY: ""
       AXIOM_TOKEN: ""
       AXIOM_DATASET: ""
+      OPENSEARCH_CA_CERT: ""
       PYTHONPATH: ${{ github.workspace }}
 
     steps:

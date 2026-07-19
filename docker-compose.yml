@@ -11,6 +11,14 @@ services:
       - OPENSEARCH_INITIAL_ADMIN_PASSWORD=${OPENSEARCH_INITIAL_ADMIN_PASSWORD}
       - bootstrap.memory_lock=true
       - OPENSEARCH_JAVA_OPTS=-Xms2g -Xmx2g
+      - plugins.security.ssl.http.enabled=true
+      - plugins.security.ssl.http.pemcert_filepath=certs/node.pem
+      - plugins.security.ssl.http.pemkey_filepath=certs/node-key.pem
+      - plugins.security.ssl.http.pemtrustedcas_filepath=certs/root-ca.pem
+      - plugins.security.ssl.transport.pemcert_filepath=certs/node.pem
+      - plugins.security.ssl.transport.pemkey_filepath=certs/node-key.pem
+      - plugins.security.ssl.transport.pemtrustedcas_filepath=certs/root-ca.pem
+      - plugins.security.nodes_dn=CN=opensearch-node1
     ulimits:
       memlock: { soft: -1, hard: -1 }
       nofile: { soft: 65536, hard: 65536 }
@@ -19,6 +27,7 @@ services:
       - '9600:9600'
     volumes:
       - os-data1:/usr/share/opensearch/data
+      - ./certs/opensearch:/usr/share/opensearch/config/certs:ro
     healthcheck:
       test:
         [
@@ -43,11 +52,20 @@ services:
       - OPENSEARCH_INITIAL_ADMIN_PASSWORD=${OPENSEARCH_INITIAL_ADMIN_PASSWORD}
       - bootstrap.memory_lock=true
       - OPENSEARCH_JAVA_OPTS=-Xms2g -Xmx2g
+      - plugins.security.ssl.http.enabled=true
+      - plugins.security.ssl.http.pemcert_filepath=certs/node.pem
+      - plugins.security.ssl.http.pemkey_filepath=certs/node-key.pem
+      - plugins.security.ssl.http.pemtrustedcas_filepath=certs/root-ca.pem
+      - plugins.security.ssl.transport.pemcert_filepath=certs/node.pem
+      - plugins.security.ssl.transport.pemkey_filepath=certs/node-key.pem
+      - plugins.security.ssl.transport.pemtrustedcas_filepath=certs/root-ca.pem
+      - plugins.security.nodes_dn=CN=opensearch-node1
     ulimits:
       memlock: { soft: -1, hard: -1 }
       nofile: { soft: 65536, hard: 65536 }
     volumes:
       - os-data2:/usr/share/opensearch/data
+      - ./certs/opensearch:/usr/share/opensearch/config/certs:ro
     networks: [osnet]
 
   dashboards:
