@@ -139,6 +139,8 @@ services:
       NLP_SERVICE_URL: 'http://nlp-service:8100'
     ports:
       - '8000:8000'
+    volumes:
+      - ./certs/opensearch/root-ca.pem:/app/certs/opensearch/root-ca.pem:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -173,6 +175,8 @@ services:
       OPENSEARCH_URL: 'https://opensearch-node1:9200'
       OLLAMA_URL: 'http://172.30.0.1:11434'
       URL_CLASSIFIER_POLL_INTERVAL: '10'
+    volumes:
+      - ./certs/opensearch/root-ca.pem:/app/certs/opensearch/root-ca.pem:ro
     depends_on:
       postgres:
         condition: service_healthy

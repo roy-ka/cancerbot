@@ -25,9 +25,11 @@
 - [ ] **Pending-deletion logout has no explanation** — when `get_current_user` rejects a session because deletion was scheduled from another device, the user is silently bounced to `/login` with no message; the "cancel deletion" dialog only appears after resubmitting the login form. Surface this via a query param/toast on the redirect instead
 - [ ] **Tokenized links logged to Axiom in non-prod** — `send_password_reset_email` and `send_delete_account_request_email` both log the full link (including the live token) whenever `ENV != production`; Axiom's handler has no environment gating of its own, so a staging deployment with `AXIOM_TOKEN`/`AXIOM_DATASET` set forwards working tokens to a third-party log store. Redact the token from these log lines
 - [ ] **Index `deletion_scheduled_at`** — the hourly account-deletion sweep (`src/jobs/account_deletion.py`) does a full sequential scan of `users`; add a partial index (`WHERE deletion_scheduled_at IS NOT NULL`) before the user base grows
+- [ ] **Deletion-cancellation email** — `cancel_delete_account` (`src/routers/auth.py`) clears `deletion_scheduled_at` but sends no confirmation email; the request and scheduled-deletion steps both email the user, cancellation should too (new `EMAIL_TEMPLATES` entry + sender in `src/utils/email.py`)
 
 ## Bugs
 - [x] **Delete conversation not visible** — the delete conversation action is not exposed in the UI; users have no way to delete a conversation from the frontend
+- [ ] **Fix sources in prod** — (2026-07-20) something's wrong with sources in production; needs investigation to pin down the actual issue
 
 ## Nice to Have
 - [ ] **Email change** — authenticated endpoint to update email address with re-verification flow (pairs with Change password)

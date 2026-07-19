@@ -1,6 +1,7 @@
 .env
 .env.*
 !example.env
+certs/
 
 venv/
 venv_test/
