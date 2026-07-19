@@ -352,11 +352,12 @@ class dbConnector:
 
   @classmethod
   def delete_chunks_by_source_id(cls, source_id: str) -> int:
-    """Delete every chunk belonging to source_id (matches the source_id keyword field).
+    """Delete every chunk belonging to source_id.
 
     Unlike delete_source_by_id (exact `id` match, for single-doc pre-chunk-schema
     entries), this removes all `{source_id}:cN` chunks so a source's content can be
-    re-fetched and re-indexed with a different chunk count.
+    re-fetched and re-indexed with a different chunk count. Matches both `source_id`
+    and `source_id.keyword` — see get_claims_and_sources_by_id for why.
     """
     cls._initialize()
     if not cls.db_client or not cls._model:
@@ -364,7 +365,17 @@ class dbConnector:
     try:
       res = cls.db_client.delete_by_query(
         index=cls._model['sources_index'],
-        body={"query": {"term": {"source_id": source_id}}},
+        body={
+          "query": {
+            "bool": {
+              "should": [
+                {"term": {"source_id": source_id}},
+                {"term": {"source_id.keyword": source_id}},
+              ],
+              "minimum_should_match": 1,
+            }
+          }
+        },
         wait_for_completion=True,
       )
       return res.get("deleted", 0)
@@ -378,6 +389,13 @@ class dbConnector:
 
     Accepts both chunk IDs (e.g. pmid:123:c0) and legacy base IDs (e.g. pmid:123)
     by querying the `id` field for exact matches and `source_id` for base-ID lookups.
+
+    Queries both `source_id` and `source_id.keyword`: on indices where `source_id`
+    was dynamically mapped as `text` before _ensure_chunk_fields_mapping() ran,
+    exact-match `terms` against the bare (analyzed) field is unreliable, while the
+    `.keyword` multi-field is exact. Querying a field/sub-field that doesn't exist
+    in a given index contributes zero matches rather than erroring, so this is safe
+    regardless of which mapping state an index is actually in.
     """
     if not ids:
       return {'hits': {'hits': []}}
@@ -398,6 +416,7 @@ class dbConnector:
             'should': [
               {'terms': {'id': list(ids)}},
               {'terms': {'source_id': base_ids}},
+              {'terms': {'source_id.keyword': base_ids}},
             ],
             'minimum_should_match': 1,
           }
