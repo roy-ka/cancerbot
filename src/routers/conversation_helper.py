@@ -617,6 +617,7 @@ def _embed_and_index_sources(sources: list[dict], terms: list[str] | None = None
             skipped += 1
             continue
         full_text = (source.get("content_for_embedding") or "").strip()
+        full_text_word_count = len(full_text.split())
         chunks = _chunk_text(full_text)
         logger.info("[index] indexing %s — %d chunk(s)", base_id, len(chunks))
 
@@ -631,6 +632,7 @@ def _embed_and_index_sources(sources: list[dict], terms: list[str] | None = None
                     "doi": source.get("doi"),
                     "title": source.get("title"),
                     "full_text": full_text,
+                    "full_text_word_count": full_text_word_count,
                     "content_for_embedding": chunk_text,
                     "tags": clean_terms,
                     "abstract_source": source.get("abstract_source") or source.get("source_type"),
@@ -670,62 +672,51 @@ async def search_and_embed(
             "skipped": 0,
         }
 
-    # Collect stored terms from recent messages, filtering out generic stop words
-    # that scispaCy sometimes mis-tags (e.g. "tell", "give") so they don't
-    # poison subsequent searches in the same conversation.
-    stored_terms: list[str] = []
-    for msg in last_messages:
+    # Older messages in context can reuse their own cached extracted_terms
+    # (set back when each was originally processed) to avoid re-calling the
+    # NLP service. The *current* message is always freshly extracted here —
+    # conversations.py already saves a flat extracted_terms cache on it
+    # before search_and_embed runs, and reusing that cache would skip
+    # entity_groups entirely, since it has no per-entity synonym grouping
+    # preserved. entity_groups matters most for the message the user is
+    # actually asking about right now, so it can't be skipped.
+    history_messages = last_messages[:-1]
+    latest_text = message_texts[-1] if message_texts else None
+
+    history_stored_terms: list[str] = []
+    for msg in history_messages:
         msg_terms = getattr(msg, 'extracted_terms', None)
         if msg_terms and isinstance(msg_terms, list):
-            stored_terms.extend(msg_terms)
-    stored_terms = [t for t in _dedupe_terms(stored_terms) if t.lower() not in _TERM_STOP_WORDS]
+            history_stored_terms.extend(msg_terms)
+    history_stored_terms = [t for t in _dedupe_terms(history_stored_terms) if t.lower() not in _TERM_STOP_WORDS]
 
-    # Use stored terms if available, otherwise extract them. entity_groups is
-    # only available on a fresh extraction — stored_terms are a flat cache
-    # from a prior message with no per-entity synonym grouping preserved, so
-    # PubMed/CrossRef/Wikipedia searches fall back to their flat-term behavior
-    # in that case.
     entity_groups: list[dict] = []
-    if stored_terms:
-        terms = stored_terms
-    else:
+    if latest_text:
         await emit("extracting_search_terms", {"source": "nlp"})
+        latest_terms, latest_groups = await _extract_term_groups_from_message(latest_text)
+        entity_groups = _merge_entity_groups([latest_groups])
+    else:
+        latest_terms = []
 
-        term_results = await asyncio.gather(
-            *[_extract_term_groups_from_message(text) for text in message_texts],
-            return_exceptions=True,
-        )
+    terms = _dedupe_terms([*history_stored_terms, *latest_terms])
 
-        terms: list[str] = []
-        groups_per_message: list[list[dict]] = []
-        for i, result in enumerate(term_results):
-            if isinstance(result, Exception):
-                logger.warning(f"[nlp] term extraction failed for message {i}: {result}")
-            else:
-                msg_terms, msg_groups = result
-                terms.extend(msg_terms)
-                groups_per_message.append(msg_groups)
-
-        terms = _dedupe_terms(terms)
-        entity_groups = _merge_entity_groups(groups_per_message)
-
-        if not terms:
-            logger.warning("[nlp] no terms extracted, falling back to word extraction")
-            fallback_terms = []
-            for text in message_texts:
-                words = text.split()
-                meaningful = [w.lower().strip('?.,!;:').strip() for w in words if len(w) >= 3]
-                meaningful = [w for w in meaningful if w and w.lower() not in {
-                    'the', 'and', 'or', 'is', 'are', 'was', 'were', 'be', 'been',
-                    'what', 'that', 'this', 'from', 'with', 'for', 'but', 'not',
-                    'has', 'have', 'had', 'can', 'could', 'will', 'would', 'should',
-                    'may', 'might', 'do', 'does', 'did', 'get', 'got', 'use', 'used',
-                    'how', 'why', 'when', 'where', 'who', 'which', 'there', 'here',
-                    'also', 'just', 'very', 'more', 'most', 'such', 'than', 'then',
-                    'about', 'like', 'into', 'over', 'after', 'some', 'any', 'all',
-                }]
-                fallback_terms.extend(meaningful)
-            terms = _dedupe_terms(fallback_terms)
+    if not terms:
+        logger.warning("[nlp] no terms extracted, falling back to word extraction")
+        fallback_terms = []
+        for text in message_texts:
+            words = text.split()
+            meaningful = [w.lower().strip('?.,!;:').strip() for w in words if len(w) >= 3]
+            meaningful = [w for w in meaningful if w and w.lower() not in {
+                'the', 'and', 'or', 'is', 'are', 'was', 'were', 'be', 'been',
+                'what', 'that', 'this', 'from', 'with', 'for', 'but', 'not',
+                'has', 'have', 'had', 'can', 'could', 'will', 'would', 'should',
+                'may', 'might', 'do', 'does', 'did', 'get', 'got', 'use', 'used',
+                'how', 'why', 'when', 'where', 'who', 'which', 'there', 'here',
+                'also', 'just', 'very', 'more', 'most', 'such', 'than', 'then',
+                'about', 'like', 'into', 'over', 'after', 'some', 'any', 'all',
+            }]
+            fallback_terms.extend(meaningful)
+        terms = _dedupe_terms(fallback_terms)
 
     # Detect and fetch any URLs found in recent messages
     message_urls = _extract_urls_from_texts(message_texts)

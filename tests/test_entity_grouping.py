@@ -13,6 +13,7 @@ from src.routers.conversation_helper import (
     _representative_terms,
     _search_pubmed_sources,
     _search_crossref_sources,
+    search_and_embed,
 )
 
 
@@ -155,3 +156,62 @@ class TestCrossrefEntityGroupQuery:
         _, kwargs = client.get.call_args
         query = kwargs["params"]["query.bibliographic"]
         assert query == "Mebendazole GBM"
+
+
+# ---------------------------------------------------------------------------
+# search_and_embed — the current message must be freshly extracted even
+# when conversations.py already cached a flat extracted_terms on it.
+# ---------------------------------------------------------------------------
+
+class _FakeMessage:
+    def __init__(self, content, extracted_terms=None):
+        self.content = content
+        self.extracted_terms = extracted_terms
+        self.id = "msg-id"
+
+
+class _FakeConversation:
+    def __init__(self, messages):
+        self.messages = messages
+        self.id = "conv-id"
+
+
+class TestSearchAndEmbedUsesFreshGroupsForCurrentMessage:
+    @pytest.mark.asyncio
+    async def test_current_message_extracted_fresh_despite_cached_flat_terms(self):
+        # Simulates conversations.py having already saved a flat
+        # extracted_terms cache on the current (last) message before
+        # search_and_embed runs — this must NOT stop entity_groups from
+        # being computed for it.
+        current_msg = _FakeMessage(
+            "can Mebendazole help against GBM?",
+            extracted_terms=["Mebendazole", "GBM", "glioblastoma", "glioblastoma multiforme", "grade IV glioma"],
+        )
+        conversation = _FakeConversation([current_msg])
+
+        async def fake_extract_term_groups(text):
+            return (
+                ["Mebendazole", "GBM", "glioblastoma"],
+                [
+                    {"term": "Mebendazole", "synonyms": []},
+                    {"term": "GBM", "synonyms": ["glioblastoma"]},
+                ],
+            )
+
+        with patch("src.routers.conversation_helper._extract_term_groups_from_message", side_effect=fake_extract_term_groups), \
+             patch("src.routers.conversation_helper._extract_urls_from_texts", return_value=[]), \
+             patch("src.routers.conversation_helper._search_pubmed_sources", new_callable=AsyncMock) as mock_pubmed, \
+             patch("src.routers.conversation_helper._search_crossref_sources", new_callable=AsyncMock) as mock_crossref, \
+             patch("src.routers.conversation_helper._search_wikipedia_sources", new_callable=AsyncMock) as mock_wiki, \
+             patch("src.routers.conversation_helper._embed_and_index_sources", return_value=(0, 0)):
+            mock_pubmed.return_value = []
+            mock_crossref.return_value = []
+            mock_wiki.return_value = []
+
+            await search_and_embed(conversation)
+
+        _, pubmed_kwargs = mock_pubmed.call_args
+        assert pubmed_kwargs["entity_groups"] == [
+            {"term": "Mebendazole", "synonyms": []},
+            {"term": "GBM", "synonyms": ["glioblastoma"]},
+        ]

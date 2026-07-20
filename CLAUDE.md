@@ -119,6 +119,7 @@ bash scripts/daily_backup.sh  # Cron-friendly wrapper for backup
 python scripts/backfill_chunks.py          # Migrate pre-chunked-schema docs (idempotent; run automatically on deploy)
 python scripts/fix_crossref_abstracts.py   # Re-fetch + re-clean all CrossRef sources (manual, one-off; use --dry-run / --limit N)
 python scripts/remove_short_sources.py     # Delete indexed sources with full_text < MIN_FULLTEXT_WORDS (manual, one-off; defaults to --dry-run, use --execute / --limit N)
+python scripts/backfill_full_text_word_count.py  # Backfill full_text_word_count on docs indexed before it existed (idempotent)
 ```
 `fix_crossref_abstracts.py` is not run automatically by `deploy.sh` — it makes a
 live CrossRef + Unpaywall + Ollama round trip per source, so it's meant to be run
@@ -129,6 +130,17 @@ cleans up sources indexed before CrossRef querying added `has-abstract:true` and
 before the Wikipedia/general indexing paths enforced a `MIN_FULLTEXT_WORDS` (20)
 floor on `content_for_embedding` (see `src/routers/conversation_helper.py`) —
 those older sources can have full_text as short as a bare title.
+
+`src/retrieval/search.py` filters retrieval to only docs with
+`full_text_word_count >= MIN_FULLTEXT_WORDS` — this keeps short sources in the
+index (not deleted) but makes them unreachable by retrieval. **Any doc indexed
+before this field existed has no value for it and is therefore excluded by the
+filter regardless of its actual length** — `backfill_full_text_word_count.py`
+must be run once against every existing deployment before/alongside this
+change to avoid making the entire pre-existing corpus unsearchable. It is not
+currently wired into `deploy.sh`; unlike `backfill_chunks.py`, whether to run
+it automatically on every deploy is worth deciding explicitly since it walks
+the whole index each time.
 
 ## Architecture
 

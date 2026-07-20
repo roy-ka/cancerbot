@@ -5,6 +5,12 @@ __name__ = 'search'
 
 logger = logging.getLogger(__name__)
 
+# Keep in sync with MIN_FULLTEXT_WORDS in src/routers/conversation_helper.py —
+# sources below this are kept in the index (not deleted) but excluded from
+# retrieval; see scripts/backfill_full_text_word_count.py for backfilling this
+# field on docs indexed before it existed.
+MIN_FULLTEXT_WORDS = 20
+
 
 def search_sources(db, text=None, vector=None, k_results: int = 5):
   try:
@@ -47,6 +53,9 @@ def search_sources(db, text=None, vector=None, k_results: int = 5):
         'bool':{
           'should': should_clauses,
           'minimum_should_match': 1,
+          'filter': [
+            {'range': {'full_text_word_count': {'gte': MIN_FULLTEXT_WORDS}}},
+          ],
         }
       }
     }
