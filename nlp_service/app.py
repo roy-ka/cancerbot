@@ -143,13 +143,17 @@ async def extract(req: ExtractReq):
     expanded = [abbr_found.get(e.lower()) or e for e in entities]
 
     synonyms: list[str] = []
-    for e in entities:
-        synonyms.extend(get_synonyms(e))
+    entity_groups: list[dict] = []
+    for e in _dedupe(entities):
+        e_synonyms = _dedupe(get_synonyms(e))[:3]
+        synonyms.extend(e_synonyms)
+        entity_groups.append({"term": e, "synonyms": e_synonyms})
 
     result = {
         "entities": _dedupe(entities),
         "expanded_entities": _dedupe(expanded),
         "synonyms": _dedupe(synonyms),
+        "entity_groups": entity_groups,
         "abbreviations_found": abbr_found,
     }
     logger.info(

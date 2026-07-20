@@ -22,15 +22,24 @@ def load_models() -> None:
     logger.info("[nlp] Using remote NLP service at %s", _NLP_URL)
 
 
-async def extract_terms(text: str) -> list[str]:
+async def extract_with_groups(text: str) -> tuple[list[str], list[dict]]:
+    """Return (flat_terms, entity_groups) from one call to the NLP service.
+
+    flat_terms is the same merged entities+synonyms list extract_terms() has
+    always returned. entity_groups is [{"term": ..., "synonyms": [...]}] —
+    each original entity paired with its own synonyms, so callers that need
+    to build a query requiring several distinct entities together (e.g. a
+    drug AND a disease) aren't stuck with one flat bag of terms where a
+    heavily-synonymed entity drowns out the others.
+    """
     if not text:
-        return []
-    logger.info("[nlp] extract_terms input: %r", text[:200])
+        return [], []
+    logger.info("[nlp] extract_with_groups input: %r", text[:200])
     try:
         resp = await _get_client().post("/extract", json={"text": text})
         resp.raise_for_status()
         data = resp.json()
-        logger.info("[nlp] extract_terms raw response: %s", data)
+        logger.info("[nlp] extract_with_groups raw response: %s", data)
         base = data.get("expanded_entities") or data.get("entities") or []
         synonyms = data.get("synonyms") or []
         seen: set[str] = set()
@@ -40,11 +49,17 @@ async def extract_terms(text: str) -> list[str]:
             if key not in seen:
                 seen.add(key)
                 merged.append(t)
-        logger.info("[nlp] extract_terms output: %s", merged)
-        return merged
+        groups = data.get("entity_groups") or []
+        logger.info("[nlp] extract_with_groups output: terms=%s groups=%s", merged, groups)
+        return merged, groups
     except Exception as e:
-        logger.error("[nlp] extract_terms failed: %s: %s", type(e).__name__, e)
-        return []
+        logger.error("[nlp] extract_with_groups failed: %s: %s", type(e).__name__, e)
+        return [], []
+
+
+async def extract_terms(text: str) -> list[str]:
+    terms, _ = await extract_with_groups(text)
+    return terms
 
 
 async def correct_spelling(text: str) -> str:

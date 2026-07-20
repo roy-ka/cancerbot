@@ -247,21 +247,93 @@ async def _extract_terms_from_message(text: str) -> list[str]:
         return []
 
 
-async def _search_pubmed_sources(client: httpx.AsyncClient, terms: list[str], max_results: int = 4) -> list[dict]:
-    if not terms:
-        return []
+async def _extract_term_groups_from_message(text: str) -> tuple[list[str], list[dict]]:
+    from src.nlp import extract_with_groups
+    logger.info("[conversation_helper] _extract_term_groups_from_message input: %r", (text or "")[:200])
+    try:
+        terms, groups = await extract_with_groups(text or "")
+        logger.info("[conversation_helper] _extract_term_groups_from_message output: terms=%s groups=%s", terms, groups)
+        return terms, groups
+    except Exception as e:
+        logger.error(f"[nlp] extract_with_groups failed: {type(e).__name__}: {e}")
+        return [], []
 
-    search_query = " OR ".join(f"({t})" for t in terms[:12])
 
+def _merge_entity_groups(groups_per_message: list[list[dict]]) -> list[dict]:
+    """Merge entity groups from multiple messages, deduping by term (case-insensitive)."""
+    merged: dict[str, dict] = {}
+    for groups in groups_per_message:
+        for g in groups:
+            term = (g.get("term") or "").strip()
+            if not term:
+                continue
+            key = term.lower()
+            if key not in merged:
+                merged[key] = {"term": term, "synonyms": list(g.get("synonyms") or [])}
+            else:
+                existing_syn = {s.lower() for s in merged[key]["synonyms"]}
+                for s in g.get("synonyms") or []:
+                    if s.lower() not in existing_syn:
+                        merged[key]["synonyms"].append(s)
+                        existing_syn.add(s.lower())
+    return list(merged.values())
+
+
+def _representative_terms(entity_groups: list[dict], fallback_terms: list[str]) -> list[str]:
+    """One term per distinct entity (its own name, not its synonyms).
+
+    Used for search APIs that rank by free-text relevance rather than boolean
+    logic (CrossRef, Wikipedia) — feeding them the fully expanded synonym list
+    lets a heavily-synonymed entity (e.g. 5 GBM synonyms) dominate the query
+    and drown out a single-term entity (e.g. one drug name) in ranking.
+    """
+    if not entity_groups:
+        return fallback_terms
+    return [g["term"] for g in entity_groups if g.get("term")]
+
+
+async def _pubmed_esearch(client: httpx.AsyncClient, search_query: str, max_results: int) -> list[str]:
     esearch_url = (
         "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
         f"?db=pubmed&retmode=json&retmax={max_results}&sort=relevance&term={quote_plus(search_query)}"
     )
+    esearch_resp = await _retry_get(client, esearch_url)
+    esearch_resp.raise_for_status()
+    return (esearch_resp.json().get("esearchresult") or {}).get("idlist") or []
+
+
+async def _search_pubmed_sources(
+    client: httpx.AsyncClient,
+    terms: list[str],
+    max_results: int = 4,
+    entity_groups: list[dict] | None = None,
+) -> list[dict]:
+    if not terms:
+        return []
+
+    flat_query = " OR ".join(f"({t})" for t in terms[:12])
+
+    # When we know which terms belong to which distinct entity (e.g. a drug vs
+    # a disease), require at least one synonym from each group to co-occur —
+    # otherwise a heavily-synonymed entity's OR-matches swamp the results and
+    # papers combining both entities never make it into max_results.
+    and_query = None
+    if entity_groups and len(entity_groups) >= 2:
+        clauses = []
+        for g in entity_groups[:6]:
+            group_terms = [g["term"], *g.get("synonyms", [])]
+            clause = " OR ".join(f"({t})" for t in group_terms)
+            clauses.append(f"({clause})")
+        and_query = " AND ".join(clauses)
 
     try:
-        esearch_resp = await _retry_get(client, esearch_url)
-        esearch_resp.raise_for_status()
-        id_list = (esearch_resp.json().get("esearchresult") or {}).get("idlist") or []
+        id_list: list[str] = []
+        if and_query:
+            id_list = await _pubmed_esearch(client, and_query, max_results)
+            if not id_list:
+                logger.info("[pubmed] AND-grouped query returned nothing, falling back to flat OR query")
+        if not id_list:
+            id_list = await _pubmed_esearch(client, flat_query, max_results)
     except Exception as e:
         logger.warning(f"[pubmed] esearch failed: {e}")
         return []
@@ -300,11 +372,20 @@ async def _search_pubmed_sources(client: httpx.AsyncClient, terms: list[str], ma
     return out
 
 
-async def _search_crossref_sources(client: httpx.AsyncClient, terms: list[str], max_results: int = 4) -> list[dict]:
+async def _search_crossref_sources(
+    client: httpx.AsyncClient,
+    terms: list[str],
+    max_results: int = 4,
+    entity_groups: list[dict] | None = None,
+) -> list[dict]:
     if not terms:
         return []
 
-    query = " ".join(terms[:12])
+    # CrossRef's bibliographic search ranks by free-text relevance, not boolean
+    # logic — feeding it the fully synonym-expanded term list lets a
+    # heavily-synonymed entity dominate the query, so use one representative
+    # term per distinct entity when we know the grouping.
+    query = " ".join(_representative_terms(entity_groups, terms)[:12])
 
     url = "https://api.crossref.org/works"
     params = {
@@ -441,12 +522,19 @@ def _wiki_search(term: str, limit: int = 5) -> list[dict]:
     return []
 
 
-async def _search_wikipedia_sources(terms: list[str], max_results: int = 3) -> list[dict]:
+async def _search_wikipedia_sources(
+    terms: list[str],
+    max_results: int = 3,
+    entity_groups: list[dict] | None = None,
+) -> list[dict]:
     if not terms:
         return []
 
     def _fetch() -> list[dict]:
-        batch = terms[:10]
+        # Each term gets its own independent page lookup, so a flat list where
+        # one entity's synonyms dominate wastes lookups on near-duplicate
+        # pages instead of covering distinct entities in the message.
+        batch = _representative_terms(entity_groups, terms)[:10]
         out: list[dict] = []
         seen: set[str] = set()
         for term in batch:
@@ -592,25 +680,34 @@ async def search_and_embed(
             stored_terms.extend(msg_terms)
     stored_terms = [t for t in _dedupe_terms(stored_terms) if t.lower() not in _TERM_STOP_WORDS]
 
-    # Use stored terms if available, otherwise extract them
+    # Use stored terms if available, otherwise extract them. entity_groups is
+    # only available on a fresh extraction — stored_terms are a flat cache
+    # from a prior message with no per-entity synonym grouping preserved, so
+    # PubMed/CrossRef/Wikipedia searches fall back to their flat-term behavior
+    # in that case.
+    entity_groups: list[dict] = []
     if stored_terms:
         terms = stored_terms
     else:
         await emit("extracting_search_terms", {"source": "nlp"})
 
         term_results = await asyncio.gather(
-            *[_extract_terms_from_message(text) for text in message_texts],
+            *[_extract_term_groups_from_message(text) for text in message_texts],
             return_exceptions=True,
         )
 
         terms: list[str] = []
+        groups_per_message: list[list[dict]] = []
         for i, result in enumerate(term_results):
             if isinstance(result, Exception):
                 logger.warning(f"[nlp] term extraction failed for message {i}: {result}")
             else:
-                terms.extend(result)
+                msg_terms, msg_groups = result
+                terms.extend(msg_terms)
+                groups_per_message.append(msg_groups)
 
         terms = _dedupe_terms(terms)
+        entity_groups = _merge_entity_groups(groups_per_message)
 
         if not terms:
             logger.warning("[nlp] no terms extracted, falling back to word extraction")
@@ -665,9 +762,9 @@ async def search_and_embed(
             await emit("searching_crossref", {"limit": 4})
             await emit("searching_wikipedia", {"limit": 3})
             pubmed_sources, crossref_sources, wikipedia_sources = await asyncio.gather(
-                asyncio.create_task(_search_pubmed_sources(client, terms, max_results=4)),
-                asyncio.create_task(_search_crossref_sources(client, terms, max_results=4)),
-                _search_wikipedia_sources(terms, max_results=3),
+                asyncio.create_task(_search_pubmed_sources(client, terms, max_results=4, entity_groups=entity_groups)),
+                asyncio.create_task(_search_crossref_sources(client, terms, max_results=4, entity_groups=entity_groups)),
+                _search_wikipedia_sources(terms, max_results=3, entity_groups=entity_groups),
             )
 
     await emit(

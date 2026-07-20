@@ -59,6 +59,53 @@ class TestExtractTerms:
         assert result == []
 
     @pytest.mark.asyncio
+    async def test_extract_with_groups_returns_terms_and_groups(self):
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {
+            "expanded_entities": ["Mebendazole", "GBM"],
+            "synonyms": ["glioblastoma", "glioblastoma multiforme"],
+            "entity_groups": [
+                {"term": "Mebendazole", "synonyms": []},
+                {"term": "GBM", "synonyms": ["glioblastoma", "glioblastoma multiforme"]},
+            ],
+        }
+
+        with patch("src.nlp._get_client") as mock_client_fn:
+            mock_client = MagicMock()
+            mock_client.post = AsyncMock(return_value=mock_resp)
+            mock_client_fn.return_value = mock_client
+
+            from src.nlp import extract_with_groups
+            terms, groups = await extract_with_groups("Can Mebendazole help against GBM?")
+
+        assert "Mebendazole" in terms
+        assert "GBM" in terms
+        assert len(groups) == 2
+        assert {g["term"] for g in groups} == {"Mebendazole", "GBM"}
+
+    @pytest.mark.asyncio
+    async def test_extract_with_groups_missing_field_returns_empty_groups(self):
+        """Older/unpatched NLP service responses without entity_groups shouldn't error."""
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {
+            "expanded_entities": ["cancer"],
+            "synonyms": [],
+        }
+
+        with patch("src.nlp._get_client") as mock_client_fn:
+            mock_client = MagicMock()
+            mock_client.post = AsyncMock(return_value=mock_resp)
+            mock_client_fn.return_value = mock_client
+
+            from src.nlp import extract_with_groups
+            terms, groups = await extract_with_groups("cancer")
+
+        assert terms == ["cancer"]
+        assert groups == []
+
+    @pytest.mark.asyncio
     async def test_deduplicates_terms(self):
         mock_resp = MagicMock()
         mock_resp.raise_for_status = MagicMock()
