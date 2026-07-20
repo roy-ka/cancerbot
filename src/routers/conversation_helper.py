@@ -786,6 +786,7 @@ async def search_and_embed(
 
     return {
         "terms": terms,
+        "entity_groups": entity_groups,
         "url_found": len(url_sources),
         "url_context_items": url_context_items,
         "pubmed_found": len(pubmed_sources),

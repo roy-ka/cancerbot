@@ -38,6 +38,64 @@ def mock_external_services(mock_retrieval):
         yield
 
 
+class TestRetrievalQueryEntityGrouping:
+    """retrieval_query should use one representative term per entity, not the
+    fully synonym-expanded flat term list, so a heavily-synonymed entity
+    (e.g. 5 GBM synonyms) doesn't bury a single-term entity (a drug name) in
+    the BM25/KNN retrieval match."""
+
+    @patch("src.routers.conversations.run_retrieval")
+    @patch("src.routers.conversations.OllamaConnector.generate_text")
+    @patch("src.routers.conversations.search_and_embed")
+    def test_retrieval_query_uses_representative_terms_when_entity_groups_present(
+        self, mock_search_and_embed, mock_generate, mock_retrieval, client
+    ):
+        mock_search_and_embed.return_value = {
+            "indexed": 0, "skipped": 0,
+            "terms": ["Mebendazole", "GBM", "glioblastoma", "glioblastoma multiforme", "grade IV glioma"],
+            "entity_groups": [
+                {"term": "Mebendazole", "synonyms": []},
+                {"term": "GBM", "synonyms": ["glioblastoma", "glioblastoma multiforme", "grade IV glioma"]},
+            ],
+            "pubmed_found": 0, "crossref_found": 0, "wikipedia_found": 0,
+        }
+        mock_retrieval.return_value = {"generation_context": "info", "intent": "concept"}
+        mock_generate.return_value = "answer"
+
+        response = client.post(
+            "/conversations/new",
+            json={"content": "can Mebendazole help against GBM?"},
+        )
+        assert response.status_code == 200
+
+        called_query = mock_retrieval.call_args.args[0]
+        assert called_query == "Mebendazole GBM"
+
+    @patch("src.routers.conversations.run_retrieval")
+    @patch("src.routers.conversations.OllamaConnector.generate_text")
+    @patch("src.routers.conversations.search_and_embed")
+    def test_retrieval_query_falls_back_to_flat_terms_without_entity_groups(
+        self, mock_search_and_embed, mock_generate, mock_retrieval, client
+    ):
+        mock_search_and_embed.return_value = {
+            "indexed": 0, "skipped": 0,
+            "terms": ["cancer", "treatment"],
+            "entity_groups": [],
+            "pubmed_found": 0, "crossref_found": 0, "wikipedia_found": 0,
+        }
+        mock_retrieval.return_value = {"generation_context": "info", "intent": "concept"}
+        mock_generate.return_value = "answer"
+
+        response = client.post(
+            "/conversations/new",
+            json={"content": "tell me about cancer treatment"},
+        )
+        assert response.status_code == 200
+
+        called_query = mock_retrieval.call_args.args[0]
+        assert called_query == "cancer treatment"
+
+
 class TestNewConversation:
     @patch("src.routers.conversations.run_retrieval")
     @patch("src.routers.conversations.OllamaConnector.generate_text")

@@ -21,7 +21,7 @@ from src.db.repositories.messeges import add_message, add_claims_and_sources, ge
 from uuid import UUID
 from src.retrieval import run_retrieval
 from src.classes.ollama_connector import OllamaConnector, NO_DATA_RESPONSE
-from src.routers.conversation_helper import _emit_noop, search_and_embed, fetch_url_contents
+from src.routers.conversation_helper import _emit_noop, search_and_embed, fetch_url_contents, _representative_terms
 
 ROLLS = Literal['user', 'assistant']
 
@@ -196,8 +196,15 @@ async def _process_post_message(
     # Prefer extracted terms as retrieval query so BM25/KNN search on the
     # medical concepts rather than the raw message (which may contain noise
     # words like "tell" that skew BM25 toward unrelated indexed documents).
+    # When distinct entities are known (e.g. a drug and a disease), use one
+    # representative term per entity rather than the fully synonym-expanded
+    # list — otherwise a heavily-synonymed entity (5 GBM synonyms) dominates
+    # the BM25/KNN match and buries a newly-indexed source that's actually
+    # about both entities under long-established single-entity literature.
     extracted_query_terms = search_meta.get('terms', [])
-    retrieval_query = ' '.join(extracted_query_terms) if extracted_query_terms else req.content
+    entity_groups = search_meta.get('entity_groups', [])
+    retrieval_terms = _representative_terms(entity_groups, extracted_query_terms)
+    retrieval_query = ' '.join(retrieval_terms) if retrieval_terms else req.content
     if url_context_items:
         first_title = (url_context_items[0].get('title') or '').strip()
         if first_title and first_title != req.content:
