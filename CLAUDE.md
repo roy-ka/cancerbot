@@ -118,10 +118,17 @@ bash scripts/daily_backup.sh  # Cron-friendly wrapper for backup
 ```bash
 python scripts/backfill_chunks.py          # Migrate pre-chunked-schema docs (idempotent; run automatically on deploy)
 python scripts/fix_crossref_abstracts.py   # Re-fetch + re-clean all CrossRef sources (manual, one-off; use --dry-run / --limit N)
+python scripts/remove_short_sources.py     # Delete indexed sources with full_text < MIN_FULLTEXT_WORDS (manual, one-off; defaults to --dry-run, use --execute / --limit N)
 ```
 `fix_crossref_abstracts.py` is not run automatically by `deploy.sh` — it makes a
 live CrossRef + Unpaywall + Ollama round trip per source, so it's meant to be run
 by hand when needed rather than on every deploy.
+
+`remove_short_sources.py` is likewise manual/one-off, not run by `deploy.sh`. It
+cleans up sources indexed before CrossRef querying added `has-abstract:true` and
+before the Wikipedia/general indexing paths enforced a `MIN_FULLTEXT_WORDS` (20)
+floor on `content_for_embedding` (see `src/routers/conversation_helper.py`) —
+those older sources can have full_text as short as a bare title.
 
 ## Architecture
 

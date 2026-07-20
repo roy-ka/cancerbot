@@ -22,6 +22,7 @@ from src.xml_to_source import pubmed_article_xml_to_source
 
 _RETRY_MAX = 2
 _RETRYABLE_HTTP = frozenset({429, 500, 502, 503, 504})
+MIN_FULLTEXT_WORDS = 20
 
 
 async def _retry_get(
@@ -310,6 +311,7 @@ async def _search_crossref_sources(client: httpx.AsyncClient, terms: list[str], 
         "query.bibliographic": query,
         "rows": max_results,
         "select": "DOI,title,abstract,URL",
+        "filter": "has-abstract:true",
     }
     try:
         resp = await _retry_get(client, url, params=params)
@@ -326,11 +328,10 @@ async def _search_crossref_sources(client: httpx.AsyncClient, terms: list[str], 
         raw_title = (title_arr[0] if isinstance(title_arr, list) and title_arr else "") or ""
         title = _clean_crossref_text(raw_title) or raw_title.strip()
         abstract = _clean_crossref_text(item.get("abstract"))
-        content_for_embedding = (
-            f"{title}\n\n{abstract}".strip() if abstract else title.strip()
-        )
-        if not content_for_embedding:
+        if not abstract:
+            logger.debug(f"[crossref] skipping doi={doi} — no usable abstract after cleaning")
             continue
+        content_for_embedding = f"{title}\n\n{abstract}".strip()
         if _SPAM_RE.search(title):
             logger.warning(f"[crossref] skipping spam/low-quality item doi={doi}: '{title[:80]}'")
             continue
@@ -463,7 +464,7 @@ async def _search_wikipedia_sources(terms: list[str], max_results: int = 3) -> l
                     continue
                 seen.add(page.title)
                 summary = (page.summary or "").strip()
-                if len(summary) < 80:
+                if len(summary.split()) < MIN_FULLTEXT_WORDS:
                     continue
                 out.append(
                     {
@@ -501,7 +502,7 @@ def _embed_and_index_sources(sources: list[dict], terms: list[str] | None = None
     seen_base_ids: set[str] = set()
     for source in sources:
         content = (source.get("content_for_embedding") or "").strip()
-        if len(content) < 40:
+        if len(content.split()) < MIN_FULLTEXT_WORDS:
             logger.debug(f"[index] skipping source '{source.get('title','?')[:60]}' — content too short")
             skipped += 1
             continue
