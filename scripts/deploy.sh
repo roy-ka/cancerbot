@@ -12,6 +12,15 @@ export PATH=$PATH:/snap/bin
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
+# git pull (below) can update this very file mid-run. Bash has already read
+# this script into memory by the time that happens, so it keeps executing the
+# OLD version for the rest of the run — any step added to deploy.sh in the
+# commit being pulled would silently never run on the deploy that introduces
+# it. Guard against that: hash this file now, compare after the pull, and
+# re-exec from scratch (so bash reloads the new version fully) if it changed.
+: "${DEPLOY_REEXEC_COUNT:=0}"
+DEPLOY_SH_HASH_BEFORE_PULL="$(sha256sum "$SCRIPT_DIR/deploy.sh" | awk '{print $1}')"
+
 # Parse arguments
 FORCE=false
 while [[ $# -gt 0 ]]; do
@@ -33,7 +42,9 @@ mkdir -p "$PROJECT_DIR/logs" "$PROJECT_DIR/backups"
 # Ensure the current user owns the log dirs so tee can write
 sudo chown "$(id -u):$(id -g)" "$PROJECT_DIR/logs" "$PROJECT_DIR/backups" 2>/dev/null || true
 chmod 755 "$PROJECT_DIR/logs" "$PROJECT_DIR/backups" 2>/dev/null || true
-LOG_FILE="$PROJECT_DIR/logs/deploy_$TIMESTAMP.log"
+# Reuse the same log file across a self re-exec (see DEPLOY_REEXEC_COUNT above)
+# instead of splitting one logical deploy across two timestamped log files.
+LOG_FILE="${DEPLOY_LOG_FILE_OVERRIDE:-$PROJECT_DIR/logs/deploy_$TIMESTAMP.log}"
 
 # Create log file and redirect all output to it and stdout
 if touch "$LOG_FILE" 2>/dev/null; then
@@ -211,8 +222,11 @@ else
   exit 1
 fi
 
-# Capture current commit so rollback can return to it if pull succeeds but deploy fails
-PREV_GIT_HEAD=$(git rev-parse HEAD)
+# Capture current commit so rollback can return to it if pull succeeds but deploy fails.
+# On a self re-exec (DEPLOY_PREV_GIT_HEAD_OVERRIDE set), HEAD already points at
+# the newly-pulled commit — use the value saved from before that pull instead
+# of recomputing, or rollback would "roll back" to the new commit itself.
+PREV_GIT_HEAD="${DEPLOY_PREV_GIT_HEAD_OVERRIDE:-$(git rev-parse HEAD)}"
 echo "✓ Saved pre-deploy commit: $PREV_GIT_HEAD"
 
 # Pull latest code
@@ -223,6 +237,19 @@ if git pull; then
 else
   echo "✗ Git pull failed"
   exit 1
+fi
+
+# If deploy.sh itself changed in the pull, re-exec now so the rest of this
+# run uses the new version instead of continuing on bash's stale in-memory
+# copy of the old one (see DEPLOY_REEXEC_COUNT comment near the top).
+DEPLOY_SH_HASH_AFTER_PULL="$(sha256sum "$SCRIPT_DIR/deploy.sh" | awk '{print $1}')"
+if [ "$DEPLOY_SH_HASH_AFTER_PULL" != "$DEPLOY_SH_HASH_BEFORE_PULL" ] && [ "$DEPLOY_REEXEC_COUNT" -lt 1 ]; then
+  echo ""
+  echo "⚠ deploy.sh changed in this pull — re-executing the updated script from the top so new steps aren't silently skipped this run..."
+  export DEPLOY_REEXEC_COUNT=$((DEPLOY_REEXEC_COUNT + 1))
+  export DEPLOY_LOG_FILE_OVERRIDE="$LOG_FILE"
+  export DEPLOY_PREV_GIT_HEAD_OVERRIDE="$PREV_GIT_HEAD"
+  exec "$SCRIPT_DIR/deploy.sh" --force
 fi
 
 # Build frontend
