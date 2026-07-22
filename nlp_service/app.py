@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from starlette.concurrency import run_in_threadpool
-from synonyms import get_synonyms, _FORWARD, _REVERSE
+from synonyms import get_synonyms, get_category, _FORWARD, _REVERSE
 import axiom_py
 from axiom_py.logging import AxiomHandler
 
@@ -147,7 +147,7 @@ async def extract(req: ExtractReq):
     for e in _dedupe(entities):
         e_synonyms = _dedupe(get_synonyms(e))[:3]
         synonyms.extend(e_synonyms)
-        entity_groups.append({"term": e, "synonyms": e_synonyms})
+        entity_groups.append({"term": e, "synonyms": e_synonyms, "category": get_category(e)})
 
     result = {
         "entities": _dedupe(entities),

@@ -16,6 +16,7 @@ ONCOLOGY_SYNONYMS: dict[str, list[str]] = {
     "hepatocellular carcinoma": ["liver cancer", "hepatic carcinoma", "HCC", "liver neoplasm"],
     "glioblastoma": ["glioblastoma multiforme", "GBM", "grade IV glioma", "high-grade glioma"],
     "glioma": ["brain tumor", "brain neoplasm", "glial tumor", "astrocytoma"],
+    "oligodendroglioma": ["oligodendroglial tumor", "anaplastic oligodendroglioma"],
     "melanoma": ["malignant melanoma", "skin cancer", "cutaneous melanoma", "skin neoplasm"],
     "leukemia": ["blood cancer", "hematologic malignancy", "leukaemia", "leukemic"],
     "acute myeloid leukemia": ["AML", "acute myelogenous leukemia", "acute myelocytic leukemia"],
@@ -132,6 +133,47 @@ ONCOLOGY_SYNONYMS: dict[str, list[str]] = {
     "ketogenic diet": ["ketogenic", "low carbohydrate diet", "KD", "keto diet"],
 }
 
+# General disease-area category for each specific cancer-type key above.
+# Keys not listed here (non-cancer-type entities like drugs, biomarkers,
+# pathways) have no category. A cancer type not explicitly regrouped here
+# maps to itself (see get_category) — most entries above are already a
+# general term (e.g. "breast cancer") and don't need remapping.
+CANCER_CATEGORIES: dict[str, str] = {
+    "glioblastoma": "brain cancer",
+    "glioma": "brain cancer",
+    "oligodendroglioma": "brain cancer",
+    "melanoma": "skin cancer",
+    "hepatocellular carcinoma": "liver cancer",
+    "renal cell carcinoma": "kidney cancer",
+    "leukemia": "blood cancer",
+    "acute myeloid leukemia": "blood cancer",
+    "acute lymphoblastic leukemia": "blood cancer",
+    "chronic lymphocytic leukemia": "blood cancer",
+    "chronic myeloid leukemia": "blood cancer",
+    "lymphoma": "blood cancer",
+    "hodgkin lymphoma": "blood cancer",
+    "non-hodgkin lymphoma": "blood cancer",
+    "multiple myeloma": "blood cancer",
+    "neuroblastoma": "nervous system cancer",
+    "retinoblastoma": "eye cancer",
+}
+_CANCER_CATEGORIES_LOWER: dict[str, str] = {k.lower(): v for k, v in CANCER_CATEGORIES.items()}
+
+# Cancer-type keys are exactly the "Cancer types" section of ONCOLOGY_SYNONYMS
+# above — every other section (biomarkers, pathways, treatments, drugs,
+# metabolism, general oncology) is not a disease/cancer type and has no category.
+_CANCER_TYPE_KEYS: frozenset[str] = frozenset({
+    "breast cancer", "lung cancer", "colorectal cancer", "prostate cancer",
+    "pancreatic cancer", "ovarian cancer", "cervical cancer", "endometrial cancer",
+    "gastric cancer", "hepatocellular carcinoma", "glioblastoma", "glioma",
+    "oligodendroglioma", "melanoma", "leukemia", "acute myeloid leukemia",
+    "acute lymphoblastic leukemia", "chronic lymphocytic leukemia",
+    "chronic myeloid leukemia", "lymphoma", "hodgkin lymphoma",
+    "non-hodgkin lymphoma", "multiple myeloma", "thyroid cancer",
+    "renal cell carcinoma", "bladder cancer", "sarcoma", "mesothelioma",
+    "neuroblastoma", "retinoblastoma",
+})
+
 # Normalised (lowercase-key) forward index and reverse index built at import time.
 _FORWARD: dict[str, list[str]] = {k.lower(): v for k, v in ONCOLOGY_SYNONYMS.items()}
 _REVERSE: dict[str, str] = {}
@@ -150,3 +192,20 @@ def get_synonyms(term: str) -> list[str]:
     if canonical:
         return [canonical] + [s for s in ONCOLOGY_SYNONYMS[canonical] if s.lower() != key]
     return []
+
+
+def _canonical_key(term: str) -> str | None:
+    """Resolve a term (canonical key or one of its synonyms) to its canonical key."""
+    key = term.strip().lower()
+    if key in _FORWARD:
+        return key
+    return _REVERSE.get(key)
+
+
+def get_category(term: str) -> str | None:
+    """Return the general cancer category for term, or None if term isn't a
+    recognized cancer type (e.g. a drug, biomarker, or pathway)."""
+    canonical = _canonical_key(term)
+    if canonical is None or canonical not in _CANCER_TYPE_KEYS:
+        return None
+    return _CANCER_CATEGORIES_LOWER.get(canonical, canonical)

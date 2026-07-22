@@ -322,6 +322,9 @@ async def _search_pubmed_sources(
         clauses = []
         for g in entity_groups[:6]:
             group_terms = [g["term"], *g.get("synonyms", [])]
+            category = g.get("category")
+            if category and category.lower() not in {t.lower() for t in group_terms}:
+                group_terms.append(category)
             clause = " OR ".join(f"({t})" for t in group_terms)
             clauses.append(f"({clause})")
         and_query = " AND ".join(clauses)

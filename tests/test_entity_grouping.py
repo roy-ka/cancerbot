@@ -124,6 +124,41 @@ class TestPubmedEntityGroupQuery:
         assert "AND" not in second_call_url and "%20AND%20" not in second_call_url
 
     @pytest.mark.asyncio
+    async def test_and_query_includes_group_category_as_extra_alternative(self):
+        client = AsyncMock(spec=httpx.AsyncClient)
+        client.get.side_effect = [
+            _mock_response(200, json_data={"esearchresult": {"idlist": ["123"]}}),
+            _mock_response(200, text="<PubmedArticleSet></PubmedArticleSet>"),
+        ]
+        entity_groups = [
+            {"term": "Mebendazole", "synonyms": [], "category": None},
+            {"term": "GBM", "synonyms": ["glioblastoma"], "category": "brain cancer"},
+        ]
+        terms = ["Mebendazole", "GBM", "glioblastoma"]
+        await _search_pubmed_sources(client, terms, max_results=4, entity_groups=entity_groups)
+
+        first_call_url = client.get.call_args_list[0].args[0]
+        assert "brain+cancer" in first_call_url or "brain%20cancer" in first_call_url
+
+    @pytest.mark.asyncio
+    async def test_and_query_skips_category_already_present_as_synonym(self):
+        client = AsyncMock(spec=httpx.AsyncClient)
+        client.get.side_effect = [
+            _mock_response(200, json_data={"esearchresult": {"idlist": ["123"]}}),
+            _mock_response(200, text="<PubmedArticleSet></PubmedArticleSet>"),
+        ]
+        entity_groups = [
+            {"term": "Mebendazole", "synonyms": [], "category": None},
+            {"term": "brain cancer", "synonyms": ["glioblastoma"], "category": "brain cancer"},
+        ]
+        terms = ["Mebendazole", "brain cancer", "glioblastoma"]
+        await _search_pubmed_sources(client, terms, max_results=4, entity_groups=entity_groups)
+
+        first_call_url = client.get.call_args_list[0].args[0]
+        # "brain cancer" should appear exactly once in the group's OR-clause, not duplicated
+        assert first_call_url.count("brain") == 1
+
+    @pytest.mark.asyncio
     async def test_single_entity_group_skips_and_query(self):
         client = AsyncMock(spec=httpx.AsyncClient)
         client.get.side_effect = [
