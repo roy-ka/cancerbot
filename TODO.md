@@ -32,10 +32,13 @@
 - [ ] **Fix sources in prod** — (2026-07-20) something's wrong with sources in production; needs investigation to pin down the actual issue
 
 ## Nice to Have
+- [ ] **RAG usage explainer** — show guidance on a new conversation (e.g. an intro message or tooltip) that this is RAG over a specific corpus with a vast context window: ask specific questions rather than general ones for better answers
+- [ ] **Conversation options: share, summarize, translate** — per-conversation actions in the UI (beyond the existing delete): generate a shareable link, produce a summary of the whole thread, translate the whole conversation
+- [ ] **Message options: thumbs up/down, split to new conversation** — per-message feedback (thumbs up/down, presumably feeding into `SearchAnalytic` or a new table) and a "split" action that forks a new conversation starting from that message
 - [ ] **Email change** — authenticated endpoint to update email address with re-verification flow (pairs with Change password)
 - [ ] **Conversation export** — allow users to download a conversation as markdown or PDF
 - [ ] **Mailing** — transactional emails beyond password reset (e.g. conversation summaries, weekly digests)
-- [ ] **Multiple language support** — allow users to query and receive responses in languages other than English; consider UI locale switching, multilingual embeddings, and translated MeSH synonyms
+- [~] **Multiple language support** — sources/retrieval/NLP extraction stay English-only (by design; see decision below), but: (1) the LLM answer now matches the conversation's first (non-hidden) message's language, not just the current message's — see `OllamaConnector._build_prompt`'s `LANGUAGE:` block; (2) each assistant message has a "Translate" icon (`MessageItem.tsx`) opening that message's text in Google Translate, in the browser's language. Still open: UI locale switching (login/buttons/etc.), and the "proper" version (multilingual embeddings, translated MeSH synonyms, non-English external search) if English-only sources ever stop being acceptable
 
 - [ ] **Consolidate token-repository logic** — `password_resets.py`, `email_verification.py`, and `account_deletion.py` each reimplement the same hash/create/verify/consume pattern; extract a shared base so a future fix (e.g. the tz-naive datetime normalization) doesn't need to be applied three times
 - [ ] **Make the login `cancel_token` DB-backed** — it's currently a bare stateless JWT, unlike every other token type in the app (all DB-backed and revocable); low risk today (15-min TTL, only issued after correct password entry) but inconsistent with the rest of the codebase's token handling and can't be revoked early short of rotating `JWT_SECRET`

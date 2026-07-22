@@ -1,4 +1,5 @@
-import { Box, Link, Typography } from '@mui/material'
+import { Box, IconButton, Link, Tooltip, Typography } from '@mui/material'
+import TranslateIcon from '@mui/icons-material/Translate'
 import React, { useMemo } from 'react'
 import type { Message, Source } from '../types'
 import MessageSourceItem from './MessageSourceItem'
@@ -7,6 +8,15 @@ import GroupedMessageSourceItem from './GroupedMessageSourceItem'
 const URL_LOCAL_RE = () => /https?:\/\/[^\s<>"'()[\]{}]+/g
 // Trailing punctuation that commonly appears after a URL in prose but isn't part of it
 const TRAILING_PUNCT = /[.,;:!?)]+$/
+
+function openInGoogleTranslate(text: string) {
+  // Strip [source1]/[pmid:...]/[doi:...] citation tokens — Google Translate
+  // would otherwise try (and mangle) translating them too.
+  const plainText = text.replace(/\[[^\]\s]+\]/g, '').trim()
+  const targetLang = (navigator.language || 'en').split('-')[0]
+  const url = `https://translate.google.com/?sl=auto&tl=${encodeURIComponent(targetLang)}&text=${encodeURIComponent(plainText)}&op=translate`
+  window.open(url, '_blank', 'noopener,noreferrer')
+}
 
 function renderTextWithLinks(
   text: string,
@@ -239,6 +249,23 @@ export default function MessageItem({ message }: { message: Message }) {
               : 'rgba(255,255,255,0.15)',
         }}
       >
+        {message.role === 'assistant' && (
+          <Tooltip title="Translate">
+            <IconButton
+              size="small"
+              onClick={() => openInGoogleTranslate(message.content)}
+              sx={{
+                position: 'absolute',
+                top: 4,
+                right: 4,
+                color: 'rgba(255,255,255,0.4)',
+                p: 0.5,
+              }}
+            >
+              <TranslateIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        )}
         {mesegeEnrichedText}
       </Box>
     </Box>

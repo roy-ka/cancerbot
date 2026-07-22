@@ -241,6 +241,22 @@ async def _process_post_message(
     # hidden messages in its prompt context.
     history = get_recent_messages(db, conversation.id, limit=max_history, include_hidden=hidden_from_user)
 
+    # The answer should be in whatever language the conversation actually
+    # started in — not just the current message's language, which can drift
+    # over a long conversation. conversation.messages is the full (unlimited)
+    # relationship, unlike `history` above which is capped at max_history, so
+    # this stays correct even once the true first message has scrolled out of
+    # the prompt window. Ninja's own hidden messages are skipped so ninja
+    # typing in another language for a QA check can't change the language the
+    # real user gets answered in.
+    if is_first_message:
+        first_message_content = req.content
+    else:
+        first_message_content = next(
+            (m.content for m in conversation.messages if m.role == 'user' and not m.hidden_from_user),
+            req.content,
+        )
+
     await emit('building_prompt', {'history_messages': len(history)})
     await emit('generating_answer', {})
 
@@ -251,6 +267,7 @@ async def _process_post_message(
             context=context["generation_context"],
             question=req.content,
             history=history,
+            first_message=first_message_content,
         ):
             if isinstance(chunk, dict):
                 alias_to_id = chunk

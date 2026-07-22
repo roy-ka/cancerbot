@@ -87,6 +87,7 @@ class OllamaConnector:
     context: Sequence[Any],
     question: str,
     history: Sequence[Message],
+    first_message: str | None = None,
   ) -> tuple[str, dict[str, str], int]:
     """Build the full prompt and return (full_prompt, alias_to_id, max_tokens).
 
@@ -193,6 +194,15 @@ class OllamaConnector:
     if not context_block.strip():
       context_block = "(no context provided)"
 
+    language_block = ""
+    if first_message:
+      language_block = f"""
+LANGUAGE:
+Respond in the same language as the conversation's first message below (English if that message is in English).
+First message: "{_truncate(first_message, 200)}"
+Exception: if you must write the no-evidence fallback line below, write it exactly as shown, in English, regardless of the conversation's language.
+"""
+
     full_prompt = f"""
 You are a doctor specializing in cancer research and treatment, metabolism, and integrative medicine.
 
@@ -207,7 +217,7 @@ CRITICAL — CITATION RULES (you MUST follow these):
 - Do NOT invent IDs. Do NOT write sentences without citations.
 - If the evidence conflicts, summarize both sides and cite both.
 - If fewer than 2 sources support the answer, write only: "{NO_DATA_RESPONSE}"
-
+{language_block}
 Scientific Evidence:
 {context_block}
 
@@ -244,16 +254,21 @@ ANSWER (every sentence must have a [source#] citation):
     context: Sequence[Any],
     question: str,
     history: Sequence[Message],
+    first_message: str | None = None,
   ) -> AsyncIterator[str | dict]:
     """Async generator — yields str tokens, then yields alias_to_id dict as the final sentinel.
 
     Caller should check isinstance(chunk, dict) to detect the end-of-stream sentinel.
     Tokens are raw LLM output (with [source1] aliases); caller must call _post_process
     on the assembled text to substitute stable IDs before persisting.
+
+    first_message, when given, is the conversation's first (non-hidden) user
+    message — used to instruct the LLM to answer in that language rather than
+    always English.
     """
     from groq import AsyncGroq
 
-    full_prompt, alias_to_id, max_tokens = cls._build_prompt(context, question, history)
+    full_prompt, alias_to_id, max_tokens = cls._build_prompt(context, question, history, first_message)
 
     logger.debug(
       "[groq] stream model=%s max_tokens=%d prompt_len=%d",

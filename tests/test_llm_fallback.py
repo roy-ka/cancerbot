@@ -2,7 +2,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 import groq
 
-from src.classes.ollama_connector import OllamaConnector
+from src.classes.ollama_connector import OllamaConnector, NO_DATA_RESPONSE
 
 CONTEXT = [{"id": "src-001", "content_for_embedding": "Cancer cells exhibit the Warburg effect."}]
 
@@ -205,3 +205,39 @@ class TestGenerateTitle:
         with patch("groq.AsyncGroq", factory):
             title = await OllamaConnector.generate_title("what is apoptosis?")
         assert title == "What is apoptosis"
+
+
+class TestAnswerLanguageInstruction:
+    """stream_text should tell the LLM to answer in the conversation's first
+    message's language, while keeping the NO_DATA_RESPONSE fallback in English
+    so conversations.py's string-match detection for it keeps working."""
+
+    @pytest.mark.asyncio
+    async def test_first_message_included_in_prompt(self):
+        factory, instance = _async_groq_mock(tokens=["respuesta"])
+        with patch("groq.AsyncGroq", factory):
+            await _collect(OllamaConnector.stream_text(
+                CONTEXT, "¿Qué es el efecto Warburg?", [], first_message="¿Qué es el cáncer?",
+            ))
+        sent_prompt = instance.chat.completions.create.call_args.kwargs["messages"][0]["content"]
+        assert "¿Qué es el cáncer?" in sent_prompt
+        assert "LANGUAGE:" in sent_prompt
+
+    @pytest.mark.asyncio
+    async def test_no_language_block_when_first_message_not_given(self):
+        factory, instance = _async_groq_mock(tokens=["answer"])
+        with patch("groq.AsyncGroq", factory):
+            await _collect(OllamaConnector.stream_text(CONTEXT, "What is cancer?", []))
+        sent_prompt = instance.chat.completions.create.call_args.kwargs["messages"][0]["content"]
+        assert "LANGUAGE:" not in sent_prompt
+
+    @pytest.mark.asyncio
+    async def test_no_data_response_instruction_stays_in_english(self):
+        factory, instance = _async_groq_mock(tokens=["answer"])
+        with patch("groq.AsyncGroq", factory):
+            await _collect(OllamaConnector.stream_text(
+                CONTEXT, "¿Qué es el efecto Warburg?", [], first_message="¿Qué es el cáncer?",
+            ))
+        sent_prompt = instance.chat.completions.create.call_args.kwargs["messages"][0]["content"]
+        assert NO_DATA_RESPONSE in sent_prompt
+        assert "write it exactly as shown, in English" in sent_prompt
