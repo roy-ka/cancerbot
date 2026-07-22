@@ -313,27 +313,6 @@ class dbConnector:
       return set()
 
   @classmethod
-  def get_sources_by_id(cls, ids):
-    if not ids:
-      return {'hits': {'hits': []}}
-    cls._initialize()
-    if not cls.db_client:
-      return {'hits': {'hits': []}}
-
-    return cls.db_client.search(
-      index=cls._model['sources_index'],
-      body={
-        'size': 200,
-        '_source': True,
-        'query': {
-          'terms': {
-            'id': ids
-          }
-        }
-      }
-    )
-
-  @classmethod
   def delete_source_by_id(cls, doc_id: str) -> int:
     """Delete all documents whose id field equals doc_id from the sources index."""
     cls._initialize()

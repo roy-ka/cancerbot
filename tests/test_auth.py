@@ -84,6 +84,34 @@ class TestLogin:
         )
         assert response.status_code == 401
 
+    def test_login_wrong_password_reports_remaining_attempts(self, anon_client, test_user):
+        response = anon_client.post(
+            "/auth/login/",
+            json={"email": test_user.email, "password": "WrongPassword", "rememberMe": False},
+        )
+        assert response.status_code == 401
+        assert "4 attempt(s) remaining" in response.json()["detail"]
+
+    def test_login_locks_account_after_max_failed_attempts(self, anon_client, test_user):
+        for _ in range(4):
+            anon_client.post(
+                "/auth/login/",
+                json={"email": test_user.email, "password": "WrongPassword", "rememberMe": False},
+            )
+        response = anon_client.post(
+            "/auth/login/",
+            json={"email": test_user.email, "password": "WrongPassword", "rememberMe": False},
+        )
+        assert response.status_code == 429
+        assert "locked" in response.json()["detail"].lower()
+
+        # Even the correct password is now rejected until the lockout expires
+        response = anon_client.post(
+            "/auth/login/",
+            json={"email": test_user.email, "password": "TestPass123!", "rememberMe": False},
+        )
+        assert response.status_code == 429
+
     def test_login_missing_fields_returns_422(self, anon_client):
         response = anon_client.post("/auth/login/", json={"email": "user@example.com"})
         assert response.status_code == 422

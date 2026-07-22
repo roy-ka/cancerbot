@@ -7,7 +7,12 @@ Covers:
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from src.routers.conversation_helper import _TERM_STOP_WORDS, _dedupe_terms
+from src.routers.conversation_helper import (
+    _TERM_STOP_WORDS,
+    _dedupe_terms,
+    _extract_terms_from_message,
+    _extract_term_groups_from_message,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -123,6 +128,46 @@ class TestExtractTerms:
             result = await extract_terms("KRAS mutation")
 
         assert result.count("KRAS") == 1
+
+
+# ---------------------------------------------------------------------------
+# TestSpellingCorrectionBeforeExtraction
+# ---------------------------------------------------------------------------
+
+class TestSpellingCorrectionBeforeExtraction:
+    """conversation_helper's extraction wrappers must run correct_spelling on
+    the message text before handing it to the NLP extractor, so a merged-word
+    typo like 'Mebendazolehelp' becomes 'Mebendazole help' before entities are
+    extracted from it."""
+
+    @pytest.mark.asyncio
+    async def test_extract_terms_from_message_uses_corrected_text(self):
+        with patch("src.nlp.correct_spelling", new=AsyncMock(return_value="Mebendazole help against cancer")) as mock_correct, \
+             patch("src.nlp.extract_terms", new=AsyncMock(return_value=["Mebendazole", "cancer"])) as mock_extract:
+            result = await _extract_terms_from_message("Mebendazolehelp against cancer")
+
+        mock_correct.assert_awaited_once_with("Mebendazolehelp against cancer")
+        mock_extract.assert_awaited_once_with("Mebendazole help against cancer")
+        assert result == ["Mebendazole", "cancer"]
+
+    @pytest.mark.asyncio
+    async def test_extract_term_groups_from_message_uses_corrected_text(self):
+        with patch("src.nlp.correct_spelling", new=AsyncMock(return_value="Mebendazole help against cancer")) as mock_correct, \
+             patch("src.nlp.extract_with_groups", new=AsyncMock(return_value=(["Mebendazole", "cancer"], []))) as mock_extract:
+            terms, groups = await _extract_term_groups_from_message("Mebendazolehelp against cancer")
+
+        mock_correct.assert_awaited_once_with("Mebendazolehelp against cancer")
+        mock_extract.assert_awaited_once_with("Mebendazole help against cancer")
+        assert terms == ["Mebendazole", "cancer"]
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_original_text_when_correction_fails(self):
+        with patch("src.nlp.correct_spelling", new=AsyncMock(side_effect=Exception("nlp down"))), \
+             patch("src.nlp.extract_terms", new=AsyncMock(return_value=["cancer"])) as mock_extract:
+            result = await _extract_terms_from_message("cancer treatment")
+
+        mock_extract.assert_awaited_once_with("cancer treatment")
+        assert result == ["cancer"]
 
 
 # ---------------------------------------------------------------------------

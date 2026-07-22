@@ -30,6 +30,7 @@ from src.db.repositories.login_attempts import (
     increment_failed_attempts,
     reset_failed_attempts,
     is_account_locked,
+    get_remaining_attempts,
 )
 from src.db.repositories.rate_limit import (
     is_rate_limited,
@@ -130,13 +131,17 @@ async def generate_token(req: LoginRequest, response: Response, db: Session = De
     logging.info(f"Login attempt for email: {req.email}")
 
     if not user or not SecurityUtils.verify_password(req.password, user.password_hash):
-        attempt = increment_failed_attempts(db, req.email)
-        if attempt.failed_attempts >= 5:
+        increment_failed_attempts(db, req.email)
+        remaining = get_remaining_attempts(db, req.email)
+        if remaining <= 0:
             raise HTTPException(
                 status_code=429,
                 detail="Too many failed login attempts. Account locked. Please reset your password."
             )
-        raise HTTPException(status_code=401, detail="Invalid email or password")
+        raise HTTPException(
+            status_code=401,
+            detail=f"Invalid email or password. {remaining} attempt(s) remaining before lockout."
+        )
 
     if not user.email_verified:
         raise HTTPException(status_code=403, detail="Please verify your email before logging in.")

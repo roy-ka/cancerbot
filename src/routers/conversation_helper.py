@@ -235,11 +235,24 @@ def _stable_source_id(source: dict) -> str:
     return "src:" + hashlib.sha1(f"{title}\n{content}".encode("utf-8")).hexdigest()
 
 
+async def _correct_spelling_for_extraction(text: str) -> str:
+    from src.nlp import correct_spelling
+    try:
+        corrected = await correct_spelling(text or "")
+        if corrected != text:
+            logger.info("[conversation_helper] spelling corrected: %r -> %r", text, corrected)
+        return corrected
+    except Exception as e:
+        logger.error(f"[nlp] correct_spelling failed: {type(e).__name__}: {e}")
+        return text or ""
+
+
 async def _extract_terms_from_message(text: str) -> list[str]:
     from src.nlp import extract_terms
     logger.info("[conversation_helper] _extract_terms_from_message input: %r", (text or "")[:200])
     try:
-        result = await extract_terms(text or "")
+        corrected = await _correct_spelling_for_extraction(text)
+        result = await extract_terms(corrected)
         logger.info("[conversation_helper] _extract_terms_from_message output: %s", result)
         return result
     except Exception as e:
@@ -251,7 +264,8 @@ async def _extract_term_groups_from_message(text: str) -> tuple[list[str], list[
     from src.nlp import extract_with_groups
     logger.info("[conversation_helper] _extract_term_groups_from_message input: %r", (text or "")[:200])
     try:
-        terms, groups = await extract_with_groups(text or "")
+        corrected = await _correct_spelling_for_extraction(text)
+        terms, groups = await extract_with_groups(corrected)
         logger.info("[conversation_helper] _extract_term_groups_from_message output: terms=%s groups=%s", terms, groups)
         return terms, groups
     except Exception as e:

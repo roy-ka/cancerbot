@@ -24,10 +24,6 @@ def mock_external_services(mock_retrieval):
             new=_make_stream(_DEFAULT_STREAM_CONTENT),
         ),
         patch(
-            "src.db.repositories.messeges.dbConnector.get_sources_by_id",
-            return_value={"hits": {"hits": []}},
-        ),
-        patch(
             "src.routers.conversations.search_and_embed",
             new=AsyncMock(return_value={
                 "indexed": 0, "skipped": 0, "terms": [],
@@ -45,10 +41,9 @@ class TestRetrievalQueryEntityGrouping:
     the BM25/KNN retrieval match."""
 
     @patch("src.routers.conversations.run_retrieval")
-    @patch("src.routers.conversations.OllamaConnector.generate_text")
     @patch("src.routers.conversations.search_and_embed")
     def test_retrieval_query_uses_representative_terms_when_entity_groups_present(
-        self, mock_search_and_embed, mock_generate, mock_retrieval, client
+        self, mock_search_and_embed, mock_retrieval, client
     ):
         mock_search_and_embed.return_value = {
             "indexed": 0, "skipped": 0,
@@ -60,7 +55,6 @@ class TestRetrievalQueryEntityGrouping:
             "pubmed_found": 0, "crossref_found": 0, "wikipedia_found": 0,
         }
         mock_retrieval.return_value = {"generation_context": "info", "intent": "concept"}
-        mock_generate.return_value = "answer"
 
         response = client.post(
             "/conversations/new",
@@ -72,10 +66,9 @@ class TestRetrievalQueryEntityGrouping:
         assert called_query == "Mebendazole GBM"
 
     @patch("src.routers.conversations.run_retrieval")
-    @patch("src.routers.conversations.OllamaConnector.generate_text")
     @patch("src.routers.conversations.search_and_embed")
     def test_retrieval_query_falls_back_to_flat_terms_without_entity_groups(
-        self, mock_search_and_embed, mock_generate, mock_retrieval, client
+        self, mock_search_and_embed, mock_retrieval, client
     ):
         mock_search_and_embed.return_value = {
             "indexed": 0, "skipped": 0,
@@ -84,7 +77,6 @@ class TestRetrievalQueryEntityGrouping:
             "pubmed_found": 0, "crossref_found": 0, "wikipedia_found": 0,
         }
         mock_retrieval.return_value = {"generation_context": "info", "intent": "concept"}
-        mock_generate.return_value = "answer"
 
         response = client.post(
             "/conversations/new",
@@ -98,10 +90,8 @@ class TestRetrievalQueryEntityGrouping:
 
 class TestNewConversation:
     @patch("src.routers.conversations.run_retrieval")
-    @patch("src.routers.conversations.OllamaConnector.generate_text")
-    def test_new_conversation_creates_conversation_and_messages(self, mock_generate, mock_retrieval, client):
+    def test_new_conversation_creates_conversation_and_messages(self, mock_retrieval, client):
         mock_retrieval.return_value = {"generation_context": "cancer info", "intent": "concept"}
-        mock_generate.return_value = "Cancer is a disease."
 
         response = client.post(
             "/conversations/new",
@@ -114,10 +104,8 @@ class TestNewConversation:
         assert len(data["messages"]) == 2  # user + assistant
 
     @patch("src.routers.conversations.run_retrieval")
-    @patch("src.routers.conversations.OllamaConnector.generate_text")
-    def test_new_conversation_returns_messages_and_metadata(self, mock_generate, mock_retrieval, client):
+    def test_new_conversation_returns_messages_and_metadata(self, mock_retrieval, client):
         mock_retrieval.return_value = {"generation_context": "metastasis info", "intent": "concept"}
-        mock_generate.return_value = "Metastasis is cancer spread."
 
         response = client.post(
             "/conversations/new",
@@ -141,10 +129,8 @@ class TestNewConversation:
         assert response.status_code == 401
 
     @patch("src.routers.conversations.run_retrieval")
-    @patch("src.routers.conversations.OllamaConnector.generate_text")
-    def test_new_conversation_empty_content_allowed(self, mock_generate, mock_retrieval, client):
+    def test_new_conversation_empty_content_allowed(self, mock_retrieval, client):
         mock_retrieval.return_value = {"generation_context": "", "intent": "concept"}
-        mock_generate.return_value = "I need more information."
 
         response = client.post(
             "/conversations/new",
@@ -157,10 +143,8 @@ class TestNewConversation:
 
 class TestAddMessage:
     @patch("src.routers.conversations.run_retrieval")
-    @patch("src.routers.conversations.OllamaConnector.generate_text")
-    def test_add_message_to_existing_conversation(self, mock_generate, mock_retrieval, client, test_conversation):
+    def test_add_message_to_existing_conversation(self, mock_retrieval, client, test_conversation):
         mock_retrieval.return_value = {"generation_context": "glycolysis info", "intent": "concept"}
-        mock_generate.return_value = "Glycolysis is the breakdown of glucose."
 
         response = client.post(
             f"/conversations/{test_conversation.id}/add_message",
@@ -195,10 +179,8 @@ class TestAddMessage:
         assert response.status_code == 403
 
     @patch("src.routers.conversations.run_retrieval")
-    @patch("src.routers.conversations.OllamaConnector.generate_text")
-    def test_add_message_returns_conversation_metadata(self, mock_generate, mock_retrieval, client, test_conversation):
+    def test_add_message_returns_conversation_metadata(self, mock_retrieval, client, test_conversation):
         mock_retrieval.return_value = {"generation_context": "apoptosis info", "intent": "concept"}
-        mock_generate.return_value = "Apoptosis is programmed cell death."
 
         response = client.post(
             f"/conversations/{test_conversation.id}/add_message",

@@ -27,7 +27,7 @@ def calculate_search_metrics(query: str, results: list) -> dict:
     'min_score': min_score,
   }
 
-def run_retrieval(query: str, k_primary: int = 5, k_secondary: int = 3) -> dict:
+def run_retrieval(query: str, k_primary: int = 5) -> dict:
   logger.info("[retrieval] query='%s'", query[:120])
   query_embedding = OllamaConnector.embed_text(query)
   logger.info("[retrieval] embedding_dim=%d", len(query_embedding))

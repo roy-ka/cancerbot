@@ -239,62 +239,6 @@ ANSWER (every sentence must have a [source#] citation):
     return answer
 
   @classmethod
-  def generate_text(cls, context: Sequence[Any], question: str, history: Sequence[Message]) -> str:
-    """Generate an answer grounded in the provided context (blocking)."""
-    full_prompt, alias_to_id, max_tokens = cls._build_prompt(context, question, history)
-
-    logger.debug(
-      "[groq] generate model=%s max_tokens=%d prompt_len=%d",
-      cls.groq_model, max_tokens, len(full_prompt),
-    )
-
-    raw_answer = None
-    groq_exc = None
-
-    try:
-      completion = cls.groq.chat.completions.create(
-        model=cls.groq_model,
-        messages=[{"role": "user", "content": full_prompt}],
-        max_tokens=max_tokens,
-      )
-      if not completion.choices:
-        raise ValueError("Groq returned an empty choices list — possible content-policy rejection.")
-      choice = completion.choices[0]
-      logger.debug(
-        "[groq] response model=%s finish_reason=%s tokens_used=%s",
-        completion.model,
-        choice.finish_reason,
-        getattr(completion.usage, "total_tokens", "?"),
-      )
-      raw_answer = choice.message.content or ""
-    except groq.GroqError as exc:
-      groq_exc = exc
-      logger.warning("[groq] API error (%s: %s), falling back to Gemini", type(exc).__name__, exc)
-      send_fallback_alert(cls.groq_model)
-
-    gemini_exc = None
-    if raw_answer is None:
-      gemini_model = os.getenv("GEMINI_FALLBACK_MODEL", "gemini-2.5-flash")
-      try:
-        response = cls.gemini.models.generate_content(
-          model=gemini_model,
-          contents=full_prompt,
-          config=google_genai.types.GenerateContentConfig(max_output_tokens=max_tokens),
-        )
-        raw_answer = response.text or ""
-        logger.info("[gemini-fallback] model=%s", gemini_model)
-      except Exception as exc:
-        gemini_exc = exc
-        logger.warning("[gemini-fallback] API error (%s: %s)", type(exc).__name__, exc)
-
-    if raw_answer is None:
-      raise ValueError(
-        f"AI generation unavailable — Groq: {groq_exc}, Gemini: {gemini_exc}"
-      )
-
-    return cls._post_process(raw_answer, alias_to_id)
-
-  @classmethod
   async def stream_text(
     cls,
     context: Sequence[Any],
