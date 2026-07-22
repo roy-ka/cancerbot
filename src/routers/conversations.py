@@ -82,6 +82,7 @@ async def _process_post_message(
     conversation=None,
     emit: StageEmitter = _emit_stage_noop,
     send_token: SendToken = _send_token_noop,
+    hidden_from_user: bool = False,
 ):
     t0 = time.time()
 
@@ -96,7 +97,10 @@ async def _process_post_message(
         )
         if conversation is None:
             raise HTTPException(status_code=404, detail="Conversation not found")
-        if str(conversation.user_id) != str(current_user.id):
+        # Ninja intentionally posts into other users' conversations — the
+        # hidden_from_user flag is only ever set by the ninja-only router,
+        # which has already authorized the caller via get_current_ninja_user.
+        if not hidden_from_user and str(conversation.user_id) != str(current_user.id):
             raise HTTPException(status_code=403, detail="Forbidden")
 
     await emit('saving_user_message', {})
@@ -108,6 +112,7 @@ async def _process_post_message(
             role="user",
             content=req.content,
             urls=req.urls,
+            hidden_from_user=hidden_from_user,
         )
         db.commit()
         db.refresh(user_message)
@@ -225,7 +230,10 @@ async def _process_post_message(
             context['sources_ids'] = [item['id'] for item in url_items] + context.get('sources_ids', [])
 
     max_history = int(os.getenv('PROMPT_MAX_HISTORY', '8'))
-    history = get_recent_messages(db, conversation.id, limit=max_history)
+    # Ninja's own turn sees the full thread (real history + any earlier hidden
+    # ninja exchanges) for continuity; a real user's turn never includes
+    # hidden messages in its prompt context.
+    history = get_recent_messages(db, conversation.id, limit=max_history, include_hidden=hidden_from_user)
 
     await emit('building_prompt', {'history_messages': len(history)})
     await emit('generating_answer', {})
@@ -289,6 +297,7 @@ async def _process_post_message(
             content=response,
             sources_ids=context.get('sources_ids'),
             model_name=model_name,
+            hidden_from_user=hidden_from_user,
         )
 
         db.commit()

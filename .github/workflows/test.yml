@@ -36,6 +36,8 @@ jobs:
       AXIOM_TOKEN: ""
       AXIOM_DATASET: ""
       OPENSEARCH_CA_CERT: ""
+      NINJA_EMAIL: ninja-test@example.com
+      NINJA_PASSWORD: test-ninja-password
       PYTHONPATH: ${{ github.workspace }}
 
     steps:

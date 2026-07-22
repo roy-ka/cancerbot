@@ -5,6 +5,7 @@ import Terms from './pages/Terms'
 import VerifyEmail from './pages/VerifyEmail'
 import ResetPassword from './pages/ResetPassword'
 import ConfirmDeleteAccount from './pages/ConfirmDeleteAccount'
+import Ninja from './pages/Ninja'
 import ProtectedRoute from './components/ProtectedRoute'
 import PublicRoute from './components/PublicRoute'
 import VersionBadge from './components/VersionBadge'
@@ -31,6 +32,16 @@ function App() {
           element={
             <ProtectedRoute>
               <Chat />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Ninja-only admin view — Ninja.tsx itself redirects non-ninja users */}
+        <Route
+          path="/ninja"
+          element={
+            <ProtectedRoute>
+              <Ninja />
             </ProtectedRoute>
           }
         />

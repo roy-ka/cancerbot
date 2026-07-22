@@ -36,3 +36,9 @@ def get_current_user(
         return user
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+
+def get_current_ninja_user(current_user=Depends(get_current_user)):
+    if not current_user.is_ninja:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return current_user

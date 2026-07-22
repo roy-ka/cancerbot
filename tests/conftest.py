@@ -8,6 +8,8 @@ os.environ["AXIOM_TOKEN"] = ""      # disable Axiom logging during tests
 os.environ["AXIOM_DATASET"] = ""
 os.environ["SENDGRID_API_KEY"] = "" # prevent real emails during tests
 os.environ.setdefault("OPENSEARCH_CA_CERT", "")
+os.environ.setdefault("NINJA_EMAIL", "ninja-test@example.com")
+os.environ.setdefault("NINJA_PASSWORD", "test-ninja-password")
 
 import pytest
 from sqlalchemy import create_engine
@@ -76,6 +78,44 @@ def client(TestingSessionLocal, test_user):
     def override_get_current_user():
         db = TestingSessionLocal()
         u = db.query(models.User).filter(models.User.email == test_user.email).first()
+        db.close()
+        return u
+
+    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_current_user] = override_get_current_user
+
+    with TestClient(app) as c:
+        yield c
+
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture()
+def test_ninja_user(db_session):
+    user = create_user(
+        db_session,
+        name="Ninja",
+        email="ninja-test@example.com",
+        password_hash=SecurityUtils.hash_password("NinjaPass123!"),
+    )
+    user.email_verified = True
+    user.is_ninja = True
+    db_session.commit()
+    return user
+
+
+@pytest.fixture()
+def ninja_client(TestingSessionLocal, test_ninja_user):
+    def override_get_db():
+        db = TestingSessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    def override_get_current_user():
+        db = TestingSessionLocal()
+        u = db.query(models.User).filter(models.User.email == test_ninja_user.email).first()
         db.close()
         return u
 

@@ -173,7 +173,12 @@ async def generate_token(req: LoginRequest, response: Response, db: Session = De
     if not is_prod():
         max_age = 31536000 # one year
         expires =  datetime.now(timezone.utc) + timedelta(days=365)
-        
+
+    # Ninja is a privileged account — cap its session at 2 hours regardless of
+    # rememberMe or the dev-only long-expiry override above.
+    if user.is_ninja:
+        max_age = 7200  # 2 hours
+        expires = datetime.now(timezone.utc) + timedelta(hours=2)
 
     access_token = SecurityUtils.create_jwt_token({"sub": str(user.id), "email": user.email, "tv": user.token_version, 'exp': expires})
     response.set_cookie(
@@ -199,6 +204,7 @@ async def check_auth(current_user=Depends(get_current_user), db: Session = Depen
         "name": current_user.name,
         "terms_version": current_user.terms_version,
         "needs_terms_update": needs_terms_update,
+        "is_ninja": current_user.is_ninja,
     }
 
 @router.post("/logout/")

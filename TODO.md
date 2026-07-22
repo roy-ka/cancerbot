@@ -10,7 +10,7 @@
 ## High
 - [x] **Change password** — authenticated endpoint allowing users to update their password (current password + new password)
 - [x] **Delete user** — email-confirmed deletion with a 7-day grace period: request email → confirm with password → scheduled deletion → login blocked/cancellable in the meantime → background sweep cascades and sends the farewell email
-- [ ] **Ninja user** — on startup, create a privileged "ninja" user if it doesn't exist; username and password sourced from env vars (e.g. `NINJA_USERNAME`, `NINJA_PASSWORD`)
+- [x] **Ninja user** — on startup, create a privileged "ninja" user from `NINJA_EMAIL`/`NINJA_PASSWORD` if it doesn't exist; ninja can browse all users, open any of their conversations, and post messages that get real answers but are flagged `hidden_from_user` and never surface to the real user (via `/ninja/*` routes, `src/routers/ninja.py`). Ninja JWTs are capped at 2h regardless of rememberMe.
 - [x] **LLM response streaming** — WebSocket infrastructure already exists; stream Groq tokens incrementally instead of buffering the full response, significantly improving perceived latency
 
 ## Medium

@@ -252,6 +252,10 @@ CORS_ORIGINS=http://localhost:5173     # comma-separated for multiple origins
 PROMPT_MAX_HISTORY=12                  # Conversation turns included in prompt
 ENV=development                        # set to 'production' in prod
 
+# Ninja (privileged admin account — see "Ninja account" below; unset = no ninja user created)
+NINJA_EMAIL=...
+NINJA_PASSWORD=...
+
 # Email (SendGrid) — required for password reset
 SENDGRID_API_KEY=...
 EMAIL_FROM=noreply@example.com
@@ -284,6 +288,14 @@ JWT tokens (HS256) accepted via `Authorization: Bearer <token>` header or `acces
 - `auth.py` — registration, login, password reset
 - `conversations.py` — CRUD + WebSocket message handling; includes `POST /conversations/create/`
 - `health.py` — health check endpoint
+- `ninja.py` — admin-only routes gated by `get_current_ninja_user` (`src/deps/auth.py`); see "Ninja account" below
+
+### Ninja account
+A single privileged `User` row (`is_ninja=True`), created idempotently on startup from `NINJA_EMAIL`/`NINJA_PASSWORD` env vars (`src/main.py:_ensure_ninja_user`) — no-op if either is unset. Logs in through the normal `/auth/login/` endpoint, but its JWT is always capped at 2 hours regardless of `rememberMe` or the dev-only long-expiry override.
+
+Ninja can browse every user (`GET /ninja/users/`), open any of their conversations (`GET /ninja/users/{id}/conversations/`, `GET /ninja/conversations/{id}/messages/` — the latter includes previously-hidden ninja exchanges for continuity), and post a message into someone else's conversation (`POST /ninja/conversations/{id}/add_message`). That message runs through the exact same search/retrieval/LLM pipeline as a real user message, but both the question and answer are persisted with `Message.hidden_from_user=True`.
+
+`hidden_from_user` messages are excluded by default from `get_messages_by_conversation_id` and `get_recent_messages` (`src/db/repositories/messeges.py`) — the real user's own endpoints and LLM prompt history never see them. This can't be set from a request body (the client-facing `Message` pydantic model has no such field); it's only ever set by `_process_post_message`'s `hidden_from_user` parameter, which only the ninja router passes as `True`.
 
 ### Conversation Ordering
 Conversations are sorted by `max(message.created_at)` across all roles (see `get_conversations_list_by_user_id` in `src/db/repositories/conversations.py`). `Conversation.updated_at` is **not** bumped when messages are added — do not rely on it for recency ordering.

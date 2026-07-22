@@ -17,6 +17,15 @@ def get_user_by_email(db, email):
 def get_user_by_id(db, user_id):
   return db.query(User).filter(User.id == user_id).first()
 
+def list_all_users(db, limit: int = 50, offset: int = 0):
+  return (
+    db.query(User)
+    .order_by(User.created_at.desc())
+    .offset(offset)
+    .limit(limit)
+    .all()
+  )
+
 def update_last_login(db, user: User) -> None:
   user.last_login = datetime.now(timezone.utc)
   db.commit()

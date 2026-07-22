@@ -21,6 +21,14 @@ export default function Chat() {
   const [currentStage, setCurrentStage] = useState<string | null>(null)
   const [streamingContent, setStreamingContent] = useState<string | null>(null)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
+  const [isNinja, setIsNinja] = useState(false)
+
+  useEffect(() => {
+    fetch(`${BASE_URL}/auth/check/`, { credentials: 'include' })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => setIsNinja(!!data?.is_ninja))
+      .catch(() => setIsNinja(false))
+  }, [BASE_URL])
 
   // Prevent body-level scroll so the chat layout fills the viewport exactly
   useEffect(() => {
@@ -351,6 +359,8 @@ export default function Chat() {
             onDeleteAccount={handleDeleteAccount}
             onDeleteConversation={handleDeleteConversation}
             onCloseSidebar={() => setSidebarOpen(false)}
+            isNinja={isNinja}
+            onOpenNinja={() => navigate('/ninja')}
           />
         </Box>
         <Box className="chat-messages">

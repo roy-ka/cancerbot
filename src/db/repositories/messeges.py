@@ -93,7 +93,7 @@ def add_claims_and_sources(message: Message):
     message.sources = sources
 
 
-def add_message(db, conversation_id, role, content, sources_ids='', urls=None, model_name=None):
+def add_message(db, conversation_id, role, content, sources_ids='', urls=None, model_name=None, hidden_from_user=False):
   # Convert string sources_ids to lists for JSON column compatibility
   if isinstance(sources_ids, str):
     sources_ids = [s.strip() for s in sources_ids.split(',') if s.strip()] if sources_ids else []
@@ -105,6 +105,7 @@ def add_message(db, conversation_id, role, content, sources_ids='', urls=None, m
     sources_ids=sources_ids if sources_ids else None,
     urls=urls if urls else None,
     model_name=model_name if role == 'assistant' else None,
+    hidden_from_user=hidden_from_user,
   )
   db.add(new_message)
   db.commit()
@@ -115,14 +116,12 @@ def add_message(db, conversation_id, role, content, sources_ids='', urls=None, m
   return new_message
 
 
-def get_recent_messages(db, conversation_id, limit=50):
-  messages = (
-    db.query(Message)
-    .filter(Message.conversation_id == conversation_id)
-    .order_by(Message.created_at.desc())
-    .limit(limit)
-    .all()
-  )
+def get_recent_messages(db, conversation_id, limit=50, include_hidden=False):
+  q = db.query(Message).filter(Message.conversation_id == conversation_id)
+  if not include_hidden:
+    q = q.filter(Message.hidden_from_user.is_(False))
+
+  messages = q.order_by(Message.created_at.desc()).limit(limit).all()
 
   for msg in messages:
     if msg.role == 'assistant':
@@ -131,8 +130,10 @@ def get_recent_messages(db, conversation_id, limit=50):
   return messages
 
 
-def get_messages_by_conversation_id(db, conversation_id, limit=50, before: Optional[str] = None):
+def get_messages_by_conversation_id(db, conversation_id, limit=50, before: Optional[str] = None, include_hidden=False):
   q = db.query(Message).filter(Message.conversation_id == conversation_id)
+  if not include_hidden:
+    q = q.filter(Message.hidden_from_user.is_(False))
 
   # Keyset pagination on (created_at, id): fetch messages strictly older than the cursor
   if before:
