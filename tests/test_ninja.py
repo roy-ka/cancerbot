@@ -154,6 +154,29 @@ class TestNinjaMessagesHiddenFromRealUser:
         )
         assert response.status_code == 403
 
+    def test_ninja_posting_first_message_does_not_trigger_title_generation(
+        self, ninja_client, db_session, test_user
+    ):
+        """A hidden ninja message must never change what the real user sees
+        in their conversation list — including the title — even if it's
+        literally the first message ever posted into a brand-new conversation."""
+        from src.db.repositories.conversations import create_conversation
+
+        conv = create_conversation(db_session, user_id=test_user.id, title="Untouched Title")
+        db_session.commit()
+
+        with patch(
+            "src.routers.conversations.OllamaConnector.generate_title", new_callable=AsyncMock
+        ) as mock_generate_title:
+            response = ninja_client.post(
+                f"/ninja/conversations/{conv.id}/add_message",
+                json={"content": "Ninja's very first message here"},
+            )
+            assert response.status_code == 200
+            mock_generate_title.assert_not_awaited()
+
+        assert response.json()["conversation"]["title"] == "Untouched Title"
+
 
 class TestNinjaLoginExpiry:
     """A privileged account should never get the long-lived sessions regular

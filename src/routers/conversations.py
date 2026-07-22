@@ -103,6 +103,12 @@ async def _process_post_message(
         if not hidden_from_user and str(conversation.user_id) != str(current_user.id):
             raise HTTPException(status_code=403, detail="Forbidden")
 
+    # Capture before adding this message — used later to decide whether to
+    # auto-generate a title. A hidden ninja message never counts as "first"
+    # (and never triggers title generation), so ninja activity can't change
+    # what the real user sees in their conversation list.
+    is_first_message = not hidden_from_user and len(conversation.messages) == 0
+
     await emit('saving_user_message', {})
 
     try:
@@ -307,6 +313,19 @@ async def _process_post_message(
         raise
 
     add_claims_and_sources(assistant_message)
+
+    # Auto-generate the conversation title now that the answer is fully
+    # generated and saved — the streamed text itself was never delayed by
+    # this, only the trailing 'done'/'final' signal is.
+    if is_first_message:
+        try:
+            new_title = await OllamaConnector.generate_title(req.content)
+            conversation.title = new_title
+            db.add(conversation)
+            db.commit()
+        except Exception:
+            logging.exception("[conversation] title generation failed")
+            db.rollback()
 
     took_ms = int((time.time() - t0) * 1000)
     await emit('done', {'took_ms': took_ms})

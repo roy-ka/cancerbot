@@ -310,3 +310,49 @@ ANSWER (every sentence must have a [source#] citation):
     raise ValueError(
       f"AI generation unavailable — Groq: {groq_exc}, Gemini: {gemini_exc}"
     )
+
+  @staticmethod
+  def _heuristic_title(text: str) -> str:
+    """Fallback title: clean up and truncate the raw message text."""
+    cleaned = ' '.join((text or '').split()).strip(' ?.!,')
+    if not cleaned:
+      return "New Conversation"
+    title = cleaned[:50]
+    return title[:1].upper() + title[1:]
+
+  @classmethod
+  async def generate_title(cls, text: str) -> str:
+    """Generate a short (3-6 word) conversation title from the first user message.
+
+    Falls back to a cleaned/truncated version of the message on any error —
+    never raises, since a missing title should never break the chat flow.
+    """
+    from groq import AsyncGroq, GroqError
+
+    fallback = cls._heuristic_title(text)
+    if not (text or '').strip():
+      return fallback
+
+    prompt = (
+      "Write a short, specific title (3-6 words, no quotes, no trailing punctuation) "
+      "for a conversation that starts with this message:\n\n"
+      f"{text.strip()[:500]}"
+    )
+    try:
+      async_groq = AsyncGroq(api_key=os.getenv("GROQ_API_KEY"))
+      completion = await async_groq.chat.completions.create(
+        model=cls.groq_model,
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=20,
+      )
+      if not completion.choices:
+        return fallback
+      raw_title = (completion.choices[0].message.content or '').strip()
+      title = raw_title.strip('"\' \n').rstrip('.')
+      return title[:60] if title else fallback
+    except GroqError as exc:
+      logger.warning("[title] Groq error (%s: %s), using heuristic fallback", type(exc).__name__, exc)
+      return fallback
+    except Exception as exc:
+      logger.warning("[title] unexpected error (%s: %s), using heuristic fallback", type(exc).__name__, exc)
+      return fallback

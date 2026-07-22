@@ -120,6 +120,7 @@ python scripts/backfill_chunks.py          # Migrate pre-chunked-schema docs (id
 python scripts/fix_crossref_abstracts.py   # Re-fetch + re-clean all CrossRef sources (manual, one-off; use --dry-run / --limit N)
 python scripts/remove_short_sources.py     # Delete indexed sources with full_text < MIN_FULLTEXT_WORDS (manual, one-off; defaults to --dry-run, use --execute / --limit N)
 python scripts/backfill_full_text_word_count.py  # Backfill full_text_word_count on docs indexed before it existed (idempotent)
+python scripts/backfill_conversation_titles.py   # Regenerate naive first-message-prefix conversation titles via generate_title (idempotent; run automatically on deploy; --dry-run / --limit N)
 ```
 `fix_crossref_abstracts.py` is not run automatically by `deploy.sh` — it makes a
 live CrossRef + Unpaywall + Ollama round trip per source, so it's meant to be run
@@ -316,5 +317,5 @@ Initialised in `src/main.py` and `nlp_service/app.py` via `_init_axiom_logging()
 - Builds with `--pull` so the base image is refreshed when upstream publishes OS patches (e.g. curl CVEs); intermediate layers still cache when the base digest is unchanged
 - Scans built images with Trivy (`HIGH`/`CRITICAL`, ignore-unfixed); aborts deploy on findings
 - Skips `alembic upgrade heads` if `alembic current` already shows `(head)` — avoids 4 unnecessary Docker container spawns per deploy
-- Runs seeds (non-fatal): `seed_wikipedia_tags.py` then `backfill_chunks.py` (scrolls the entire sources index and migrates every doc without a `source_id` field to the chunked schema; idempotent)
+- Runs seeds (non-fatal): `seed_wikipedia_tags.py` then `backfill_chunks.py` (scrolls the entire sources index and migrates every doc without a `source_id` field to the chunked schema; idempotent), then `backfill_conversation_titles.py` (regenerates conversation titles still stuck on the naive first-message-prefix; idempotent)
 - Prints git commit hash in the success summary

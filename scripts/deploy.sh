@@ -512,6 +512,17 @@ else
   echo "⚠ Warning: chunk backfill failed (non-critical — deploy continues)"
 fi
 
+# Backfill real titles onto existing conversations still on the naive
+# first-message-prefix title (idempotent — skips already-backfilled ones)
+echo ""
+echo "Running conversation title backfill..."
+if docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot \
+    run --rm --no-deps backend python scripts/backfill_conversation_titles.py 2>&1 | sed 's/^/    /'; then
+  echo "✓ Conversation title backfill completed"
+else
+  echo "⚠ Warning: conversation title backfill failed (non-critical — deploy continues)"
+fi
+
 # Now start the backend and other prod-profile services
 echo ""
 echo "Starting backend services..."

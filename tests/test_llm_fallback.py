@@ -67,6 +67,25 @@ async def _collect(agen):
     return chunks
 
 
+def _make_groq_completion(content):
+    choice = MagicMock()
+    choice.message.content = content
+    completion = MagicMock()
+    completion.choices = [choice]
+    return completion
+
+
+def _async_groq_completion_mock(content=None, raises=None):
+    """Mock for the non-streaming AsyncGroq call generate_title makes."""
+    instance = MagicMock()
+    if raises is not None:
+        instance.chat.completions.create = AsyncMock(side_effect=raises)
+    else:
+        instance.chat.completions.create = AsyncMock(return_value=_make_groq_completion(content))
+    factory = MagicMock(return_value=instance)
+    return factory, instance
+
+
 class TestGroqGeminiFallback:
     """Tests for stream_text's Groq -> Gemini fallback (the actual production
     generation path used by conversations.py; the old blocking generate_text
@@ -136,3 +155,53 @@ class TestGroqGeminiFallback:
         assert "[source1]" in "".join(text_chunks)
         sentinel = next(c for c in chunks if isinstance(c, dict))
         assert sentinel.get("source1") == "src-001"
+
+
+class TestGenerateTitle:
+    @pytest.mark.asyncio
+    async def test_uses_groq_generated_title(self):
+        factory, instance = _async_groq_completion_mock(content="Mebendazole for Glioblastoma")
+        with patch("groq.AsyncGroq", factory):
+            title = await OllamaConnector.generate_title("can Mebendazole help against GBM?")
+        assert title == "Mebendazole for Glioblastoma"
+        instance.chat.completions.create.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_strips_quotes_and_trailing_period(self):
+        factory, _ = _async_groq_completion_mock(content='"Mebendazole for Glioblastoma."')
+        with patch("groq.AsyncGroq", factory):
+            title = await OllamaConnector.generate_title("can Mebendazole help against GBM?")
+        assert title == "Mebendazole for Glioblastoma"
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_heuristic_on_groq_error(self):
+        factory, _ = _async_groq_completion_mock(raises=_rate_limit_exc())
+        with patch("groq.AsyncGroq", factory):
+            title = await OllamaConnector.generate_title("can Mebendazole help against GBM?")
+        assert title == "Can Mebendazole help against GBM"
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_heuristic_on_unexpected_error(self):
+        factory, _ = _async_groq_completion_mock(raises=RuntimeError("boom"))
+        with patch("groq.AsyncGroq", factory):
+            title = await OllamaConnector.generate_title("tell me about cancer")
+        assert title == "Tell me about cancer"
+
+    @pytest.mark.asyncio
+    async def test_empty_text_returns_placeholder_without_calling_groq(self):
+        factory, instance = _async_groq_completion_mock(content="should not be used")
+        with patch("groq.AsyncGroq", factory):
+            title = await OllamaConnector.generate_title("   ")
+        assert title == "New Conversation"
+        instance.chat.completions.create.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_empty_groq_choices_falls_back(self):
+        completion = MagicMock()
+        completion.choices = []
+        instance = MagicMock()
+        instance.chat.completions.create = AsyncMock(return_value=completion)
+        factory = MagicMock(return_value=instance)
+        with patch("groq.AsyncGroq", factory):
+            title = await OllamaConnector.generate_title("what is apoptosis?")
+        assert title == "What is apoptosis"

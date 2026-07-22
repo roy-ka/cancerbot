@@ -14,7 +14,7 @@
 - [x] **LLM response streaming** — WebSocket infrastructure already exists; stream Groq tokens incrementally instead of buffering the full response, significantly improving perceived latency
 
 ## Medium
-- [ ] **Conversation title auto-generation** — derive a short title from the first user message (via LLM or heuristic) instead of storing a generic placeholder
+- [x] **Conversation title auto-generation** — first message's title is regenerated via `OllamaConnector.generate_title` (short Groq call, heuristic fallback) after the answer is saved, not blocking the streamed response. `scripts/backfill_conversation_titles.py` regenerates existing conversations still on the naive prefix; runs automatically on deploy.
 - [ ] **Source recency scoring** — boost retrieval score for recently published sources; publication year should influence ranking so newer evidence surfaces above old docs with high BM25/KNN scores
 - [ ] **Improve search using tags** — enrich OpenSearch documents with structured tags (source type, disease area, publication year, evidence level) so retrieval can filter/boost by tag alongside BM25+KNN; apply equivalent field-level filters when querying PubMed (MeSH terms, publication type) and CrossRef (subject, type) to narrow external results before embedding
 - [ ] **Wikipedia HTTP connection pooling** — `_wiki_search` creates a new `httpx` connection per call; reuse a `httpx.Client` within `_fetch()` to avoid per-term TLS handshake overhead
