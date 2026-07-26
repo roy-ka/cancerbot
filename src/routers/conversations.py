@@ -170,7 +170,7 @@ async def _process_post_message(
             msg_id = external_data.get('message_id')
             extracted_terms = external_data.get('extracted_terms', [])
 
-            for source_type in ['pubmed', 'crossref', 'wikipedia']:
+            for source_type in ['pubmed', 'crossref', 'wikipedia', 'clinicaltrials']:
                 results = external_data.get(f'{source_type}_sources', [])
 
                 top_title = None

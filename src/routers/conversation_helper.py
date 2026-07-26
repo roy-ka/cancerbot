@@ -13,7 +13,6 @@ import httpx
 import logging
 import wikipediaapi
 from bs4 import BeautifulSoup
-
 from src.classes.ollama_connector import OllamaConnector
 
 logger = logging.getLogger(__name__)
@@ -310,11 +309,14 @@ def _clean_crossref_text(raw: Optional[str]) -> Optional[str]:
 def _stable_source_id(source: dict) -> str:
     pmid = (source.get("pmid") or "").strip()
     doi = (source.get("doi") or "").strip().lower()
+    nct = (source.get("nct") or "").strip()
     url = (source.get("url") or "").strip()
     if pmid:
         return f"pmid:{pmid}"
     if doi:
         return f"doi:{doi}"
+    if nct:
+        return f"nct:{nct}"
     if url:
         return "url:" + hashlib.sha1(url.encode("utf-8")).hexdigest()
     title = (source.get("title") or "").strip()
@@ -393,6 +395,38 @@ def _representative_terms(entity_groups: list[dict], fallback_terms: list[str]) 
     return [g["term"] for g in entity_groups if g.get("term")]
 
 
+def _build_boolean_term_query(
+    terms: list[str],
+    entity_groups: list[dict] | None = None,
+    max_terms: int = 12,
+    max_groups: int = 6,
+) -> tuple[str | None, str]:
+    """Build (and_query, flat_query) from extracted terms.
+
+    flat_query is a plain OR of all terms. and_query — only when we know which
+    terms belong to which distinct entity (>= 2 groups) — requires at least one
+    synonym from each group to co-occur: ``(a OR b) AND (c OR d)``. Otherwise a
+    heavily-synonymed entity's OR-matches swamp the results and documents
+    combining both entities never surface. Both PubMed's `term` and
+    ClinicalTrials.gov's `query.term` accept this boolean syntax.
+    """
+    flat_query = " OR ".join(f"({t})" for t in terms[:max_terms])
+
+    and_query = None
+    if entity_groups and len(entity_groups) >= 2:
+        clauses = []
+        for g in entity_groups[:max_groups]:
+            group_terms = [g["term"], *g.get("synonyms", [])]
+            category = g.get("category")
+            if category and category.lower() not in {t.lower() for t in group_terms}:
+                group_terms.append(category)
+            clause = " OR ".join(f"({t})" for t in group_terms)
+            clauses.append(f"({clause})")
+        and_query = " AND ".join(clauses)
+
+    return and_query, flat_query
+
+
 async def _pubmed_esearch(client: httpx.AsyncClient, search_query: str, max_results: int) -> list[str]:
     esearch_url = (
         "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
@@ -412,23 +446,7 @@ async def _search_pubmed_sources(
     if not terms:
         return []
 
-    flat_query = " OR ".join(f"({t})" for t in terms[:12])
-
-    # When we know which terms belong to which distinct entity (e.g. a drug vs
-    # a disease), require at least one synonym from each group to co-occur —
-    # otherwise a heavily-synonymed entity's OR-matches swamp the results and
-    # papers combining both entities never make it into max_results.
-    and_query = None
-    if entity_groups and len(entity_groups) >= 2:
-        clauses = []
-        for g in entity_groups[:6]:
-            group_terms = [g["term"], *g.get("synonyms", [])]
-            category = g.get("category")
-            if category and category.lower() not in {t.lower() for t in group_terms}:
-                group_terms.append(category)
-            clause = " OR ".join(f"({t})" for t in group_terms)
-            clauses.append(f"({clause})")
-        and_query = " AND ".join(clauses)
+    and_query, flat_query = _build_boolean_term_query(terms, entity_groups)
 
     try:
         id_list: list[str] = []
@@ -473,6 +491,141 @@ async def _search_pubmed_sources(
             break
 
     logger.info(f"[pubmed] fetched {len(out)} articles")
+    return out
+
+_CT_API_URL = "https://clinicaltrials.gov/api/v2/studies"
+_CT_FIELDS = ",".join([
+    "protocolSection.identificationModule",
+    "protocolSection.descriptionModule",
+    "protocolSection.conditionsModule",
+    "protocolSection.armsInterventionsModule",
+    "protocolSection.designModule",
+    "protocolSection.statusModule",
+    "hasResults",
+])
+
+
+def _clinicaltrial_to_source(study: dict) -> dict | None:
+    """Convert one ClinicalTrials.gov v2 study record to a source dict.
+
+    Returns None if the record has no usable NCT id or descriptive text.
+    """
+    ps = study.get("protocolSection") or {}
+    idm = ps.get("identificationModule") or {}
+    nct = (idm.get("nctId") or "").strip()
+    if not nct:
+        return None
+
+    title = (idm.get("briefTitle") or idm.get("officialTitle") or "").strip()
+    desc = ps.get("descriptionModule") or {}
+    summary = (desc.get("briefSummary") or desc.get("detailedDescription") or "").strip()
+
+    status_mod = ps.get("statusModule") or {}
+    status = (status_mod.get("overallStatus") or "").strip()
+    conditions = (ps.get("conditionsModule") or {}).get("conditions") or []
+    interventions = [
+        (i.get("name") or "").strip()
+        for i in (ps.get("armsInterventionsModule") or {}).get("interventions") or []
+        if (i.get("name") or "").strip()
+    ]
+    phases = (ps.get("designModule") or {}).get("phases") or []
+
+    # A compact structured context line, then the free-text summary. Both feed
+    # the embedding, so the trial is retrievable by its conditions/drugs even
+    # when the summary phrases them differently.
+    facts = []
+    if conditions:
+        facts.append(f"Conditions: {', '.join(conditions)}")
+    if interventions:
+        facts.append(f"Interventions: {', '.join(interventions)}")
+    if phases:
+        facts.append(f"Phase: {', '.join(phases)}")
+    if status:
+        facts.append(f"Status: {status}")
+    facts_line = " | ".join(facts)
+
+    content_for_embedding = "\n\n".join(p for p in [title, facts_line, summary] if p).strip()
+    if not content_for_embedding:
+        return None
+
+    # Completion year drives the recency boost (falls back to the start date).
+    year = None
+    for key in ("completionDateStruct", "primaryCompletionDateStruct", "startDateStruct"):
+        year = _coerce_pub_year((status_mod.get(key) or {}).get("date"))
+        if year:
+            break
+
+    # A completed trial *with posted results* is real evidence → level 3
+    # ("clinical trial"). A registration without results shouldn't be inflated,
+    # so it's left to the default (2) via an empty pub_types.
+    has_results = bool(study.get("hasResults"))
+    pub_types = ["clinical trial"] if has_results else None
+
+    return {
+        "source_type": "clinicaltrials",
+        "nct": nct,
+        "pmid": None,
+        "doi": None,
+        "title": title or nct,
+        "content_for_embedding": content_for_embedding,
+        "tags": ["clinical_trial"],
+        "abstract_source": "clinicaltrials",
+        "url": f"https://clinicaltrials.gov/study/{nct}",
+        "year": year,
+        "pub_types": pub_types,
+    }
+
+
+async def _search_clinicaltrials_sources(
+    client: httpx.AsyncClient,
+    terms: list[str],
+    max_results: int = 3,
+    entity_groups: list[dict] | None = None,
+) -> list[dict]:
+    """Search ClinicalTrials.gov (v2 REST API) for COMPLETED trials matching
+    the terms, for grounding answers in trial evidence.
+
+    Only completed trials are indexed — recruiting/active trials are handled
+    by the separate opt-in participation feature, not this automatic search.
+    """
+    if not terms:
+        return []
+
+    and_query, flat_query = _build_boolean_term_query(terms, entity_groups)
+
+    async def _query(term_query: str) -> list[dict]:
+        params = {
+            "query.term": term_query,
+            "filter.overallStatus": "COMPLETED",
+            "pageSize": max_results,
+            "fields": _CT_FIELDS,
+            "format": "json",
+        }
+        resp = await _retry_get(client, _CT_API_URL, params=params)
+        resp.raise_for_status()
+        return (resp.json() or {}).get("studies") or []
+
+    try:
+        studies: list[dict] = []
+        if and_query:
+            studies = await _query(and_query)
+            if not studies:
+                logger.info("[clinicaltrials] AND-grouped query returned nothing, falling back to flat OR query")
+        if not studies:
+            studies = await _query(flat_query)
+    except Exception as e:
+        logger.warning(f"[clinicaltrials] request failed: {e}")
+        return []
+
+    out: list[dict] = []
+    for study in studies:
+        source = _clinicaltrial_to_source(study)
+        if source:
+            out.append(source)
+        if len(out) >= max_results:
+            break
+
+    logger.info(f"[clinicaltrials] fetched {len(out)} trials")
     return out
 
 
@@ -758,6 +911,7 @@ def _embed_and_index_sources(
                     "source_type": source.get("source_type") or "source",
                     "pmid": source.get("pmid"),
                     "doi": source.get("doi"),
+                    "nct": source.get("nct"),
                     "title": source.get("title"),
                     "full_text": full_text,
                     "full_text_word_count": full_text_word_count,
@@ -871,6 +1025,7 @@ async def search_and_embed(
             "pubmed_found": 0,
             "crossref_found": 0,
             "wikipedia_found": 0,
+            "clinicaltrials_found": 0,
             "indexed": 0,
             "skipped": 0,
         }
@@ -879,15 +1034,18 @@ async def search_and_embed(
     pubmed_sources: list[dict] = []
     crossref_sources: list[dict] = []
     wikipedia_sources: list[dict] = []
+    clinicaltrials_sources: list[dict] = []
     if terms:
         async with httpx.AsyncClient(timeout=httpx.Timeout(8.0)) as client:
             await emit("searching_pubmed", {"limit": 4})
             await emit("searching_crossref", {"limit": 4})
             await emit("searching_wikipedia", {"limit": 3})
-            pubmed_sources, crossref_sources, wikipedia_sources = await asyncio.gather(
+            await emit("searching_clinicaltrials", {"limit": 3})
+            pubmed_sources, crossref_sources, wikipedia_sources, clinicaltrials_sources = await asyncio.gather(
                 asyncio.create_task(_search_pubmed_sources(client, terms, max_results=4, entity_groups=entity_groups)),
                 asyncio.create_task(_search_crossref_sources(client, terms, max_results=4, entity_groups=entity_groups)),
                 _search_wikipedia_sources(terms, max_results=3, entity_groups=entity_groups),
+                asyncio.create_task(_search_clinicaltrials_sources(client, terms, max_results=3, entity_groups=entity_groups)),
             )
 
     await emit(
@@ -897,7 +1055,11 @@ async def search_and_embed(
             "pubmed_found": len(pubmed_sources),
             "crossref_found": len(crossref_sources),
             "wikipedia_found": len(wikipedia_sources),
-            "total_found": len(url_sources) + len(pubmed_sources) + len(crossref_sources) + len(wikipedia_sources),
+            "clinicaltrials_found": len(clinicaltrials_sources),
+            "total_found": (
+                len(url_sources) + len(pubmed_sources) + len(crossref_sources)
+                + len(wikipedia_sources) + len(clinicaltrials_sources)
+            ),
         },
     )
 
@@ -908,9 +1070,12 @@ async def search_and_embed(
     last_msg = messages[-1] if messages else None
     msg_id = getattr(last_msg, 'id', None) if last_msg else None
 
-    logger.info(f"[search] pubmed={len(pubmed_sources)} crossref={len(crossref_sources)} wikipedia={len(wikipedia_sources)} url={len(url_sources)}")
+    logger.info(
+        f"[search] pubmed={len(pubmed_sources)} crossref={len(crossref_sources)} "
+        f"wikipedia={len(wikipedia_sources)} clinicaltrials={len(clinicaltrials_sources)} url={len(url_sources)}"
+    )
 
-    merged_sources = [*url_sources, *pubmed_sources, *crossref_sources, *wikipedia_sources]
+    merged_sources = [*url_sources, *pubmed_sources, *crossref_sources, *wikipedia_sources, *clinicaltrials_sources]
     await emit("embedding_and_indexing_sources", {"total_sources": len(merged_sources)})
     indexed, skipped = await asyncio.to_thread(_embed_and_index_sources, merged_sources, terms, entity_groups)
     await emit("sources_indexed", {"indexed": indexed, "skipped": skipped})
@@ -924,6 +1089,7 @@ async def search_and_embed(
         "pubmed_found": len(pubmed_sources),
         "crossref_found": len(crossref_sources),
         "wikipedia_found": len(wikipedia_sources),
+        "clinicaltrials_found": len(clinicaltrials_sources),
         "indexed": indexed,
         "skipped": skipped,
         "external_search_data": {
@@ -933,6 +1099,7 @@ async def search_and_embed(
             "pubmed_sources": pubmed_sources,
             "crossref_sources": crossref_sources,
             "wikipedia_sources": wikipedia_sources,
+            "clinicaltrials_sources": clinicaltrials_sources,
             "extracted_terms": terms,
         },
     }

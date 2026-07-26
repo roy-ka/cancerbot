@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-CancerBot is a Retrieval-Augmented Generation (RAG) chatbot for cancer-related medical information. It uses a hybrid search approach (BM25 + KNN vector search) over a corpus of medical sources and claims in OpenSearch, with Groq (cloud LLM) for generation (Gemini as fallback) and Ollama for embeddings only. On every user message, the system also performs live external search (PubMed, CrossRef, Wikipedia), embeds the results, and indexes them into OpenSearch before retrieval.
+CancerBot is a Retrieval-Augmented Generation (RAG) chatbot for cancer-related medical information. It uses a hybrid search approach (BM25 + KNN vector search) over a corpus of medical sources and claims in OpenSearch, with Groq (cloud LLM) for generation (Gemini as fallback) and Ollama for embeddings only. On every user message, the system also performs live external search (PubMed, CrossRef, Wikipedia, ClinicalTrials.gov), embeds the results, and indexes them into OpenSearch before retrieval.
 
 ## Dependencies
 
@@ -104,7 +104,7 @@ docker-compose --profile prod up --build
 python -m src.embedding      # Embed documents into OpenSearch via Ollama
 ```
 
-Abstract fetching (PubMed/CrossRef/Wikipedia) happens live per-query via `src/routers/conversation_helper.py`
+Abstract fetching (PubMed/CrossRef/Wikipedia/ClinicalTrials.gov) happens live per-query via `src/routers/conversation_helper.py`
 during the chat flow — there is no longer a standalone offline enrichment script.
 
 ### Backup / Restore
@@ -165,18 +165,18 @@ Frontend first calls `POST /conversations/create/` (lightweight DB-only, returns
 1. User message arrives via WebSocket (`/conversations/{id}/add_message/ws`) or HTTP POST (`/conversations/{id}/add_message`)
 2. User message is saved to PostgreSQL
 3. `src/nlp` calls the NLP microservice (`/extract`) to extract scientific terms and expand them with MeSH synonyms (`extracted_terms` stored on the `Message` row)
-4. **External search** runs in parallel: PubMed (4 results), CrossRef (4 results), Wikipedia (3 results) queried using NLP-extracted terms (`src/routers/conversation_helper.py`). Wikipedia uses the search API first and picks the most oncology-relevant page from candidates.
+4. **External search** runs in parallel: PubMed (4 results), CrossRef (4 results), Wikipedia (3 results), ClinicalTrials.gov (3 results) queried using NLP-extracted terms (`src/routers/conversation_helper.py`). Wikipedia uses the search API first and picks the most oncology-relevant page from candidates. ClinicalTrials.gov hits the v2 REST API directly (not `pytrials`) and is filtered to `overallStatus=COMPLETED` — this is the *evidence* use case (grounding answers in trial findings); a separate opt-in *participation* feature (recruiting trials by location) is deferred. PubMed and ClinicalTrials share the AND-of-OR-groups boolean query builder (`_build_boolean_term_query`).
 5. New external sources are embedded via Ollama (`nomic-embed-text`) and indexed into OpenSearch `sources_index` as **150-word chunks with 40-word overlap**. Each chunk gets `id={base_id}:c{n}`, `source_id={base_id}`, `chunk_index`, `full_text` (original), and `tags` (search terms that retrieved it). Dedup is by `source_id` — if any chunk of a base ID exists, the whole source is skipped.
 6. External search results are recorded in `external_search_results` table
 7. `src/retrieval/__init__.py:run_retrieval` embeds the query and runs hybrid BM25 + KNN search on `sources_index` with `collapse` on `source_id` — returns top 5 unique sources (1 best chunk per source)
 8. Search analytics recorded in `search_analytics` table
 9. `src/classes/ollama_connector.py` builds a prompt with history + context (cited as `[source1]`, `[source2]`, ...) and calls Groq chat completions (`GROQ_MODEL_NAME`). On `groq.GroqError`, falls back to Gemini (`GEMINI_FALLBACK_MODEL`).
-10. Post-processing replaces `[source1]` aliases with stable base IDs (`pmid:xxx`, `doi:xxx`, `url:<sha1>`) — the `:cN` chunk suffix is stripped before aliases are built
+10. Post-processing replaces `[source1]` aliases with stable base IDs (`pmid:xxx`, `doi:xxx`, `nct:NCTxxx`, `url:<sha1>`) — the `:cN` chunk suffix is stripped before aliases are built
 11. Assistant message + source IDs stored in PostgreSQL
 12. WebSocket emits staged events throughout (see below)
 
 ### WebSocket Stage Events
-`loading_conversation` → `saving_user_message` → `fallback_triggered` → `analyzing_recent_messages` → `extracting_search_terms` → `searching_pubmed` / `searching_crossref` / `searching_wikipedia` → `found_sources` → `embedding_and_indexing_sources` → `sources_indexed` → `retrieving_context` → `building_prompt` → `generating_answer` → `saving_assistant_message` → `done`
+`loading_conversation` → `saving_user_message` → `fallback_triggered` → `analyzing_recent_messages` → `extracting_search_terms` → `searching_pubmed` / `searching_crossref` / `searching_wikipedia` / `searching_clinicaltrials` → `found_sources` → `embedding_and_indexing_sources` → `sources_indexed` → `retrieving_context` → `building_prompt` → `generating_answer` → `saving_assistant_message` → `done`
 
 ### OpenSearch Indices
 - `v1.5_en_nomic-embed-text_index` — sources (768-dim KNN `cosinesimil` via `hnsw`/`lucene` + BM25 on `content_for_embedding`, `title`)
@@ -191,7 +191,7 @@ Indices are auto-created on startup via `dbConnector.ensure_all_indexes()`.
 - `full_text` — original full text before chunking
 - `content_for_embedding` — this chunk's 150-word window (what gets embedded and sent to LLM)
 - `tags` — list of NLP-extracted search terms that retrieved this source
-- `pmid`, `doi`, `title`, `url`, `source_type`, `abstract_source` — provenance fields
+- `pmid`, `doi`, `nct`, `title`, `url`, `source_type`, `abstract_source` — provenance fields (`nct` = ClinicalTrials.gov NCT id; drives the `nct:` stable source id)
 - `full_text_word_count` — int; retrieval filters out sources below `MIN_FULLTEXT_WORDS` (20)
 - `pub_year` — int; PubMed pub date or CrossRef `published.date-parts`. Drives the recency boost
 - `pub_types` — keyword[]; lowercased PubMed publication types (or CrossRef `type`). Drives the exclusion `must_not`
@@ -228,7 +228,7 @@ Keeping boosts out of the top-level `should` matters: with everything flat under
 | `LoginAttempt` | `login_attempts` | Brute-force tracking (login) |
 | `RateLimitEntry` | `rate_limit_entries` | Rate limiting for register (per-IP, 10/h) and forgot-password (per-email, 5/h) |
 | `SearchAnalytic` | `search_analytics` | Per-message search metrics |
-| `ExternalSearchResult` | `external_search_results` | Records PubMed/CrossRef/Wikipedia fetches |
+| `ExternalSearchResult` | `external_search_results` | Records PubMed/CrossRef/Wikipedia/ClinicalTrials fetches |
 | `UrlClassificationJob` | `url_classification_jobs` | Queue of URLs pending cancer-relevance classification |
 
 ### Key Environment Variables (`.env`)
