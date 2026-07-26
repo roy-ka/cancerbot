@@ -66,13 +66,17 @@ export default function ConversationList({
   const [deleteLoading, setDeleteLoading] = useState(false)
   const [deleteRequested, setDeleteRequested] = useState(false)
   const [menuAnchor, setMenuAnchor] = useState<null | HTMLElement>(null)
-  const [deleteConvTarget, setDeleteConvTarget] = useState<{ id: string; title: string } | null>(null)
+  const [deleteConvTarget, setDeleteConvTarget] = useState<{
+    id: string
+    title: string
+  } | null>(null)
 
   const onclick = (id: string) => {
     setSelectedConversationId(id)
   }
 
-  const openMenu = (e: React.MouseEvent<HTMLElement>) => setMenuAnchor(e.currentTarget)
+  const openMenu = (e: React.MouseEvent<HTMLElement>) =>
+    setMenuAnchor(e.currentTarget)
   const closeMenu = () => setMenuAnchor(null)
 
   const handleDeleteSubmit = async () => {
@@ -127,19 +131,29 @@ export default function ConversationList({
               }}
             >
               <MenuItem
-                onClick={() => { closeMenu(); setLogoutOpen(true) }}
+                onClick={() => {
+                  closeMenu()
+                  setLogoutOpen(true)
+                }}
                 sx={{ color: 'rgba(255,255,255,0.8)', gap: 1 }}
               >
-                <ListItemIcon sx={{ color: 'rgba(255,255,255,0.6)', minWidth: 32 }}>
+                <ListItemIcon
+                  sx={{ color: 'rgba(255,255,255,0.6)', minWidth: 32 }}
+                >
                   <LogoutIcon fontSize="small" />
                 </ListItemIcon>
                 <ListItemText primary="Logout" />
               </MenuItem>
               <MenuItem
-                onClick={() => { closeMenu(); setDeleteOpen(true) }}
+                onClick={() => {
+                  closeMenu()
+                  setDeleteOpen(true)
+                }}
                 sx={{ color: 'rgba(255,100,100,0.9)', gap: 1 }}
               >
-                <ListItemIcon sx={{ color: 'rgba(255,100,100,0.8)', minWidth: 32 }}>
+                <ListItemIcon
+                  sx={{ color: 'rgba(255,100,100,0.8)', minWidth: 32 }}
+                >
                   <PersonRemoveOutlinedIcon fontSize="small" />
                 </ListItemIcon>
                 <ListItemText primary="Delete Account" />
@@ -186,7 +200,10 @@ export default function ConversationList({
       </Box>
 
       {/* Scrollable list */}
-      <Box className="conversation-list-root" sx={{ px: 2 }}>
+      <Box
+        className="conversation-list-root"
+        sx={{ px: 3, spacing: 2, flexGrow: 1, overflowY: 'auto' }}
+      >
         <ConversationItem
           conversation={newConversation}
           selected={selectedConversationId === 'new'}
@@ -229,10 +246,15 @@ export default function ConversationList({
           paper: { sx: DIALOG_PAPER_SX },
         }}
       >
-        <DialogTitle sx={{ color: 'rgba(255,255,255,0.92)' }}>Delete conversation?</DialogTitle>
+        <DialogTitle sx={{ color: 'rgba(255,255,255,0.92)' }}>
+          Delete conversation?
+        </DialogTitle>
         <DialogContent sx={{ color: 'rgba(255,255,255,0.66)' }}>
           Delete{' '}
-          <Typography component="span" sx={{ color: 'rgba(255,255,255,0.9)', fontWeight: 600 }}>
+          <Typography
+            component="span"
+            sx={{ color: 'rgba(255,255,255,0.9)', fontWeight: 600 }}
+          >
             "{deleteConvTarget?.title}"
           </Typography>
           ? This cannot be undone.
@@ -268,7 +290,9 @@ export default function ConversationList({
           paper: { sx: DIALOG_PAPER_SX },
         }}
       >
-        <DialogTitle sx={{ color: 'rgba(255,255,255,0.92)' }}>Log out?</DialogTitle>
+        <DialogTitle sx={{ color: 'rgba(255,255,255,0.92)' }}>
+          Log out?
+        </DialogTitle>
         <DialogContent sx={{ color: 'rgba(255,255,255,0.66)' }}>
           Are you sure you want to log out?
         </DialogContent>
@@ -280,7 +304,10 @@ export default function ConversationList({
             No
           </Button>
           <Button
-            onClick={() => { setLogoutOpen(false); onLogout?.() }}
+            onClick={() => {
+              setLogoutOpen(false)
+              onLogout?.()
+            }}
             variant="contained"
             color="error"
             sx={{ textTransform: 'none' }}
@@ -293,33 +320,59 @@ export default function ConversationList({
       {/* Delete account confirmation */}
       <Dialog
         open={deleteOpen}
-        onClose={() => { setDeleteOpen(false); setDeleteError(null); setDeleteRequested(false) }}
+        onClose={() => {
+          setDeleteOpen(false)
+          setDeleteError(null)
+          setDeleteRequested(false)
+        }}
         slotProps={{
           backdrop: { sx: { backgroundColor: 'rgba(0,0,0,0.3)' } },
           paper: { sx: DIALOG_PAPER_SX },
         }}
       >
-        <DialogTitle sx={{ color: 'rgba(255,255,255,0.92)' }}>Delete Account</DialogTitle>
-        <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: '12px !important' }}>
+        <DialogTitle sx={{ color: 'rgba(255,255,255,0.92)' }}>
+          Delete Account
+        </DialogTitle>
+        <DialogContent
+          sx={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 2,
+            pt: '12px !important',
+          }}
+        >
           {deleteRequested ? (
-            <Typography sx={{ color: 'rgba(255,255,255,0.66)', fontSize: '0.9rem' }}>
-              We've sent a confirmation link to your email. Open it and enter your password to schedule deletion.
+            <Typography
+              sx={{ color: 'rgba(255,255,255,0.66)', fontSize: '0.9rem' }}
+            >
+              We've sent a confirmation link to your email. Open it and enter
+              your password to schedule deletion.
             </Typography>
           ) : (
             <>
-              <Typography sx={{ color: 'rgba(255,255,255,0.66)', fontSize: '0.9rem' }}>
-                We'll email you a link to confirm. Your account and conversations will be permanently deleted
-                7 days after you confirm — you can cancel any time before then just by logging in.
+              <Typography
+                sx={{ color: 'rgba(255,255,255,0.66)', fontSize: '0.9rem' }}
+              >
+                We'll email you a link to confirm. Your account and
+                conversations will be permanently deleted 7 days after you
+                confirm — you can cancel any time before then just by logging
+                in.
               </Typography>
               {deleteError && (
-                <Typography sx={{ color: '#f44336', fontSize: '0.85rem' }}>{deleteError}</Typography>
+                <Typography sx={{ color: '#f44336', fontSize: '0.85rem' }}>
+                  {deleteError}
+                </Typography>
               )}
             </>
           )}
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2, gap: 1 }}>
           <Button
-            onClick={() => { setDeleteOpen(false); setDeleteError(null); setDeleteRequested(false) }}
+            onClick={() => {
+              setDeleteOpen(false)
+              setDeleteError(null)
+              setDeleteRequested(false)
+            }}
             sx={{ textTransform: 'none', color: 'rgba(255,255,255,0.6)' }}
             disabled={deleteLoading}
           >
@@ -364,20 +417,49 @@ export default function ConversationList({
           <IconButton
             onClick={() => setAboutOpen(false)}
             size="small"
-            sx={{ position: 'absolute', right: 8, top: 8, color: 'rgba(255,255,255,0.6)' }}
+            sx={{
+              position: 'absolute',
+              right: 8,
+              top: 8,
+              color: 'rgba(255,255,255,0.6)',
+            }}
           >
             ✕
           </IconButton>
-          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 1.5, mb: 1.5 }}>
-            <img src={cancerbotIcon} alt="Cancer-Bot logo" style={{ width: 48, height: 48, borderRadius: '50%' }} />
-            <Typography variant="h4" fontWeight={700} sx={{ color: 'rgba(255,255,255,0.92)' }}>
+          <Box
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 1.5,
+              mb: 1.5,
+            }}
+          >
+            <img
+              src={cancerbotIcon}
+              alt="Cancer-Bot logo"
+              style={{ width: 48, height: 48, borderRadius: '50%' }}
+            />
+            <Typography
+              variant="h4"
+              fontWeight={700}
+              sx={{ color: 'rgba(255,255,255,0.92)' }}
+            >
               Cancer-Bot
             </Typography>
           </Box>
-          <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.6)' }} gutterBottom>
+          <Typography
+            variant="body2"
+            sx={{ color: 'rgba(255,255,255,0.6)' }}
+            gutterBottom
+          >
             Created by Roy Kazaz
           </Typography>
-          <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.6)' }} gutterBottom>
+          <Typography
+            variant="body2"
+            sx={{ color: 'rgba(255,255,255,0.6)' }}
+            gutterBottom
+          >
             Free to use
           </Typography>
           <Link

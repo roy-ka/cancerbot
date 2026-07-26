@@ -18,7 +18,13 @@ export default function ConversationItem({
       className={`conversation-item ${selected ? 'selected' : ''}`}
       onClick={onClick}
     >
-      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+        }}
+      >
         <Typography className="conversation-item-title">
           {conversation.title}
         </Typography>
@@ -26,34 +32,16 @@ export default function ConversationItem({
           <IconButton
             size="small"
             className="conversation-item-delete-btn"
-            onClick={(e) => { e.stopPropagation(); onDelete(conversation.id, conversation.title) }}
+            onClick={(e) => {
+              e.stopPropagation()
+              onDelete(conversation.id, conversation.title)
+            }}
             sx={{ color: 'rgba(255,255,255,0.5)', p: 0.5, flexShrink: 0 }}
           >
             <DeleteOutlineIcon fontSize="small" />
           </IconButton>
         )}
       </Box>
-      {(conversation.id !== 'new') && (
-        <Grid container>
-          <Grid size={7}>
-            <Typography className="conversation-item-subtitle">
-              {conversation.lastMessage
-                ? conversation.lastMessage.length > 17
-                  ? conversation.lastMessage.substring(0, 17) + '...'
-                  : conversation.lastMessage
-                : ''}
-            </Typography>
-          </Grid>
-          <Grid size={1}>
-            <Typography className="conversation-item-subtitle"> · </Typography>
-          </Grid>
-          <Grid size={4}>
-            <Typography className="conversation-item-subtitle">
-              {conversation.lastMessageTime}
-            </Typography>
-          </Grid>
-        </Grid>
-      )}
     </Grid>
   )
 }
