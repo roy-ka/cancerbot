@@ -221,7 +221,15 @@ async def _process_post_message(
         if first_title and first_title != req.content:
             retrieval_query = first_title
 
-    context = await asyncio.to_thread(run_retrieval, retrieval_query)
+    # Disease areas of the query's own entities (e.g. "brain cancer" for GBM)
+    # let retrieval boost sources tagged with the same area.
+    query_disease_areas = sorted({
+        (g.get('category') or '').strip().lower()
+        for g in entity_groups
+        if (g.get('category') or '').strip()
+    })
+
+    context = await asyncio.to_thread(run_retrieval, retrieval_query, 5, query_disease_areas)
     logging.info(f"[conversation] retrieved sources={len(context.get('sources_ids', []))} url_ctx={len(url_context_items)}")
 
     # Prepend URL context items (fetched from message content) directly to generation context

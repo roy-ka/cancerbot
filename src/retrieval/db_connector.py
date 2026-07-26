@@ -144,7 +144,19 @@ class dbConnector:
 
   @classmethod
   def _ensure_chunk_fields_mapping(cls) -> None:
-    """Add source_id, chunk_index, full_text fields to sources index mapping (idempotent)."""
+    """Add chunk + tag/metadata fields to the sources index mapping (idempotent).
+
+    pub_types / disease_areas are keyword so they can be matched exactly by
+    terms queries; pub_year / evidence_level are numeric for range and
+    function-score use in src/retrieval/search.py.
+
+    Note: full_text_word_count is deliberately NOT declared here. It was
+    already dynamically mapped as `long` on existing indices, and put_mapping
+    is atomic — including it as `integer` makes OpenSearch reject the whole
+    request ("cannot be changed from type [long] to [integer]"), silently
+    taking the other fields down with it. `long` works fine for its range
+    query, so leave it to dynamic mapping.
+    """
     if not cls.db_client or not cls._model:
       return
     index_name = cls._model['sources_index']
@@ -152,13 +164,20 @@ class dbConnector:
       cls.db_client.indices.put_mapping(
         index=index_name,
         body={"properties": {
-          "source_id":   {"type": "keyword"},
-          "chunk_index": {"type": "integer"},
-          "full_text":   {"type": "text"},
+          "source_id":            {"type": "keyword"},
+          "chunk_index":          {"type": "integer"},
+          "full_text":            {"type": "text"},
+          "pub_types":            {"type": "keyword"},
+          "disease_areas":        {"type": "keyword"},
+          "pub_year":             {"type": "integer"},
+          "evidence_level":       {"type": "integer"},
         }},
       )
     except Exception as exc:
-      cls.logger.debug("put_mapping chunk fields on %s: %s", index_name, exc)
+      # Logged loudly: a silent failure here leaves pub_types/disease_areas
+      # dynamically mapped as analyzed text, which breaks exact-match terms
+      # queries in search.py without any obvious symptom.
+      cls.logger.warning("put_mapping chunk/tag fields on %s failed: %s", index_name, exc)
 
   @classmethod
   def existing_base_source_ids(cls, base_ids: list) -> set:

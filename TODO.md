@@ -15,8 +15,9 @@
 
 ## Medium
 - [x] **Conversation title auto-generation** — first message's title is regenerated via `OllamaConnector.generate_title` (short Groq call, heuristic fallback) after the answer is saved, not blocking the streamed response. `scripts/backfill_conversation_titles.py` regenerates existing conversations still on the naive prefix; runs automatically on deploy.
-- [ ] **Source recency scoring** — boost retrieval score for recently published sources; publication year should influence ranking so newer evidence surfaces above old docs with high BM25/KNN scores
-- [ ] **Improve search using tags** — enrich OpenSearch documents with structured tags (source type, disease area, publication year, evidence level) so retrieval can filter/boost by tag alongside BM25+KNN; apply equivalent field-level filters when querying PubMed (MeSH terms, publication type) and CrossRef (subject, type) to narrow external results before embedding
+- [x] **Source recency scoring** — `pub_year` indexed (PubMed + CrossRef) and boosted in `src/retrieval/search.py` via `RECENT_BOOST` / `SEMI_RECENT_BOOST` `should` clauses
+- [x] **Improve search using tags** — docs now carry `pub_year`, `pub_types`, `evidence_level` (derived from publication type via `EVIDENCE_LEVELS`) and `disease_areas` (from the NLP service's category map). Retrieval boosts high-evidence, recent, and disease-area-matching sources, and hard-excludes editorials/comments/errata/retractions. CrossRef now requests `type,subject,published`. **PubMed MeSH/publication-type query filters were deliberately skipped** — narrowing at fetch time risks breaking the AND-of-OR-groups query, so evidence is weighted at retrieval instead. Backfill: `scripts/backfill_source_metadata.py` (runs on deploy). Boost weights are unmeasured heuristics — tune the constants at the top of `search.py` once real query behaviour is observed
+- [ ] **Clinical trial search** — add ClinicalTrials.gov as a fourth live external source alongside PubMed/CrossRef/Wikipedia in `src/routers/conversation_helper.py`: query by NLP-extracted terms, index trials into `sources_index` like other sources, and surface them as citable results (trial ID, phase, status, condition, intervention). Worth deciding whether to filter to recruiting/active trials only, and whether trials should be visually distinguished from literature in the UI
 - [ ] **Wikipedia HTTP connection pooling** — `_wiki_search` creates a new `httpx` connection per call; reuse a `httpx.Client` within `_fetch()` to avoid per-term TLS handshake overhead
 
 - [ ] **Split name into first and last** — replace the single `name` field on `User` with `first_name` + `last_name`; update registration, profile, and email templates accordingly
@@ -29,7 +30,7 @@
 
 ## Bugs
 - [x] **Delete conversation not visible** — the delete conversation action is not exposed in the UI; users have no way to delete a conversation from the frontend
-- [ ] **Fix sources in prod** — (2026-07-20) something's wrong with sources in production; needs investigation to pin down the actual issue
+- [x] **Fix sources in prod** — (2026-07-20, resolved 2026-07-22) root causes were in the query-building path, not the sources themselves: (1) entity synonyms were flattened into one bag so a heavily-synonymed term (5 GBM synonyms) drowned out a single-term one (a drug name) — now grouped per entity, with PubMed building AND-of-OR-groups; (2) the grouped extraction never actually ran, since `conversations.py` pre-cached flat `extracted_terms` on the current message and `search_and_embed`'s cache shortcut always hit first; (3) the final BM25/KNN retrieval query was itself built from the flat synonym-expanded list. Also added cancer-category grouping (GBM → brain cancer), `has-abstract:true` on CrossRef, and a `full_text_word_count >= 20` retrieval filter to exclude title-only sources
 
 ## Nice to Have
 - [ ] **RAG usage explainer** — show guidance on a new conversation (e.g. an intro message or tooltip) that this is RAG over a specific corpus with a vast context window: ask specific questions rather than general ones for better answers

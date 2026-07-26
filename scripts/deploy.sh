@@ -539,6 +539,18 @@ else
   echo "⚠ Warning: chunk backfill failed (non-critical — deploy continues)"
 fi
 
+# Backfill pub_year/pub_types/evidence_level onto existing pmid sources so
+# retrieval's evidence/recency boosts have something to match (idempotent —
+# only touches docs still missing evidence_level)
+echo ""
+echo "Running source metadata backfill..."
+if docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot \
+    run --rm --no-deps backend python scripts/backfill_source_metadata.py 2>&1 | sed 's/^/    /'; then
+  echo "✓ Source metadata backfill completed"
+else
+  echo "⚠ Warning: source metadata backfill failed (non-critical — deploy continues)"
+fi
+
 # Backfill real titles onto existing conversations still on the naive
 # first-message-prefix title (idempotent — skips already-backfilled ones)
 echo ""

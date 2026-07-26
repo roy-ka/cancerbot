@@ -27,11 +27,11 @@ def calculate_search_metrics(query: str, results: list) -> dict:
     'min_score': min_score,
   }
 
-def run_retrieval(query: str, k_primary: int = 5) -> dict:
-  logger.info("[retrieval] query='%s'", query[:120])
+def run_retrieval(query: str, k_primary: int = 5, disease_areas: list | None = None) -> dict:
+  logger.info("[retrieval] query='%s' disease_areas=%s", query[:120], disease_areas)
   query_embedding = OllamaConnector.embed_text(query)
   logger.info("[retrieval] embedding_dim=%d", len(query_embedding))
-  fut_sources = _executor.submit(search_sources, db, query, query_embedding)
+  fut_sources = _executor.submit(search_sources, db, query, query_embedding, 5, disease_areas)
   sources = fut_sources.result()
 
   metrics = calculate_search_metrics(query, sources)

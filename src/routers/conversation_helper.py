@@ -24,6 +24,93 @@ _RETRY_MAX = 2
 _RETRYABLE_HTTP = frozenset({429, 500, 502, 503, 504})
 MIN_FULLTEXT_WORDS = 20
 
+# Publication-type → evidence level, roughly following the evidence pyramid.
+# Keys are lowercased PubMed PublicationType values (and a few CrossRef `type`
+# values); a source's level is the highest match across all its types.
+EVIDENCE_LEVELS: dict[str, int] = {
+    # 5 — synthesized evidence
+    "meta-analysis": 5,
+    "systematic review": 5,
+    # 4 — randomized primary evidence
+    "randomized controlled trial": 4,
+    "controlled clinical trial": 4,
+    # 3 — other trials / comparative studies
+    "clinical trial": 3,
+    "clinical trial, phase i": 3,
+    "clinical trial, phase ii": 3,
+    "clinical trial, phase iii": 3,
+    "clinical trial, phase iv": 3,
+    "multicenter study": 3,
+    "observational study": 3,
+    "comparative study": 3,
+    "cohort studies": 3,
+    # 2 — narrative reviews and ordinary research articles
+    "review": 2,
+    "journal article": 2,
+    "journal-article": 2,  # CrossRef
+    # 1 — weak / anecdotal
+    "case reports": 1,
+    "letter": 1,
+    "historical article": 1,
+    "posted-content": 1,  # CrossRef preprints
+    # 0 — non-evidence (also hard-excluded from retrieval, see EXCLUDED_PUB_TYPES)
+    "editorial": 0,
+    "comment": 0,
+    "published erratum": 0,
+    "retracted publication": 0,
+    "retraction of publication": 0,
+}
+
+_DEFAULT_EVIDENCE_LEVEL = 2
+
+# Publication types excluded from retrieval outright rather than down-ranked.
+# Applied as a `must_not` in src/retrieval/search.py so that sources with no
+# pub_types at all (Wikipedia, URL fetches, everything indexed before this
+# field existed) are unaffected.
+EXCLUDED_PUB_TYPES: frozenset[str] = frozenset({
+    "editorial",
+    "comment",
+    "published erratum",
+    "retracted publication",
+    "retraction of publication",
+})
+
+
+def _derive_evidence_level(pub_types: list[str] | None) -> int:
+    """Highest evidence level across a source's publication types.
+
+    Unknown/absent types fall back to _DEFAULT_EVIDENCE_LEVEL so an unrecognised
+    type never scores a source *below* an ordinary article — only explicitly
+    weak types (case reports, editorials) sink it.
+    """
+    if not pub_types:
+        return _DEFAULT_EVIDENCE_LEVEL
+    levels = [EVIDENCE_LEVELS[t.strip().lower()] for t in pub_types if t and t.strip().lower() in EVIDENCE_LEVELS]
+    return max(levels) if levels else _DEFAULT_EVIDENCE_LEVEL
+
+
+def _normalise_pub_types(pub_types: list[str] | None) -> list[str]:
+    """Lowercase + dedupe publication types for exact-match keyword querying."""
+    if not pub_types:
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for t in pub_types:
+        key = (t or "").strip().lower()
+        if key and key not in seen:
+            seen.add(key)
+            out.append(key)
+    return out
+
+
+def _coerce_pub_year(value: Any) -> int | None:
+    """Parse a publication year into an int, or None if it isn't a sane year."""
+    try:
+        year = int(str(value).strip()[:4])
+    except (TypeError, ValueError):
+        return None
+    return year if 1500 <= year <= 2200 else None
+
 
 async def _retry_get(
     client: httpx.AsyncClient,
@@ -408,7 +495,7 @@ async def _search_crossref_sources(
     params = {
         "query.bibliographic": query,
         "rows": max_results,
-        "select": "DOI,title,abstract,URL",
+        "select": "DOI,title,abstract,URL,type,subject,published",
         "filter": "has-abstract:true",
     }
     try:
@@ -433,6 +520,10 @@ async def _search_crossref_sources(
         if _SPAM_RE.search(title):
             logger.warning(f"[crossref] skipping spam/low-quality item doi={doi}: '{title[:80]}'")
             continue
+        # CrossRef `published.date-parts` is [[yyyy, mm, dd]] with mm/dd optional
+        date_parts = ((item.get("published") or {}).get("date-parts") or [[]])[0]
+        pub_year = _coerce_pub_year(date_parts[0]) if date_parts else None
+
         out.append(
             {
                 "source_type": "crossref",
@@ -443,6 +534,9 @@ async def _search_crossref_sources(
                 "tags": ["primary_academic"],
                 "abstract_source": "crossref",
                 "url": item.get("URL") or (f"https://doi.org/{doi}" if doi else None),
+                "year": pub_year,
+                "pub_types": [item["type"]] if item.get("type") else None,
+                "subjects": item.get("subject") or None,
             }
         )
         if len(out) >= max_results:
@@ -592,7 +686,11 @@ async def _search_wikipedia_sources(
     return await asyncio.to_thread(_fetch)
 
 
-def _embed_and_index_sources(sources: list[dict], terms: list[str] | None = None) -> tuple[int, int]:
+def _embed_and_index_sources(
+    sources: list[dict],
+    terms: list[str] | None = None,
+    entity_groups: list[dict] | None = None,
+) -> tuple[int, int]:
     if not sources:
         return 0, 0
 
@@ -601,6 +699,16 @@ def _embed_and_index_sources(sources: list[dict], terms: list[str] | None = None
     indexed = 0
     skipped = 0
     clean_terms = [t.strip() for t in (terms or []) if t and len(t.strip()) >= 2]
+
+    # Disease areas come from the categories the NLP service attached to each
+    # extracted entity (see nlp_service/synonyms.py:get_category). The backend
+    # can't compute these itself — synonyms.py lives in the separate
+    # nlp-service container — so they ride along on entity_groups.
+    disease_areas = sorted({
+        (g.get("category") or "").strip().lower()
+        for g in (entity_groups or [])
+        if (g.get("category") or "").strip()
+    })
 
     # Assign stable base IDs and deduplicate within the batch
     candidate: list[tuple[str, dict]] = []
@@ -636,6 +744,9 @@ def _embed_and_index_sources(sources: list[dict], terms: list[str] | None = None
         full_text = (source.get("content_for_embedding") or "").strip()
         full_text_word_count = len(full_text.split())
         chunks = _chunk_text(full_text)
+        pub_types = _normalise_pub_types(source.get("pub_types"))
+        pub_year = _coerce_pub_year(source.get("year"))
+        evidence_level = _derive_evidence_level(pub_types)
         logger.info("[index] indexing %s — %d chunk(s)", base_id, len(chunks))
 
         for chunk_index, chunk_text in enumerate(chunks):
@@ -652,6 +763,10 @@ def _embed_and_index_sources(sources: list[dict], terms: list[str] | None = None
                     "full_text_word_count": full_text_word_count,
                     "content_for_embedding": chunk_text,
                     "tags": clean_terms,
+                    "disease_areas": disease_areas,
+                    "pub_types": pub_types,
+                    "pub_year": pub_year,
+                    "evidence_level": evidence_level,
                     "abstract_source": source.get("abstract_source") or source.get("source_type"),
                     "url": source.get("url"),
                     "embedding": OllamaConnector.embed_text(chunk_text),
@@ -797,7 +912,7 @@ async def search_and_embed(
 
     merged_sources = [*url_sources, *pubmed_sources, *crossref_sources, *wikipedia_sources]
     await emit("embedding_and_indexing_sources", {"total_sources": len(merged_sources)})
-    indexed, skipped = await asyncio.to_thread(_embed_and_index_sources, merged_sources, terms)
+    indexed, skipped = await asyncio.to_thread(_embed_and_index_sources, merged_sources, terms, entity_groups)
     await emit("sources_indexed", {"indexed": indexed, "skipped": skipped})
     logger.info(f"[search] indexed={indexed} skipped={skipped}")
 

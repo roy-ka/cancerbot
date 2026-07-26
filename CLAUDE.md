@@ -121,6 +121,7 @@ python scripts/fix_crossref_abstracts.py   # Re-fetch + re-clean all CrossRef so
 python scripts/remove_short_sources.py     # Delete indexed sources with full_text < MIN_FULLTEXT_WORDS (manual, one-off; defaults to --dry-run, use --execute / --limit N)
 python scripts/backfill_full_text_word_count.py  # Backfill full_text_word_count on docs indexed before it existed (idempotent)
 python scripts/backfill_conversation_titles.py   # Regenerate naive first-message-prefix conversation titles via generate_title (idempotent; run automatically on deploy; --dry-run / --limit N)
+python scripts/backfill_source_metadata.py       # Re-fetch pub_year/pub_types/evidence_level from PubMed for pmid sources missing them (idempotent; run automatically on deploy; --dry-run / --limit N)
 ```
 `fix_crossref_abstracts.py` is not run automatically by `deploy.sh` — it makes a
 live CrossRef + Unpaywall + Ollama round trip per source, so it's meant to be run
@@ -191,14 +192,26 @@ Indices are auto-created on startup via `dbConnector.ensure_all_indexes()`.
 - `content_for_embedding` — this chunk's 150-word window (what gets embedded and sent to LLM)
 - `tags` — list of NLP-extracted search terms that retrieved this source
 - `pmid`, `doi`, `title`, `url`, `source_type`, `abstract_source` — provenance fields
+- `full_text_word_count` — int; retrieval filters out sources below `MIN_FULLTEXT_WORDS` (20)
+- `pub_year` — int; PubMed pub date or CrossRef `published.date-parts`. Drives the recency boost
+- `pub_types` — keyword[]; lowercased PubMed publication types (or CrossRef `type`). Drives the exclusion `must_not`
+- `evidence_level` — int 0–5 derived from `pub_types` via `EVIDENCE_LEVELS` (5 meta-analysis/systematic review, 4 RCT, 3 trial/cohort, 2 default, 1 case report, 0 editorial/retracted). Unknown types fall back to 2 so an unrecognised type never ranks below an ordinary article
+- `disease_areas` — keyword[]; general cancer categories (e.g. `brain cancer`) of the entities that retrieved this source. Sourced from `entity_groups[].category` on the NLP `/extract` response — the backend **cannot** compute these itself, since `nlp_service/synonyms.py:get_category` lives in the separate nlp-service container
 
 ### Retrieval
-`src/retrieval/search.py:search_sources` runs a hybrid query against `sources_index` only:
-- KNN vector clause (boost ×2, k=5)
-- BM25 match on `content_for_embedding` (boost ×1) and `title` (boost ×1.5)
-- `collapse` on `source_id` (keyword) — ensures at most 1 chunk per source in the top 5 results
+`src/retrieval/search.py:search_sources` runs a hybrid query against `sources_index` only. **Matching and scoring are deliberately separated**:
+- `must` — a nested bool holding the actual matching clauses (`minimum_should_match: 1`): KNN vector (boost ×2), BM25 on `content_for_embedding` (×1) and `title` (×1.5)
+- `should` — pure boosts that raise a matching doc's score but can never make a doc match on their own: `evidence_level`, `pub_year` recency, `disease_areas` overlap with the query's entity categories
+- `filter` — `full_text_word_count >= MIN_FULLTEXT_WORDS`
+- `must_not` — `pub_types` in `EXCLUDED_PUB_TYPES` (editorials, comments, errata, retractions)
+
+Keeping boosts out of the top-level `should` matters: with everything flat under one `minimum_should_match: 1`, a doc could qualify on a boost clause alone (e.g. merely being recent) without matching the query at all.
+
+**Boosts must stay `should`/`must_not`, never positive `filter`s.** Most of the corpus predates these fields; a `should` clause just means "no boost" for those docs, whereas a positive filter would make every doc lacking the field silently unreachable — exactly what happened when `full_text_word_count` was first added as a range filter. Boost weights are unmeasured heuristics; they're named constants at the top of `search.py` for tuning.
 - Works with Lucene-engine KNN (OpenSearch 3); requires `source_id` to be a `keyword` field
 - **Caveat**: OpenSearch silently drops documents that have no value for the collapse field. Docs indexed by `embedding.py` before the chunked schema was introduced lack `source_id` and are therefore invisible to retrieval until `backfill_chunks.py` migrates them.
+
+**Mapping caveat**: `_ensure_chunk_fields_mapping()` (`db_connector.py`) must not declare `full_text_word_count` — it's already dynamically mapped as `long`, and `put_mapping` is atomic, so declaring it as `integer` makes OpenSearch reject the *entire* request and silently take the other field mappings down with it. Without those, `pub_types`/`disease_areas` fall back to analyzed `text` and exact-match `terms` queries stop working.
 
 ### Data Files (`data/`)
 - `sources_canonical.jsonl` — deduplicated sources (merged by PMID > DOI > URL > title)
@@ -317,6 +330,6 @@ Initialised in `src/main.py` and `nlp_service/app.py` via `_init_axiom_logging()
 - Builds with `--pull` so the base image is refreshed when upstream publishes OS patches (e.g. curl CVEs); intermediate layers still cache when the base digest is unchanged
 - Scans built images with Trivy (`HIGH`/`CRITICAL`, ignore-unfixed); aborts deploy on findings
 - Skips `alembic upgrade heads` if `alembic current` already shows `(head)` — avoids 4 unnecessary Docker container spawns per deploy
-- Runs seeds (non-fatal): `seed_wikipedia_tags.py` then `backfill_chunks.py` (scrolls the entire sources index and migrates every doc without a `source_id` field to the chunked schema; idempotent), then `backfill_conversation_titles.py` (regenerates conversation titles still stuck on the naive first-message-prefix; idempotent)
+- Runs seeds (non-fatal): `seed_wikipedia_tags.py` then `backfill_chunks.py` (scrolls the entire sources index and migrates every doc without a `source_id` field to the chunked schema; idempotent), then `backfill_source_metadata.py` (re-fetches pub_year/pub_types/evidence_level from PubMed for pmid sources missing them; idempotent), then `backfill_conversation_titles.py` (regenerates conversation titles still stuck on the naive first-message-prefix; idempotent)
 - Prints git commit hash in the success summary
 - **Self re-exec after `git pull`**: the script hashes itself before and after the pull; if `deploy.sh` changed, it re-execs from `$SCRIPT_DIR/deploy.sh` (capped at one re-exec via `DEPLOY_REEXEC_COUNT`) instead of continuing on bash's stale in-memory copy of the old script for the rest of the run. Without this, any step *added to deploy.sh itself* in the commit being pulled would silently never run on the very deploy that introduces it — this bit `backfill_conversation_titles.py`'s first deploy. `DEPLOY_LOG_FILE_OVERRIDE` and `DEPLOY_PREV_GIT_HEAD_OVERRIDE` carry the log file and the true pre-deploy commit (for rollback) across the re-exec.
