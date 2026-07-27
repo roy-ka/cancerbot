@@ -65,77 +65,98 @@ def _make_source(title="Cancer study", content=None, pmid="12345"):
 def _setup_db(monkeypatch, already_indexed=None):
     mock_db = MagicMock()
     mock_db.existing_base_source_ids.return_value = already_indexed or set()
-    mock_db.index_to_db.return_value = {"_id": "test"}
+    mock_db.bulk_index_to_db.side_effect = lambda index_name, docs: (len(list(docs)), [])
     mock_db.create_index.return_value = None
     monkeypatch.setattr("src.routers.conversation_helper.dbConnector", lambda: mock_db)
     return mock_db
 
 
+def _indexed_docs(mock_db) -> list:
+    """Every chunk document handed to OpenSearch, in order.
+
+    Chunks are embedded and written as one bulk batch rather than one call per
+    chunk, so the docs come from the single bulk_index_to_db call.
+    """
+    docs = []
+    for call in mock_db.bulk_index_to_db.call_args_list:
+        docs.extend(call.args[1])
+    return docs
+
+
+def _patch_embeddings():
+    """Patch the batch embedder — one vector back per input chunk."""
+    return patch(
+        "src.routers.conversation_helper.OllamaConnector.embed_texts",
+        side_effect=lambda texts: [[0.1] * 768 for _ in texts],
+    )
+
+
 class TestEmbedAndIndexSources:
     def test_chunk_id_has_chunk_suffix(self, monkeypatch):
         mock_db = _setup_db(monkeypatch)
-        with patch("src.routers.conversation_helper.OllamaConnector.embed_text", return_value=[0.1] * 768):
+        with _patch_embeddings():
             _embed_and_index_sources([_make_source()], terms=["cancer"])
-        doc = mock_db.index_to_db.call_args[0][1]
+        doc = _indexed_docs(mock_db)[0]
         assert ":c0" in doc["id"]
 
     def test_source_id_field_is_base_id(self, monkeypatch):
         mock_db = _setup_db(monkeypatch)
-        with patch("src.routers.conversation_helper.OllamaConnector.embed_text", return_value=[0.1] * 768):
+        with _patch_embeddings():
             _embed_and_index_sources([_make_source(pmid="99999")], terms=["cancer"])
-        doc = mock_db.index_to_db.call_args[0][1]
+        doc = _indexed_docs(mock_db)[0]
         assert doc["source_id"] == "pmid:99999"
         assert doc["id"] == "pmid:99999:c0"
 
     def test_tags_are_search_terms(self, monkeypatch):
         mock_db = _setup_db(monkeypatch)
-        with patch("src.routers.conversation_helper.OllamaConnector.embed_text", return_value=[0.1] * 768):
+        with _patch_embeddings():
             _embed_and_index_sources([_make_source()], terms=["lung cancer", "egfr"])
-        doc = mock_db.index_to_db.call_args[0][1]
+        doc = _indexed_docs(mock_db)[0]
         assert doc["tags"] == ["lung cancer", "egfr"]
 
     def test_tags_empty_when_no_terms(self, monkeypatch):
         mock_db = _setup_db(monkeypatch)
-        with patch("src.routers.conversation_helper.OllamaConnector.embed_text", return_value=[0.1] * 768):
+        with _patch_embeddings():
             _embed_and_index_sources([_make_source()], terms=[])
-        doc = mock_db.index_to_db.call_args[0][1]
+        doc = _indexed_docs(mock_db)[0]
         assert doc["tags"] == []
 
     def test_full_text_stored_on_doc(self, monkeypatch):
         content = " ".join(["word"] * 50)
         mock_db = _setup_db(monkeypatch)
-        with patch("src.routers.conversation_helper.OllamaConnector.embed_text", return_value=[0.1] * 768):
+        with _patch_embeddings():
             _embed_and_index_sources([_make_source(content=content)], terms=["cancer"])
-        doc = mock_db.index_to_db.call_args[0][1]
+        doc = _indexed_docs(mock_db)[0]
         assert doc["full_text"] == content
 
     def test_long_source_produces_multiple_chunks(self, monkeypatch):
         content = " ".join(["word"] * 300)
         mock_db = _setup_db(monkeypatch)
-        with patch("src.routers.conversation_helper.OllamaConnector.embed_text", return_value=[0.1] * 768):
+        with _patch_embeddings():
             _embed_and_index_sources([_make_source(content=content)], terms=["cancer"])
-        assert mock_db.index_to_db.call_count == 3
-        ids = [c[0][1]["id"] for c in mock_db.index_to_db.call_args_list]
+        docs = _indexed_docs(mock_db)
+        assert len(docs) == 3
+        ids = [d["id"] for d in docs]
         assert ids == ["pmid:12345:c0", "pmid:12345:c1", "pmid:12345:c2"]
 
     def test_skips_already_indexed_source(self, monkeypatch):
         mock_db = _setup_db(monkeypatch, already_indexed={"pmid:12345"})
-        with patch("src.routers.conversation_helper.OllamaConnector.embed_text", return_value=[0.1] * 768):
+        with _patch_embeddings():
             indexed, skipped = _embed_and_index_sources([_make_source()], terms=["cancer"])
         assert indexed == 0
         assert skipped == 1
-        mock_db.index_to_db.assert_not_called()
+        mock_db.bulk_index_to_db.assert_not_called()
 
     def test_dedup_uses_existing_base_source_ids(self, monkeypatch):
         mock_db = _setup_db(monkeypatch)
-        with patch("src.routers.conversation_helper.OllamaConnector.embed_text", return_value=[0.1] * 768):
+        with _patch_embeddings():
             _embed_and_index_sources([_make_source()], terms=["cancer"])
         mock_db.existing_base_source_ids.assert_called_once_with(["pmid:12345"])
 
     def test_chunk_index_field_set_correctly(self, monkeypatch):
         content = " ".join(["word"] * 300)
         mock_db = _setup_db(monkeypatch)
-        with patch("src.routers.conversation_helper.OllamaConnector.embed_text", return_value=[0.1] * 768):
+        with _patch_embeddings():
             _embed_and_index_sources([_make_source(content=content)], terms=[])
-        indices = [c[0][1]["chunk_index"] for c in mock_db.index_to_db.call_args_list]
+        indices = [d["chunk_index"] for d in _indexed_docs(mock_db)]
         assert indices == [0, 1, 2]

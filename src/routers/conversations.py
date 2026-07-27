@@ -127,37 +127,29 @@ async def _process_post_message(
         db.rollback()
         raise
 
-    # Extract and save scientific terms for the new message
-    try:
-        from src.routers.conversation_helper import _extract_terms_from_message
-        extracted_terms = await _extract_terms_from_message(req.content)
-        logging.info("[conversation] extracted_terms for message %s: %s", user_message.id, extracted_terms)
-        user_message.extracted_terms = extracted_terms if extracted_terms else None
-        db.add(user_message)
-        db.commit()
-        logging.info("[conversation] saved extracted_terms=%s to message %s", user_message.extracted_terms, user_message.id)
-    except Exception as e:
-        logging.warning(f"[conversation] term extraction failed: {type(e).__name__}: {e}")
-        db.rollback()
-
     await emit('fallback_triggered', {'reason': 'always_search_external'})
     search_meta = await search_and_embed(conversation, emit=emit)
 
-    # Backfill extracted_terms on the user message if NLP returned empty (e.g. short
-    # abbreviation like "gbm") but search_and_embed produced fallback terms.
-    actual_terms = search_meta.get('terms', [])
-    if actual_terms and not user_message.extracted_terms:
+    # Persist the terms extracted for this message. search_and_embed already ran
+    # spell-correction + entity extraction on this exact text, so its result is
+    # reused here rather than extracting a second time — the NLP service is the
+    # most CPU-expensive hop in the request and one pass is enough.
+    # `latest_terms` is this message's own terms (what the old separate call
+    # produced); the merged `terms` list is the fallback for when NLP came back
+    # empty (e.g. a bare abbreviation like "gbm") and word-extraction stood in.
+    extracted_terms = search_meta.get('latest_terms') or search_meta.get('terms') or []
+    if extracted_terms:
         try:
-            user_message.extracted_terms = actual_terms
+            user_message.extracted_terms = extracted_terms
             db.add(user_message)
             db.commit()
             logging.info(
-                "[conversation] backfilled extracted_terms=%s on message %s",
-                actual_terms,
+                "[conversation] saved extracted_terms=%s to message %s",
+                extracted_terms,
                 user_message.id,
             )
         except Exception as e:
-            logging.warning("[conversation] backfill extracted_terms failed: %s: %s", type(e).__name__, e)
+            logging.warning("[conversation] saving extracted_terms failed: %s: %s", type(e).__name__, e)
             db.rollback()
 
     # Record external search results using the current db session

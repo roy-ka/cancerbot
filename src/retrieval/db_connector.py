@@ -30,6 +30,17 @@ class dbConnector:
   db_client = None
   _initialized = False
   _model = None
+  # Indexes create_index() has already confirmed exist this process.
+  _known_indexes: set = set()
+
+  # Upper bound on how many chunks one source is expected to produce, used to
+  # size lookups that fetch every chunk of a set of sources. Sources are
+  # chunked at 150 words with 40 overlap (see _chunk_text), and the longest
+  # inputs in practice (structured PubMed abstracts, 4000-char URL scrapes)
+  # land well under this. Generous on purpose: too low would starve later
+  # sources out of a shared result window, and the per-hit payload is already
+  # small thanks to SOURCE_DISPLAY_FIELDS.
+  MAX_CHUNKS_PER_SOURCE = 12
 
   @classmethod
   def _initialize(cls):
@@ -116,6 +127,59 @@ class dbConnector:
     except Exception as e:
       cls.logger.error(f"[OpenSearch] Failed to index '{doc_id}': {e}")
       raise
+
+  @classmethod
+  def bulk_index_to_db(cls, index_name, documents):
+    """Index many documents in one _bulk request, refreshing once at the end.
+
+    Indexing documents one at a time with refresh=True forces a Lucene segment
+    flush per document across every shard and replica — with a source split
+    into chunks, and a dozen sources per message, that was dozens of forced
+    refreshes for a single chat turn. One bulk call with a single trailing
+    refresh keeps the same "visible to the retrieval query that follows"
+    guarantee at a fraction of the cost.
+
+    Returns (indexed_count, [error strings]). Partial failures are reported
+    rather than raised, so one bad document doesn't lose the whole batch.
+    """
+    cls._initialize()
+    if not cls.db_client:
+      raise RuntimeError("OpenSearch client not available")
+
+    documents = list(documents)
+    if not documents:
+      return 0, []
+
+    index_name_mapped = cls._model[index_name]
+
+    from opensearchpy.helpers import bulk
+
+    actions = [
+      {'_index': index_name_mapped, '_source': doc}
+      for doc in documents
+    ]
+
+    try:
+      succeeded, errors = bulk(
+        cls.db_client,
+        actions,
+        refresh=True,
+        raise_on_error=False,
+        stats_only=False,
+      )
+    except Exception as e:
+      cls.logger.error(f"[OpenSearch] Bulk index failed for '{index_name_mapped}': {e}")
+      raise
+
+    error_messages = [str(err) for err in (errors or [])]
+    if error_messages:
+      cls.logger.warning(
+        "[OpenSearch] Bulk indexed %d/%d documents, %d failed",
+        succeeded, len(documents), len(error_messages),
+      )
+    else:
+      cls.logger.debug("[OpenSearch] Bulk indexed %d documents", succeeded)
+    return succeeded, error_messages
 
   @classmethod
   def ensure_all_indexes(cls):
@@ -216,6 +280,12 @@ class dbConnector:
       raise RuntimeError("OpenSearch client not available")
 
     index = cls._model[index_name]
+
+    # An index can't stop existing under us, so once we've confirmed it we skip
+    # the exists() round trip. This is called on every indexing pass (i.e. every
+    # chat message), where it was otherwise a HEAD request per message.
+    if index in cls._known_indexes:
+      return {'acknowledged': True, 'message': 'Index already exists'}
     body = {
       'settings': {
         'index': {
@@ -251,8 +321,10 @@ class dbConnector:
     if not cls.db_client.indices.exists(index=index):
       response = cls.db_client.indices.create(index=index, body=body)
       cls.logger.info("Created index: %s", index)
+      cls._known_indexes.add(index)
       return response
     else:
+      cls._known_indexes.add(index)
       return {'acknowledged': True, 'message': 'Index already exists'}
 
   @classmethod
@@ -381,6 +453,23 @@ class dbConnector:
       cls.logger.warning("delete_chunks_by_source_id failed for source_id=%s: %s", source_id, exc)
       return 0
 
+  # Fields src/db/repositories/messeges.py:add_claims_and_sources actually reads.
+  # Requesting an allowlist rather than the whole _source keeps the 768-float
+  # `embedding` array (~15KB of JSON per hit) and the redundant
+  # `content_for_embedding` chunk text out of the response entirely.
+  SOURCE_DISPLAY_FIELDS = [
+    'id',
+    'source_id',
+    'title',
+    'url',
+    'pmid',
+    'doi',
+    'nct',
+    'source_type',
+    'full_text',
+    'evidence_score_0_5',
+  ]
+
   @classmethod
   def get_claims_and_sources_by_id(cls, ids):
     """Get claims and sources by their IDs from both indices.
@@ -394,6 +483,10 @@ class dbConnector:
     `.keyword` multi-field is exact. Querying a field/sub-field that doesn't exist
     in a given index contributes zero matches rather than erroring, so this is safe
     regardless of which mapping state an index is actually in.
+
+    `size` is scaled to the number of requested sources (each can have several
+    chunks) rather than a flat 200 — the caller dedupes to one entry per
+    source_id anyway, so fetching every chunk of every source is wasted work.
     """
     if not ids:
       return {'hits': {'hits': []}}
@@ -407,8 +500,8 @@ class dbConnector:
     return cls.db_client.search(
       index=f"{cls._model['sources_index']}*",
       body={
-        'size': 200,
-        '_source': True,
+        'size': min(200, max(10, len(base_ids) * cls.MAX_CHUNKS_PER_SOURCE)),
+        '_source': cls.SOURCE_DISPLAY_FIELDS,
         'query': {
           'bool': {
             'should': [

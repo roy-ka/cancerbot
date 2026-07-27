@@ -15,6 +15,15 @@ Every library or service added to the codebase must be declared in the appropria
 
 Never import a package or depend on a service that is not listed in the relevant file.
 
+The reverse also matters: `requirements.txt` deliberately does **not** contain
+spacy/scispacy/`en_core_sci_sm`/pyspellchecker. All NLP runs in the `nlp-service`
+container (`nlp_service/requirements.txt`); `src/nlp/__init__.py` is only an HTTP
+client. The backend image is built and run twice (backend + url-classifier), so
+the scispaCy stack and its model cost hundreds of MB per container for nothing.
+For the same reason `src/utils/utils.py` must stay pandas-free — it's imported by
+`main.py`, `auth.py` and `db_connector.py`, so a module-level `import pandas`
+loads pandas + numpy into every backend and worker process.
+
 ## Email Templates
 
 All SendGrid template IDs must be stored in the `EMAIL_TEMPLATES` dict in `src/utils/email.py`. Never hardcode a template ID inline elsewhere in the codebase — always reference it via `EMAIL_TEMPLATES["key"]`.
@@ -158,15 +167,23 @@ the whole index each time.
 | Ollama | Docker | 11434 | |
 | NLP microservice | `nlp_service/` | 8100 | Docker only with `prod` profile |
 
+**Port binding**: only the backend (8000) is published on `0.0.0.0`. OpenSearch
+(9200/9600), Dashboards (5601), PostgreSQL (5432) and the NLP service (8100) are
+bound to `127.0.0.1` in `docker-compose.yml` — they were reachable from any host
+on the network, and the NLP service in particular has no authentication of its
+own. They stay published on loopback so a backend running on the host in dev can
+still reach them; reaching Dashboards on a remote host now needs an SSH tunnel.
+Keep the `127.0.0.1:` prefix when editing those `ports:` entries.
+
 ### New Conversation Flow
 Frontend first calls `POST /conversations/create/` (lightweight DB-only, returns `{id, title}`), then immediately opens a WebSocket to `/conversations/{id}/add_message/ws`. This ensures stage events fire from the very start instead of the UI freezing on `loading_conversation`.
 
 ### Chat Query Flow
 1. User message arrives via WebSocket (`/conversations/{id}/add_message/ws`) or HTTP POST (`/conversations/{id}/add_message`)
 2. User message is saved to PostgreSQL
-3. `src/nlp` calls the NLP microservice (`/extract`) to extract scientific terms and expand them with MeSH synonyms (`extracted_terms` stored on the `Message` row)
+3. `src/nlp` calls the NLP microservice (`/extract`) to extract scientific terms and expand them with MeSH synonyms (`extracted_terms` stored on the `Message` row). **This runs exactly once per message**, inside `search_and_embed`, which returns `latest_terms` (the current message's own terms) for `conversations.py` to persist. Do not add a second `_extract_terms_from_message` call in the request path — spell-correction and extraction are each a full scispaCy pipeline pass, and the two used to run twice over identical text
 4. **External search** runs in parallel: PubMed (4 results), CrossRef (4 results), Wikipedia (3 results), ClinicalTrials.gov (3 results) queried using NLP-extracted terms (`src/routers/conversation_helper.py`). Wikipedia uses the search API first and picks the most oncology-relevant page from candidates. ClinicalTrials.gov hits the v2 REST API directly (not `pytrials`) and is filtered to `overallStatus=COMPLETED` — this is the *evidence* use case (grounding answers in trial findings); a separate opt-in *participation* feature (recruiting trials by location) is deferred. PubMed and ClinicalTrials share the AND-of-OR-groups boolean query builder (`_build_boolean_term_query`).
-5. New external sources are embedded via Ollama (`nomic-embed-text`) and indexed into OpenSearch `sources_index` as **150-word chunks with 40-word overlap**. Each chunk gets `id={base_id}:c{n}`, `source_id={base_id}`, `chunk_index`, `full_text` (original), and `tags` (search terms that retrieved it). Dedup is by `source_id` — if any chunk of a base ID exists, the whole source is skipped.
+5. New external sources are embedded via Ollama (`nomic-embed-text`) and indexed into OpenSearch `sources_index` as **150-word chunks with 40-word overlap**. Each chunk gets `id={base_id}:c{n}`, `source_id={base_id}`, `chunk_index`, `full_text` (original), and `tags` (search terms that retrieved it). Dedup is by `source_id` — if any chunk of a base ID exists, the whole source is skipped. Every chunk in the batch is embedded via `OllamaConnector.embed_texts` (batched, `_EMBED_BATCH_SIZE` per request) and written with a single `dbConnector.bulk_index_to_db` call that refreshes **once** at the end. Do not go back to `embed_text` + `index_to_db(refresh=True)` per chunk here: that was one Ollama round trip and one forced Lucene segment flush per chunk, i.e. dozens of each per chat message. The trailing refresh is what keeps the freshly indexed chunks visible to the retrieval query that runs immediately after.
 6. External search results are recorded in `external_search_results` table
 7. `src/retrieval/__init__.py:run_retrieval` embeds the query and runs hybrid BM25 + KNN search on `sources_index` with `collapse` on `source_id` — returns top 5 unique sources (1 best chunk per source)
 8. Search analytics recorded in `search_analytics` table
@@ -206,6 +223,21 @@ Indices are auto-created on startup via `dbConnector.ensure_all_indexes()`.
 - `must_not` — `pub_types` in `EXCLUDED_PUB_TYPES` (editorials, comments, errata, retractions)
 
 Keeping boosts out of the top-level `should` matters: with everything flat under one `minimum_should_match: 1`, a doc could qualify on a boost clause alone (e.g. merely being recent) without matching the query at all.
+
+**Never request the full `_source`.** Both `search_sources` and
+`dbConnector.get_claims_and_sources_by_id` pass an explicit field allowlist, because
+every document carries a 768-float `embedding` array that serializes to ~15KB of
+JSON. Measured against the live index, the allowlist cut the per-message source
+lookup from 59KB to 2.2KB (27×) and a retrieval query from 277KB to 27KB (10×).
+`dbConnector.SOURCE_DISPLAY_FIELDS` is the allowlist for message source display —
+add to it if the UI starts rendering a new field, but never replace it with
+`_source: True`.
+
+**Message source lookups are batched.** `add_claims_and_sources_bulk` resolves a
+whole page of assistant messages in one OpenSearch query; `add_claims_and_sources`
+is a single-message wrapper around it. `get_messages_by_conversation_id` and
+`get_recent_messages` must call the bulk form — looping the single-message version
+puts one query per assistant message on every conversation open.
 
 **Boosts must stay `should`/`must_not`, never positive `filter`s.** Most of the corpus predates these fields; a `should` clause just means "no boost" for those docs, whereas a positive filter would make every doc lacking the field silently unreachable — exactly what happened when `full_text_word_count` was first added as a range filter. Boost weights are unmeasured heuristics; they're named constants at the top of `search.py` for tuning.
 - Works with Lucene-engine KNN (OpenSearch 3); requires `source_id` to be a `keyword` field
@@ -291,6 +323,35 @@ JWT tokens (HS256) accepted via `Authorization: Bearer <token>` header or `acces
 - **JWT revocation**: tokens carry a `tv` (token version) claim. `User.token_version` is incremented on password reset; tokens with a mismatched `tv` are rejected with 401.
 - **Rate limiting**: login uses `LoginAttempt` (5 failures → 15 min lockout); register uses per-IP limit (10/h); forgot-password uses per-email limit (5/h) — both via `RateLimitEntry`.
 - **Password reset**: time-limited codes via SendGrid email.
+- **Client IP**: `_client_ip` in `auth.py` uses the socket peer only. `X-Forwarded-For` is **not** trusted — the backend serves directly on port 8000, so the header is attacker-controlled and honouring it let anyone defeat the per-IP registration limit by rotating a fake value. If a reverse proxy is ever added, re-enable it *only* for requests whose immediate peer is the proxy, and set `MAX_REGISTER_ATTEMPTS` accordingly — otherwise every user shares one rate-limit bucket.
+
+### Outbound fetch safety (SSRF)
+Any URL that originates from user input or a third-party API must go through
+`_validate_fetch_target` / `_safe_get` in `src/routers/conversation_helper.py`
+before a request is made. The rules:
+
+- **`_is_safe_url` is a pre-filter, not a gate.** It only rejects *literal*
+  private IPs. A hostname passes it, so `http://nlp-service:8100/`,
+  `http://metadata.google.internal/` and public DNS names answering `127.0.0.1`
+  all sail through. Never use it alone to guard a fetch.
+- **`_validate_fetch_target` resolves the name** and rejects the URL if *any*
+  resolved address is private/loopback/link-local/reserved/multicast.
+- **`_safe_get` is the only way to fetch an untrusted URL.** It validates the
+  target, follows redirects **manually** (max `_MAX_REDIRECTS`), re-validating
+  every hop, and streams the body with a `_MAX_FETCH_BYTES` cap. Do not switch
+  it back to `follow_redirects=True`: that chases a hop into private space
+  without consulting the validator, which is the standard bypass.
+- **`fetch_url_contents` validates at its own entry point too.** `req.urls`
+  arrives from the request body with only a scheme check, so the gate cannot
+  live solely in the message-text path — that was the original hole.
+- Fetches to *hardcoded* hosts (NCBI, CrossRef, Unpaywall) don't need the gate;
+  only their `doi`/`pmid` path parameters come from user input and those are
+  escaped.
+
+Known limitation: addresses are validated before the request and httpx resolves
+again on connect, leaving a narrow DNS-rebinding window. Closing it fully needs
+the socket pinned to the validated address, which conflicts with TLS hostname
+verification.
 
 ### NLP
 `src/nlp/__init__.py` is a thin HTTP client that calls the **NLP microservice** (`nlp_service/`) over HTTP. The microservice runs scispaCy (`en_core_sci_sm`) + SpellChecker in a separate Docker container (`nlp-service`, port 8100). URL configured via `NLP_SERVICE_URL` env var (default `http://localhost:8100`).

@@ -6,7 +6,7 @@ import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 from starlette.concurrency import run_in_threadpool
 from synonyms import get_synonyms, get_category, _FORWARD, _REVERSE
@@ -84,12 +84,22 @@ spell_checker = SpellChecker(distance=1)
 logger.info("[startup] SpellChecker ready")
 
 
+# Upper bound on text accepted by the pipeline endpoints. A scispaCy parse is
+# CPU-bound and roughly linear in input size, and this service has no auth of
+# its own, so an unbounded `text` field is a cheap denial-of-service: one large
+# body ties up a worker for seconds. Comfortably above any real chat message
+# (the API caps those at 4000 chars) and above a scraped page excerpt.
+# NOTE: this bounds the *parsed* text, not the raw request body — put a body
+# size limit on the reverse proxy in front of this service as well.
+MAX_TEXT_CHARS = 20_000
+
+
 class ExtractReq(BaseModel):
-    text: str
+    text: str = Field(..., max_length=MAX_TEXT_CHARS)
 
 
 class SpellingReq(BaseModel):
-    text: str
+    text: str = Field(..., max_length=MAX_TEXT_CHARS)
 
 
 def _dedupe(items: list[str]) -> list[str]:

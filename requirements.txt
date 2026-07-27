@@ -17,10 +17,10 @@ beautifulsoup4
 wikipedia-api
 lxml
 tldextract
-freezegun
 axiom-py
-spacy>=3.7.5,<3.8.0
-scispacy==0.5.5
-numpy>=1.24.0,<2.0.0
-pyspellchecker>=0.8.2
-https://s3-us-west-2.amazonaws.com/ai2-s2-scispacy/releases/v0.5.4/en_core_sci_sm-0.5.4.tar.gz
+
+# NOTE: spacy / scispacy / en_core_sci_sm / pyspellchecker are deliberately NOT
+# here. All NLP runs in the separate nlp-service container (see
+# nlp_service/requirements.txt); src/nlp/__init__.py is only an HTTP client.
+# Installing the scispaCy stack + model here added hundreds of MB to the backend
+# image, which is built and run twice (backend + url-classifier).

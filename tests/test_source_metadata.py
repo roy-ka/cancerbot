@@ -218,10 +218,12 @@ class TestIndexedDocumentTags:
 
         fake_db = MagicMock()
         fake_db.existing_base_source_ids.return_value = set()
+        fake_db.bulk_index_to_db.side_effect = lambda index_name, docs: (len(list(docs)), [])
         with patch("src.routers.conversation_helper.dbConnector", return_value=fake_db), \
-             patch("src.routers.conversation_helper.OllamaConnector.embed_text", return_value=[0.1] * 768):
+             patch("src.routers.conversation_helper.OllamaConnector.embed_texts",
+                   side_effect=lambda texts: [[0.1] * 768 for _ in texts]):
             _embed_and_index_sources([source], terms=["glioblastoma"], entity_groups=entity_groups)
-        return [c.args[1] for c in fake_db.index_to_db.call_args_list]
+        return [d for c in fake_db.bulk_index_to_db.call_args_list for d in c.args[1]]
 
     def _long_text(self):
         return " ".join(["glioblastoma"] * 40)

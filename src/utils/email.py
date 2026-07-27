@@ -3,6 +3,8 @@ import logging
 import os
 import threading
 
+from src.utils.utils import is_prod
+
 logger = logging.getLogger(__name__)
 
 EMAIL_TEMPLATES = {
@@ -66,7 +68,7 @@ def send_fallback_alert(model: str) -> None:
 
 async def send_verification_email(to: str, name: str, token: str, frontend_url: str) -> None:
     verify_url = f"{frontend_url}/verify-email?token={token}"
-    if os.getenv("ENV", "development") != "production":
+    if not is_prod():
         logger.info("[email] verification link for %s: %s", to, verify_url)
     await asyncio.to_thread(
         _send_sendgrid,
@@ -87,7 +89,7 @@ async def send_account_deleted_email(to: str, name: str) -> None:
 
 
 async def send_password_reset_email(to: str, name: str, link: str) -> None:
-    if os.getenv("ENV", "development") != "production":
+    if not is_prod():
         logger.info("[email] password reset link for %s: %s", to, link)
     await asyncio.to_thread(
         _send_sendgrid,
@@ -100,7 +102,7 @@ async def send_password_reset_email(to: str, name: str, link: str) -> None:
 
 async def send_delete_account_request_email(to: str, name: str, link: str) -> None:
     """Step 1 — sent as soon as the user asks to delete their account."""
-    if os.getenv("ENV", "development") != "production":
+    if not is_prod():
         logger.info("[email] delete-account confirmation link for %s: %s", to, link)
     await asyncio.to_thread(
         _send_sendgrid,

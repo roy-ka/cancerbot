@@ -1,14 +1,12 @@
 from .search import search_sources
 from ..classes.ollama_connector import OllamaConnector
 from .db_connector import dbConnector
-from concurrent.futures import ThreadPoolExecutor
 
 import logging
 import re
 logger = logging.getLogger(__name__)
 
 db = dbConnector()
-_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="opensearch")
 
 def calculate_search_metrics(query: str, results: list) -> dict:
   """Calculate search metrics from results (scores are in 0-1 range, convert to 0-100)."""
@@ -31,8 +29,10 @@ def run_retrieval(query: str, k_primary: int = 5, disease_areas: list | None = N
   logger.info("[retrieval] query='%s' disease_areas=%s", query[:120], disease_areas)
   query_embedding = OllamaConnector.embed_text(query)
   logger.info("[retrieval] embedding_dim=%d", len(query_embedding))
-  fut_sources = _executor.submit(search_sources, db, query, query_embedding, 5, disease_areas)
-  sources = fut_sources.result()
+  # Called from a worker thread (asyncio.to_thread) and the result is needed
+  # immediately, so this runs inline — handing it to another pool only added a
+  # thread hop.
+  sources = search_sources(db, query, query_embedding, 5, disease_areas)
 
   metrics = calculate_search_metrics(query, sources)
   sources = sources[:k_primary]

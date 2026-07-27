@@ -5,6 +5,7 @@ import ipaddress
 import os
 import random
 import re
+import socket
 import time
 import xml.etree.ElementTree as ET
 from typing import Any, Awaitable, Callable, Dict, Optional
@@ -22,6 +23,11 @@ from src.xml_to_source import pubmed_article_xml_to_source
 _RETRY_MAX = 2
 _RETRYABLE_HTTP = frozenset({429, 500, 502, 503, 504})
 MIN_FULLTEXT_WORDS = 20
+
+# Chunks embedded per Ollama request. Batching turns one round trip per chunk
+# into one per batch; the cap keeps a single request's payload bounded when a
+# message pulls in many long sources at once.
+_EMBED_BATCH_SIZE = 32
 
 # Publication-type → evidence level, roughly following the evidence pyramid.
 # Keys are lowercased PubMed PublicationType values (and a few CrossRef `type`
@@ -167,16 +173,49 @@ _PRIVATE_NETS = [
     ipaddress.ip_network("127.0.0.0/8"),
     ipaddress.ip_network("169.254.0.0/16"),
     ipaddress.ip_network("0.0.0.0/8"),
+    ipaddress.ip_network("100.64.0.0/10"),   # CGNAT / cloud-internal
+    ipaddress.ip_network("192.0.0.0/24"),    # IETF protocol assignments
+    ipaddress.ip_network("192.0.2.0/24"),    # TEST-NET-1
+    ipaddress.ip_network("198.18.0.0/15"),   # benchmarking
+    ipaddress.ip_network("240.0.0.0/4"),     # reserved
+    ipaddress.ip_network("224.0.0.0/4"),     # multicast
+    ipaddress.ip_network("255.255.255.255/32"),
     ipaddress.ip_network("::1/128"),
-    ipaddress.ip_network("fc00::/7"),
-    ipaddress.ip_network("fe80::/10"),
+    ipaddress.ip_network("::/128"),
+    ipaddress.ip_network("fc00::/7"),        # unique local
+    ipaddress.ip_network("fe80::/10"),       # link local
+    ipaddress.ip_network("ff00::/8"),        # multicast
+    ipaddress.ip_network("64:ff9b::/96"),    # IPv4/IPv6 translation
 ]
 _BLOCKED_HOSTS = frozenset({"localhost", "localhost."})
 _MAX_MESSAGE_URLS = 3
 
+# Caps on anything fetched from a URL we do not control.
+_MAX_FETCH_BYTES = 5 * 1024 * 1024   # abort a response body past this size
+_MAX_REDIRECTS = 3                   # hops followed manually, each re-validated
+
+
+def _is_blocked_address(addr: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """True if an IP belongs to a range that must never be fetched."""
+    if any(addr in net for net in _PRIVATE_NETS):
+        return True
+    # Catch-alls for ranges not enumerated above (and IPv4-mapped IPv6 forms)
+    if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved or addr.is_multicast:
+        return True
+    mapped = getattr(addr, "ipv4_mapped", None)
+    if mapped is not None and _is_blocked_address(mapped):
+        return True
+    return False
+
 
 def _is_safe_url(url: str) -> bool:
-    """Return True only for http/https URLs that don't target private/internal networks."""
+    """Cheap synchronous pre-filter: http/https, and not a literal private IP.
+
+    This cannot be trusted on its own — a hostname that *resolves* to a private
+    address passes here, because resolving would block the event loop. Callers
+    that actually perform a request must use `_validate_fetch_target`, which
+    resolves the name and checks every address it maps to.
+    """
     try:
         parsed = urlparse(url)
         if parsed.scheme not in ("http", "https"):
@@ -185,12 +224,117 @@ def _is_safe_url(url: str) -> bool:
         if not host or host in _BLOCKED_HOSTS:
             return False
         try:
-            addr = ipaddress.ip_address(host)
-            return not any(addr in net for net in _PRIVATE_NETS)
+            return not _is_blocked_address(ipaddress.ip_address(host))
         except ValueError:
             return True
     except Exception:
         return False
+
+
+def _resolve_host(host: str, port: int) -> list[str]:
+    """Every address `host` resolves to. Blocking — call via asyncio.to_thread."""
+    try:
+        infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
+    except socket.gaierror:
+        return []
+    return [info[4][0] for info in infos]
+
+
+async def _validate_fetch_target(url: str) -> bool:
+    """True only if `url` is http/https and resolves exclusively to public addresses.
+
+    This is the gate that must guard every outbound fetch of a URL derived from
+    user input or third-party data. `_is_safe_url` alone is not sufficient: it
+    only rejects *literal* private IPs, so `http://internal-service:8100/`,
+    `http://metadata.google.internal/` and public DNS names that answer with
+    127.0.0.1 all sail past it and reach internal services.
+
+    Known limitation: the address is validated before the request, and httpx
+    resolves the name again when it connects, leaving a narrow DNS-rebinding
+    window. Closing it entirely requires pinning the socket to the validated
+    address, which conflicts with TLS hostname verification — so this checks
+    every resolved address and re-checks each redirect hop instead.
+    """
+    if not _is_safe_url(url):
+        logger.warning("[ssrf] blocked non-public URL: %s", url[:120])
+        return False
+
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+
+    try:
+        ipaddress.ip_address(host)
+        return True  # literal IP already vetted by _is_safe_url
+    except ValueError:
+        pass
+
+    addresses = await asyncio.to_thread(_resolve_host, host, port)
+    if not addresses:
+        logger.warning("[ssrf] blocked unresolvable host: %s", host[:120])
+        return False
+
+    for raw in addresses:
+        try:
+            addr = ipaddress.ip_address(raw)
+        except ValueError:
+            logger.warning("[ssrf] blocked unparseable address %r for host %s", raw, host[:80])
+            return False
+        if _is_blocked_address(addr):
+            logger.warning("[ssrf] blocked host %s resolving to non-public %s", host[:80], raw)
+            return False
+    return True
+
+
+async def _safe_get(
+    client: httpx.AsyncClient,
+    url: str,
+    *,
+    max_bytes: int = _MAX_FETCH_BYTES,
+    **kwargs,
+) -> httpx.Response | None:
+    """GET a URL, validating the target and every redirect hop, capped at max_bytes.
+
+    Returns None when the target is not fetchable (blocked, too large, too many
+    redirects, or a transport error). Redirects are followed manually because
+    httpx's `follow_redirects=True` would chase a hop into the private range
+    without ever consulting the validator.
+    """
+    kwargs.pop("follow_redirects", None)
+    current = url
+
+    for _ in range(_MAX_REDIRECTS + 1):
+        if not await _validate_fetch_target(current):
+            return None
+        try:
+            async with client.stream("GET", current, follow_redirects=False, **kwargs) as resp:
+                if resp.is_redirect:
+                    location = resp.headers.get("location")
+                    if not location:
+                        return None
+                    current = str(resp.url.join(location))
+                    continue
+
+                declared = resp.headers.get("content-length")
+                if declared and declared.isdigit() and int(declared) > max_bytes:
+                    logger.warning("[fetch] %s declares %s bytes, over the %d cap", current[:80], declared, max_bytes)
+                    return None
+
+                body = bytearray()
+                async for chunk in resp.aiter_bytes():
+                    body.extend(chunk)
+                    if len(body) > max_bytes:
+                        logger.warning("[fetch] %s exceeded the %d byte cap, aborting", current[:80], max_bytes)
+                        return None
+                # Re-attach the fully read body so callers can use .content/.text
+                resp._content = bytes(body)
+                return resp
+        except (httpx.TimeoutException, httpx.NetworkError, httpx.ConnectError, httpx.HTTPError) as exc:
+            logger.warning("[fetch] %s failed: %s: %s", current[:80], type(exc).__name__, exc)
+            return None
+
+    logger.warning("[fetch] too many redirects starting at %s", url[:80])
+    return None
 
 
 _SPAM_RE = re.compile(
@@ -889,6 +1033,11 @@ def _embed_and_index_sources(
         len(candidate_ids), len(already_indexed), len(new_ids), sorted(already_indexed),
     )
 
+    # Build every chunk document first, then embed and write them as one batch.
+    # Embedding chunk-by-chunk and indexing each with refresh=True cost one
+    # Ollama round trip and one forced Lucene refresh per chunk — dozens per
+    # chat message.
+    pending_docs: list[dict] = []
     for base_id, source in candidate:
         if base_id in already_indexed:
             logger.info("[index] skip %s (already indexed)", base_id)
@@ -903,34 +1052,53 @@ def _embed_and_index_sources(
         logger.info("[index] indexing %s — %d chunk(s)", base_id, len(chunks))
 
         for chunk_index, chunk_text in enumerate(chunks):
-            try:
-                doc = {
-                    "id": f"{base_id}:c{chunk_index}",
-                    "source_id": base_id,
-                    "chunk_index": chunk_index,
-                    "source_type": source.get("source_type") or "source",
-                    "pmid": source.get("pmid"),
-                    "doi": source.get("doi"),
-                    "nct": source.get("nct"),
-                    "title": source.get("title"),
-                    "full_text": full_text,
-                    "full_text_word_count": full_text_word_count,
-                    "content_for_embedding": chunk_text,
-                    "tags": clean_terms,
-                    "disease_areas": disease_areas,
-                    "pub_types": pub_types,
-                    "pub_year": pub_year,
-                    "evidence_level": evidence_level,
-                    "abstract_source": source.get("abstract_source") or source.get("source_type"),
-                    "url": source.get("url"),
-                    "embedding": OllamaConnector.embed_text(chunk_text),
-                }
-                db.index_to_db("sources_index", doc)
-                logger.info("[index] indexed %s:c%d", base_id, chunk_index)
-                indexed += 1
-            except Exception as e:
-                logger.warning(f"[index] failed to index '{source.get('title','?')[:60]}' chunk={chunk_index}: {e}")
-                skipped += 1
+            pending_docs.append({
+                "id": f"{base_id}:c{chunk_index}",
+                "source_id": base_id,
+                "chunk_index": chunk_index,
+                "source_type": source.get("source_type") or "source",
+                "pmid": source.get("pmid"),
+                "doi": source.get("doi"),
+                "nct": source.get("nct"),
+                "title": source.get("title"),
+                "full_text": full_text,
+                "full_text_word_count": full_text_word_count,
+                "content_for_embedding": chunk_text,
+                "tags": clean_terms,
+                "disease_areas": disease_areas,
+                "pub_types": pub_types,
+                "pub_year": pub_year,
+                "evidence_level": evidence_level,
+                "abstract_source": source.get("abstract_source") or source.get("source_type"),
+                "url": source.get("url"),
+            })
+
+    if not pending_docs:
+        return indexed, skipped
+
+    try:
+        embeddings: list = []
+        for start in range(0, len(pending_docs), _EMBED_BATCH_SIZE):
+            batch = pending_docs[start : start + _EMBED_BATCH_SIZE]
+            embeddings.extend(OllamaConnector.embed_texts([d["content_for_embedding"] for d in batch]))
+    except Exception as e:
+        logger.warning(f"[index] batch embedding failed for {len(pending_docs)} chunk(s): {e}")
+        return indexed, skipped + len(pending_docs)
+
+    for doc, embedding in zip(pending_docs, embeddings):
+        doc["embedding"] = embedding
+
+    try:
+        bulk_indexed, errors = db.bulk_index_to_db("sources_index", pending_docs)
+    except Exception as e:
+        logger.warning(f"[index] bulk index failed for {len(pending_docs)} chunk(s): {e}")
+        return indexed, skipped + len(pending_docs)
+
+    indexed += bulk_indexed
+    skipped += len(errors)
+    for err in errors:
+        logger.warning(f"[index] failed to index chunk: {err}")
+    logger.info("[index] bulk indexed %d chunk(s), %d failed", bulk_indexed, len(errors))
 
     return indexed, skipped
 
@@ -952,6 +1120,7 @@ async def search_and_embed(
         logger.warning(f"[search_and_embed] No messages found, returning empty")
         return {
             "terms": [],
+            "latest_terms": [],
             "pubmed_found": 0,
             "crossref_found": 0,
             "indexed": 0,
@@ -1022,6 +1191,9 @@ async def search_and_embed(
         logger.warning("[search_and_embed] no terms or URL sources, aborting search")
         return {
             "terms": [],
+            # Callers cache this on the message; keep the key present on every
+            # return path so its absence never silently means "no extraction ran".
+            "latest_terms": [],
             "pubmed_found": 0,
             "crossref_found": 0,
             "wikipedia_found": 0,
@@ -1083,6 +1255,7 @@ async def search_and_embed(
 
     return {
         "terms": terms,
+        "latest_terms": latest_terms,
         "entity_groups": entity_groups,
         "url_found": len(url_sources),
         "url_context_items": url_context_items,
@@ -1301,9 +1474,12 @@ async def _fetch_oa_fulltext_excerpt(
     oa_url = await _unpaywall_oa_url(client, doi)
     if not oa_url or oa_url == exclude_url:
         return None
+    # oa_url comes from Unpaywall, i.e. third-party data — it gets the same
+    # validation as a user-supplied URL rather than being trusted.
     try:
-        resp = await client.get(oa_url, headers=_SCRAPE_HEADERS, follow_redirects=True, timeout=httpx.Timeout(15.0))
-        resp.raise_for_status()
+        resp = await _safe_get(client, oa_url, headers=_SCRAPE_HEADERS, timeout=httpx.Timeout(15.0))
+        if resp is None or resp.status_code >= 400:
+            return None
         _, text = await asyncio.to_thread(_scrape_html, resp.content, resp.encoding or "utf-8", "")
         if text:
             excerpt = " ".join(text.split()[:max_words])
@@ -1331,6 +1507,14 @@ async def fetch_url_contents(urls: list[str]) -> list[dict]:
         text: str | None = None
         pmid: str | None = None
         doi: str | None = None
+
+        # Single choke point for every caller. The message-text path pre-filters
+        # with _is_safe_url, but `req.urls` arrives straight from the request
+        # body with only a scheme check, so validation has to live here or it
+        # can be skipped entirely.
+        if not await _validate_fetch_target(url):
+            logger.warning("[fetch_url] refusing to fetch blocked URL: %s", url[:120])
+            return None
 
         # --- Path 0: PubMed URL — extract PMID and fetch structured abstract ---
         pmid = _extract_pmid_from_url(url)
@@ -1361,30 +1545,30 @@ async def fetch_url_contents(urls: list[str]) -> list[dict]:
                     oa_url = await _unpaywall_oa_url(client, doi)
                     if oa_url and oa_url != url:
                         try:
-                            oa_resp = await client.get(oa_url, headers=_SCRAPE_HEADERS, follow_redirects=True)
-                            oa_resp.raise_for_status()
-                            oa_title, oa_text = await asyncio.to_thread(
-                                _scrape_html, oa_resp.content, oa_resp.encoding or "utf-8", title or url
-                            )
-                            if oa_text:
-                                title = title or oa_title
-                                text = oa_text
-                                logger.info(f"[fetch_url] Unpaywall OA scrape succeeded for {url} ({len(text)} chars)")
+                            oa_resp = await _safe_get(client, oa_url, headers=_SCRAPE_HEADERS)
+                            if oa_resp is not None and oa_resp.status_code < 400:
+                                oa_title, oa_text = await asyncio.to_thread(
+                                    _scrape_html, oa_resp.content, oa_resp.encoding or "utf-8", title or url
+                                )
+                                if oa_text:
+                                    title = title or oa_title
+                                    text = oa_text
+                                    logger.info(f"[fetch_url] Unpaywall OA scrape succeeded for {url} ({len(text)} chars)")
                         except Exception as e:
                             logger.warning(f"[fetch_url] OA scrape failed for {oa_url}: {e}")
 
         # --- Path 2: Plain web scraping fallback ---
         if not text:
             try:
-                resp = await client.get(url, headers=_SCRAPE_HEADERS, follow_redirects=True)
-                resp.raise_for_status()
-                page_title, page_text = await asyncio.to_thread(
-                    _scrape_html, resp.content, resp.encoding or "utf-8", url
-                )
-                title = title or page_title
-                text = page_text or None
-                if text:
-                    logger.info(f"[fetch_url] Web scrape fallback for {url} ({len(text)} chars)")
+                resp = await _safe_get(client, url, headers=_SCRAPE_HEADERS)
+                if resp is not None and resp.status_code < 400:
+                    page_title, page_text = await asyncio.to_thread(
+                        _scrape_html, resp.content, resp.encoding or "utf-8", url
+                    )
+                    title = title or page_title
+                    text = page_text or None
+                    if text:
+                        logger.info(f"[fetch_url] Web scrape fallback for {url} ({len(text)} chars)")
             except Exception as e:
                 logger.warning(f"[fetch_url] Failed to fetch {url}: {type(e).__name__}: {e}")
 

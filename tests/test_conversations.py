@@ -34,6 +34,79 @@ def mock_external_services(mock_retrieval):
         yield
 
 
+class TestSingleNlpPassPerMessage:
+    """The NLP service is the most CPU-expensive hop in a chat turn.
+    search_and_embed already spell-corrects and extracts the current message,
+    so the request path must reuse that result rather than extracting again."""
+
+    @patch("src.routers.conversations.run_retrieval")
+    def test_request_path_does_not_extract_terms_a_second_time(self, mock_retrieval, client):
+        mock_retrieval.return_value = {"generation_context": "info", "intent": "concept"}
+        extract = AsyncMock(return_value=["glioblastoma"])
+
+        with patch("src.routers.conversation_helper._extract_terms_from_message", extract):
+            response = client.post(
+                "/conversations/new",
+                json={"content": "what is GBM?"},
+            )
+
+        assert response.status_code == 200
+        extract.assert_not_awaited()
+
+    @patch("src.routers.conversations.run_retrieval")
+    @patch("src.routers.conversations.search_and_embed")
+    def test_extracted_terms_persisted_from_search_result(
+        self, mock_search_and_embed, mock_retrieval, client, db_session
+    ):
+        from src.db.models import Message
+
+        mock_search_and_embed.return_value = {
+            "indexed": 0, "skipped": 0,
+            "terms": ["glioblastoma", "temozolomide", "history term"],
+            "latest_terms": ["glioblastoma", "temozolomide"],
+            "entity_groups": [],
+        }
+        mock_retrieval.return_value = {"generation_context": "info", "intent": "concept"}
+
+        response = client.post("/conversations/new", json={"content": "GBM and temozolomide?"})
+        assert response.status_code == 200
+
+        user_msg = (
+            db_session.query(Message)
+            .filter(Message.role == "user", Message.content == "GBM and temozolomide?")
+            .one()
+        )
+        # This message's own terms — not the history-merged `terms` list
+        assert user_msg.extracted_terms == ["glioblastoma", "temozolomide"]
+
+    @patch("src.routers.conversations.run_retrieval")
+    @patch("src.routers.conversations.search_and_embed")
+    def test_falls_back_to_merged_terms_when_nlp_returned_nothing(
+        self, mock_search_and_embed, mock_retrieval, client, db_session
+    ):
+        """NLP can come back empty for a bare abbreviation, in which case
+        search_and_embed's word-extraction fallback is what gets cached."""
+        from src.db.models import Message
+
+        mock_search_and_embed.return_value = {
+            "indexed": 0, "skipped": 0,
+            "terms": ["gbm"],
+            "latest_terms": [],
+            "entity_groups": [],
+        }
+        mock_retrieval.return_value = {"generation_context": "info", "intent": "concept"}
+
+        response = client.post("/conversations/new", json={"content": "gbm"})
+        assert response.status_code == 200
+
+        user_msg = (
+            db_session.query(Message)
+            .filter(Message.role == "user", Message.content == "gbm")
+            .one()
+        )
+        assert user_msg.extracted_terms == ["gbm"]
+
+
 class TestRetrievalQueryEntityGrouping:
     """retrieval_query should use one representative term per entity, not the
     fully synonym-expanded flat term list, so a heavily-synonymed entity

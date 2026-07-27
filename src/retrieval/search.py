@@ -109,6 +109,18 @@ def search_sources(db, text=None, vector=None, k_results: int = 5, disease_areas
     # existing indices, which causes a 400 error.
     body = {
       "size": k_results * 4,
+      # Only the fields the caller actually consumes: the prompt builder reads
+      # content_for_embedding + id, dedup reads source_id, and the log line
+      # reads evidence_level/pub_year. Excluded above all is `embedding` — a
+      # 768-float array that is ~15KB of JSON per hit and pure waste to ship
+      # back and deserialize on every single query.
+      "_source": [
+        "id",
+        "source_id",
+        "content_for_embedding",
+        "evidence_level",
+        "pub_year",
+      ],
       "query": {
         'bool': {
           'must': [

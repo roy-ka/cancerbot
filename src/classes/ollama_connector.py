@@ -75,11 +75,46 @@ class OllamaConnector:
   groq = _GroqClientProxy()
   gemini = _GeminiClientProxy()
 
+  _async_groq = None
+
+  @classmethod
+  def _get_async_groq(cls):
+    """One shared AsyncGroq client for the process.
+
+    Constructing AsyncGroq per call builds a fresh httpx client each time, so
+    every message and every title paid for a new TLS handshake instead of
+    reusing a pooled connection.
+    """
+    if cls._async_groq is None:
+      from groq import AsyncGroq
+      cls._async_groq = AsyncGroq(api_key=os.getenv("GROQ_API_KEY"))
+    return cls._async_groq
+
   @classmethod
   def embed_text(cls, text):
     logger.debug("[ollama] embed model=%s input_len=%d", cls.embed_model, len(text))
     response = cls.ollama.embed(model=cls.embed_model, input=text)
     return response.embeddings[0]
+
+  @classmethod
+  def embed_texts(cls, texts: Sequence[str]) -> list:
+    """Embed several texts in one Ollama request.
+
+    Ollama's /api/embed accepts a list for `input` and returns one vector per
+    item, so a source's chunks cost a single round trip instead of one per
+    chunk. Returns vectors in the same order as `texts`.
+    """
+    texts = list(texts)
+    if not texts:
+      return []
+    logger.debug("[ollama] embed batch model=%s count=%d", cls.embed_model, len(texts))
+    response = cls.ollama.embed(model=cls.embed_model, input=texts)
+    embeddings = list(response.embeddings)
+    if len(embeddings) != len(texts):
+      raise ValueError(
+        f"Ollama returned {len(embeddings)} embeddings for {len(texts)} inputs"
+      )
+    return embeddings
 
   @classmethod
   def _build_prompt(
@@ -266,8 +301,6 @@ ANSWER (every sentence must have a [source#] citation):
     message — used to instruct the LLM to answer in that language rather than
     always English.
     """
-    from groq import AsyncGroq
-
     full_prompt, alias_to_id, max_tokens = cls._build_prompt(context, question, history, first_message)
 
     logger.debug(
@@ -279,8 +312,7 @@ ANSWER (every sentence must have a [source#] citation):
     streaming_started = False
 
     try:
-      async_groq = AsyncGroq(api_key=os.getenv("GROQ_API_KEY"))
-      stream = await async_groq.chat.completions.create(
+      stream = await cls._get_async_groq().chat.completions.create(
         model=cls.groq_model,
         messages=[{"role": "user", "content": full_prompt}],
         max_tokens=max_tokens,
@@ -342,7 +374,7 @@ ANSWER (every sentence must have a [source#] citation):
     Falls back to a cleaned/truncated version of the message on any error —
     never raises, since a missing title should never break the chat flow.
     """
-    from groq import AsyncGroq, GroqError
+    from groq import GroqError
 
     fallback = cls._heuristic_title(text)
     if not (text or '').strip():
@@ -354,8 +386,7 @@ ANSWER (every sentence must have a [source#] citation):
       f"{text.strip()[:500]}"
     )
     try:
-      async_groq = AsyncGroq(api_key=os.getenv("GROQ_API_KEY"))
-      completion = await async_groq.chat.completions.create(
+      completion = await cls._get_async_groq().chat.completions.create(
         model=cls.groq_model,
         messages=[{"role": "user", "content": prompt}],
         max_tokens=20,

@@ -1,7 +1,6 @@
 import urllib.request
 from bs4 import BeautifulSoup
 import json
-import pandas as pd
 from dotenv import load_dotenv
 import os
 
@@ -29,8 +28,22 @@ def write_to_file(filepath, data):
     for record in data:
       f.write(json.dumps(record, ensure_ascii=False) + '\n')  
 
+# A tuple, not a set: `in` on a set hashes the operand, which would raise
+# TypeError for the unhashable values (lists) that can reach this check.
+_MISSING_VALUES = ('', 'NA', 'N/A', 'null', 'None')
+
+
 def is_exist(field):
-  return field and not pd.isna(field) and field != '' and field != 'NA' and field != 'N/A' and field != 'null' and field != 'None'
+  """True when `field` holds a real value rather than a null-ish placeholder.
+
+  Deliberately pandas-free: this module is imported by main.py, auth.py and
+  db_connector.py, so a module-level `import pandas` pulled pandas + numpy
+  (~100MB resident) into every backend and worker process for this one check.
+  `field != field` is the NaN test pd.isna() was doing for float values.
+  """
+  if not field or field != field:
+    return False
+  return field not in _MISSING_VALUES
 
 def is_prod():
   return (ENV or '').lower() in ('prod', 'production')

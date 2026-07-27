@@ -112,6 +112,12 @@ def _process_one(db) -> bool:
 
 
 STALE_PROCESSING_MINUTES = 15
+# How often the reaper actually runs. It only ever matters for jobs already
+# stuck for STALE_PROCESSING_MINUTES, so running it on every poll meant an
+# UPDATE + COMMIT (and its WAL) every POLL_INTERVAL seconds around the clock
+# to find nothing. Well under STALE_PROCESSING_MINUTES, so detection latency
+# is unchanged in practice.
+REAP_INTERVAL_SECONDS = 300
 
 
 def _reap_stale_jobs(db) -> None:
@@ -133,12 +139,20 @@ def _reap_stale_jobs(db) -> None:
 def run() -> None:
     from src.db.session import SessionLocal
 
-    logger.info(f"URL classifier worker started (poll_interval={POLL_INTERVAL}s)")
+    logger.info(
+        f"URL classifier worker started (poll_interval={POLL_INTERVAL}s, "
+        f"reap_interval={REAP_INTERVAL_SECONDS}s)"
+    )
+
+    next_reap = 0.0
 
     while True:
         try:
             with SessionLocal() as db:
-                _reap_stale_jobs(db)
+                now = time.monotonic()
+                if now >= next_reap:
+                    _reap_stale_jobs(db)
+                    next_reap = now + REAP_INTERVAL_SECONDS
                 found = _process_one(db)
             if not found:
                 time.sleep(POLL_INTERVAL)

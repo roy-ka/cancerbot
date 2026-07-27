@@ -153,6 +153,21 @@ def test_conversation(db_session, test_user):
     return conv
 
 
+@pytest.fixture(autouse=True)
+def reset_llm_clients():
+    """Drop the process-wide cached AsyncGroq client between tests.
+
+    OllamaConnector caches one client for the lifetime of the process so each
+    request reuses a pooled connection instead of paying for a new TLS
+    handshake. That cache would otherwise leak a mock from whichever test
+    patched groq.AsyncGroq first into every test that follows.
+    """
+    from src.classes.ollama_connector import OllamaConnector
+    OllamaConnector._async_groq = None
+    yield
+    OllamaConnector._async_groq = None
+
+
 @pytest.fixture()
 def mock_retrieval():
     return {

@@ -81,9 +81,15 @@ def validate_password(password: str) -> str:
     return ""
 
 def _client_ip(request: Request) -> str:
-    forwarded_for = request.headers.get("X-Forwarded-For")
-    if forwarded_for:
-        return forwarded_for.split(",")[0].strip()
+    """The peer address of the TCP connection.
+
+    X-Forwarded-For is deliberately NOT trusted: the backend serves traffic
+    directly, so the header is fully attacker-controlled and honouring it let
+    anyone defeat the per-IP registration rate limit just by rotating a fake
+    value. If a reverse proxy is ever put in front of this service, the header
+    can be re-enabled — but only for requests whose immediate peer is the
+    proxy itself, never unconditionally.
+    """
     return request.client.host if request.client else "unknown"
 
 router = APIRouter(prefix="/auth", tags=["auth"])
