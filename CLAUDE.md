@@ -323,7 +323,36 @@ JWT tokens (HS256) accepted via `Authorization: Bearer <token>` header or `acces
 - **JWT revocation**: tokens carry a `tv` (token version) claim. `User.token_version` is incremented on password reset; tokens with a mismatched `tv` are rejected with 401.
 - **Rate limiting**: login uses `LoginAttempt` (5 failures → 15 min lockout); register uses per-IP limit (10/h); forgot-password uses per-email limit (5/h) — both via `RateLimitEntry`.
 - **Password reset**: time-limited codes via SendGrid email.
+- **Constant-cost login**: `/auth/login/` always performs one `verify_password`, falling back to `_get_dummy_hash()` when the email is unknown. Do not restore the `not user or not verify_password(...)` short-circuit — skipping a 600k-round pbkdf2 for unregistered addresses makes account existence measurable from response latency.
+- **`/auth/register/` still discloses whether an email is registered** (400 "Email already registered"). Left deliberate: a generic response needs a "someone tried to register" mail flow, loses a genuinely useful error, and `e2e/global-teardown.ts` depends on it.
+- **Stale throttling rows** are pruned every 6h by `src/jobs/auth_cleanup.py`. Both `login_attempts` and `rate_limit_entries` are keyed by attacker-supplied values (any submitted email, any client IP), so they have no natural bound. The sweep never deletes a row whose lock/block is still in the future.
+- **WebSocket Origin**: CORSMiddleware does not cover WS handshakes, so `post_message_ws` checks `Origin` against `CORS_ORIGINS` itself. A *missing* Origin is allowed on purpose — browsers always send one, so its absence means a non-browser client with no ambient cookie.
+- **`CORS_ORIGINS='*'`** makes `src/main.py` refuse to start in production. Starlette echoes the request Origin when `allow_credentials=True`, so a wildcard lets any site issue authenticated requests with the user's cookie.
 - **Client IP**: `_client_ip` in `auth.py` uses the socket peer only. `X-Forwarded-For` is **not** trusted — the backend serves directly on port 8000, so the header is attacker-controlled and honouring it let anyone defeat the per-IP registration limit by rotating a fake value. If a reverse proxy is ever added, re-enable it *only* for requests whose immediate peer is the proxy, and set `MAX_REGISTER_ATTEMPTS` accordingly — otherwise every user shares one rate-limit bucket.
+
+### Prompt safety
+Retrieved evidence is third-party text (abstracts, trial records, scraped
+pages), so `_build_prompt` treats it as untrusted input:
+
+- The evidence block is wrapped in the `_EVIDENCE_BEGIN` / `_EVIDENCE_END`
+  markers, and an UNTRUSTED CONTENT section tells the model that anything
+  inside is data, never instructions.
+- `_EVIDENCE_FENCE_RE` strips any fence marker appearing *within* a source's
+  text, so a page containing `===== END UNTRUSTED EVIDENCE =====` cannot close
+  the block early and have its remaining text read as top-level instructions.
+- The markers carry the `=====` decoration precisely so they stay distinct from
+  the prose that describes them — keep it that way, or "exactly one closing
+  marker" stops being a checkable property.
+
+This reduces prompt injection; it does not eliminate it. Treat model output
+derived from fetched pages as untrusted for anything with side effects.
+
+### XML parsing
+All `fromstring` calls go through `defusedxml` (imported as `_safe_fromstring`
+in `xml_to_source.py`, `conversation_helper.py` and
+`scripts/backfill_source_metadata.py`). Plain `xml.etree.ElementTree` stays
+imported alongside it only for `ET.tostring`, which defusedxml does not
+provide. Don't switch a parse site back to `ET.fromstring`.
 
 ### Outbound fetch safety (SSRF)
 Any URL that originates from user input or a third-party API must go through

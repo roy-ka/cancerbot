@@ -53,6 +53,33 @@ def is_account_locked(db: Session, email: str) -> bool:
 
     return True
 
+STALE_ATTEMPT_DAYS = 7
+
+
+def delete_stale_attempts(db: Session, older_than_days: int = STALE_ATTEMPT_DAYS) -> int:
+    """Remove login-attempt rows that are old and no longer locking anything.
+
+    A row is created for every email a login is attempted with, including
+    addresses that have no account — that symmetry is deliberate (it's what
+    stops the endpoint disclosing which emails exist), but it also means an
+    attacker can grow this table indefinitely by posting random addresses.
+    Rows still inside their lockout window are always kept.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(days=older_than_days)
+    now = datetime.now(timezone.utc)
+    deleted = (
+        db.query(LoginAttempt)
+        .filter(
+            LoginAttempt.last_attempt_at.isnot(None),
+            LoginAttempt.last_attempt_at < cutoff,
+            (LoginAttempt.locked_until.is_(None)) | (LoginAttempt.locked_until < now),
+        )
+        .delete(synchronize_session=False)
+    )
+    db.commit()
+    return deleted
+
+
 def get_remaining_attempts(db: Session, email: str) -> int:
     """Get remaining login attempts before lockout."""
     attempt = db.query(LoginAttempt).filter(LoginAttempt.email == email).first()

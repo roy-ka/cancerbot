@@ -23,6 +23,31 @@ def is_rate_limited(db: Session, key: str) -> bool:
     return True
 
 
+STALE_ENTRY_DAYS = 7
+
+
+def delete_stale_entries(db: Session, older_than_days: int = STALE_ENTRY_DAYS) -> int:
+    """Remove rate-limit rows that are old and no longer blocking anything.
+
+    Keys are derived from attacker-supplied values (`register:<ip>`,
+    `forgot-password:<email>`), so without pruning this table grows without
+    bound. Rows still inside their block window are always kept.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(days=older_than_days)
+    now = datetime.now(timezone.utc)
+    deleted = (
+        db.query(RateLimitEntry)
+        .filter(
+            RateLimitEntry.last_attempt_at.isnot(None),
+            RateLimitEntry.last_attempt_at < cutoff,
+            (RateLimitEntry.blocked_until.is_(None)) | (RateLimitEntry.blocked_until < now),
+        )
+        .delete(synchronize_session=False)
+    )
+    db.commit()
+    return deleted
+
+
 def record_attempt(db: Session, key: str, max_attempts: int, block_minutes: int = BLOCK_MINUTES) -> RateLimitEntry:
     entry = db.query(RateLimitEntry).filter(RateLimitEntry.key == key).first()
     if not entry:

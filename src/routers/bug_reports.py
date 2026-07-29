@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from src.deps.db import get_db
 from src.deps.auth import get_current_user
 from src.db.models import BugReport
@@ -11,9 +11,11 @@ logger = logging.getLogger(__name__)
 
 
 class BugReportRequest(BaseModel):
-    title: str
-    description: str | None = None
-    how_to_reproduce: str | None = None
+    # title is capped to the column width (String(255)); anything longer used to
+    # reach the database and fail there as a 500 rather than a validation error.
+    title: str = Field(..., max_length=255)
+    description: str | None = Field(default=None, max_length=5000)
+    how_to_reproduce: str | None = Field(default=None, max_length=5000)
 
 
 @router.post("/")

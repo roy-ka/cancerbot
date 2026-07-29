@@ -28,9 +28,27 @@ ROLLS = Literal['user', 'assistant']
 _user_msg_times: dict[str, list[float]] = defaultdict(list)
 _MSG_RATE_WINDOW = 60.0
 _MSG_RATE_MAX = 10
+# How often expired entries are swept out of _user_msg_times. Without this the
+# dict keeps one key per user id that has ever sent a message, for the life of
+# the process.
+_RATE_SWEEP_INTERVAL = 300.0
+_last_rate_sweep = 0.0
+
+
+def _sweep_message_rates(now: float) -> None:
+    """Drop users whose rate-limit window has fully expired."""
+    global _last_rate_sweep
+    if now - _last_rate_sweep < _RATE_SWEEP_INTERVAL:
+        return
+    _last_rate_sweep = now
+    cutoff = now - _MSG_RATE_WINDOW
+    for user_id in [uid for uid, times in _user_msg_times.items() if not any(t > cutoff for t in times)]:
+        del _user_msg_times[user_id]
+
 
 def _check_message_rate(user_id: str) -> bool:
     now = time.monotonic()
+    _sweep_message_rates(now)
     cutoff = now - _MSG_RATE_WINDOW
     times = _user_msg_times[user_id]
     times[:] = [t for t in times if t > cutoff]
@@ -39,6 +57,9 @@ def _check_message_rate(user_id: str) -> bool:
     times.append(now)
     return True
 
+# NOTE: both of these live in process memory, so with more than one uvicorn
+# worker each worker enforces its own budget and the effective limit is
+# multiplied by the worker count. Move them to Postgres/Redis before scaling out.
 _active_ws: dict[str, int] = defaultdict(int)
 _WS_MAX_PER_USER = 3
 
@@ -69,6 +90,29 @@ async def _emit_stage_noop(stage: str, data: Dict[str, Any] | None = None) -> No
 
 async def _send_token_noop(token: str) -> None:
     pass
+
+
+def _allowed_ws_origins() -> set[str]:
+    """Origins permitted to open a WebSocket, from the same list CORS uses."""
+    raw = os.getenv("CORS_ORIGINS", "http://localhost:5173")
+    return {origin.strip().rstrip('/') for origin in raw.split(",") if origin.strip()}
+
+
+def _is_allowed_ws_origin(origin: str | None) -> bool:
+    """Whether a handshake carrying this Origin header may proceed.
+
+    A missing Origin is allowed: browsers always send one on a WebSocket
+    handshake, so its absence means a non-browser client (tests, scripts, a
+    native app), which is not subject to the cross-site attack this guards
+    against and has no cookie to abuse in the first place.
+    """
+    if origin is None:
+        return True
+    allowed = _allowed_ws_origins()
+    if "*" in allowed:
+        return True
+    return origin.strip().rstrip('/') in allowed
+
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
 
@@ -407,6 +451,19 @@ async def get_conversation_messages(
         current_user=current_user,
     )
 
+    # Authorize before doing any work. get_conversation_by_id already filters on
+    # user_id, so a conversation belonging to someone else is indistinguishable
+    # from one that doesn't exist. Loading the page first meant an arbitrary
+    # conversation id cost a message query plus an OpenSearch source lookup
+    # before being rejected.
+    if conversation is None:
+        logging.error("couldn't find conversation id: %s", conversation_id)
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    # Redundant given the filter above, kept as defence in depth
+    if str(conversation.user_id) != str(current_user.id):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
     messages = get_messages_by_conversation_id(
         db=db,
         conversation_id=conversation_id,
@@ -419,14 +476,6 @@ async def get_conversation_messages(
         oldest = messages[0]
         if oldest.created_at:
             next_before = f"{oldest.created_at.isoformat()}|{str(oldest.id)}"
-
-    if conversation is None:
-        logging.error("couldn't find conversation id: %s", conversation_id)
-        raise HTTPException(status_code=404, detail="Conversation not found")
-
-    # Enforce ownership
-    if str(conversation.user_id) != str(current_user.id):
-        raise HTTPException(status_code=403, detail="Forbidden")
 
     messages_data = [
         {
@@ -475,6 +524,19 @@ async def post_message_ws(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
+    # CORSMiddleware does not apply to WebSocket handshakes, so the Origin
+    # check has to happen here. A cross-site page opening a socket with the
+    # victim's cookie is largely blocked by SameSite=Lax already; this closes
+    # the remaining gap (non-conforming or older clients) rather than relying
+    # on cookie policy alone.
+    if not _is_allowed_ws_origin(websocket.headers.get("origin")):
+        logging.warning(
+            "[ws] rejected handshake from disallowed origin: %r",
+            websocket.headers.get("origin"),
+        )
+        await websocket.close(code=1008)
+        return
+
     uid = str(current_user.id)
     if _active_ws[uid] >= _WS_MAX_PER_USER:
         await websocket.close(code=1008)
@@ -533,7 +595,13 @@ async def post_message_ws(
         except Exception:
             pass
     finally:
-        _active_ws[uid] = max(0, _active_ws[uid] - 1)
+        remaining = max(0, _active_ws[uid] - 1)
+        if remaining:
+            _active_ws[uid] = remaining
+        else:
+            # Drop the key entirely rather than leaving a 0 behind, so the dict
+            # doesn't accumulate one entry per user that ever opened a socket.
+            _active_ws.pop(uid, None)
 
 class CreateConversationRequest(BaseModel):
     title: str = ""

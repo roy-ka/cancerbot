@@ -8,6 +8,7 @@ import re
 import socket
 import time
 import xml.etree.ElementTree as ET
+from defusedxml.ElementTree import fromstring as _safe_fromstring
 from typing import Any, Awaitable, Callable, Dict, Optional
 from urllib.parse import quote_plus, urlparse
 import httpx
@@ -615,7 +616,7 @@ async def _search_pubmed_sources(
     try:
         efetch_resp = await _retry_get(client, efetch_url)
         efetch_resp.raise_for_status()
-        root = ET.fromstring(efetch_resp.text)
+        root = _safe_fromstring(efetch_resp.text)
     except Exception as e:
         logger.warning(f"[pubmed] efetch failed: {e}")
         return []
@@ -1354,7 +1355,7 @@ async def _fetch_pubmed_by_pmid(client: httpx.AsyncClient, pmid: str) -> dict | 
             timeout=httpx.Timeout(15.0),
         )
         resp.raise_for_status()
-        root = ET.fromstring(resp.text)
+        root = _safe_fromstring(resp.text)
         article_xml = root.find(".//PubmedArticle")
         if article_xml is not None:
             return pubmed_article_xml_to_source(ET.tostring(article_xml, encoding="unicode"))
@@ -1404,7 +1405,7 @@ async def _resolve_doi(client: httpx.AsyncClient, doi: str) -> dict | None:
                 timeout=httpx.Timeout(15.0),
             )
             efetch_resp.raise_for_status()
-            root = ET.fromstring(efetch_resp.text)
+            root = _safe_fromstring(efetch_resp.text)
             article_xml = root.find(".//PubmedArticle")
             if article_xml is not None:
                 source = pubmed_article_xml_to_source(ET.tostring(article_xml, encoding="unicode"))

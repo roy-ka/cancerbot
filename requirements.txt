@@ -16,6 +16,7 @@ python-jose[cryptography]
 beautifulsoup4
 wikipedia-api
 lxml
+defusedxml
 tldextract
 axiom-py
 

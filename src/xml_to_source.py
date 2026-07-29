@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Union
 import re
 import xml.etree.ElementTree as ET
+from defusedxml.ElementTree import fromstring as _safe_fromstring
 
 
 def _text(el: Optional[ET.Element]) -> Optional[str]:
@@ -57,10 +58,10 @@ def _to_et_root(xml: Union[str, bytes, ET.Element, Any]) -> ET.Element:
         return xml
 
     if isinstance(xml, (bytes, bytearray)):
-        return ET.fromstring(bytes(xml))
+        return _safe_fromstring(bytes(xml))
 
     if isinstance(xml, str):
-        return ET.fromstring(xml)
+        return _safe_fromstring(xml)
 
     # Best-effort support for BeautifulSoup Tag or similar objects.
     # BeautifulSoup tags stringify to their XML/HTML.
@@ -68,7 +69,7 @@ def _to_et_root(xml: Union[str, bytes, ET.Element, Any]) -> ET.Element:
         xml_str = str(xml)
         if not xml_str.strip().startswith("<"):
             raise TypeError
-        return ET.fromstring(xml_str)
+        return _safe_fromstring(xml_str)
     except Exception as e:
         raise TypeError(
             "pubmed_article_xml_to_source() expected XML as str/bytes/Element (or a Tag that stringifies to XML). "

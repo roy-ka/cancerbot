@@ -1,4 +1,5 @@
 import os
+import secrets
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request, Response, HTTPException, status
@@ -80,6 +81,24 @@ def validate_password(password: str) -> str:
         return "Password must contain special characters"
     return ""
 
+_dummy_password_hash: str | None = None
+
+
+def _get_dummy_hash() -> str:
+    """A throwaway hash used to equalise login timing for unknown emails.
+
+    Without it, `not user or not verify_password(...)` short-circuits, so a
+    request for an unregistered address skips a 600k-round pbkdf2 verify and
+    comes back measurably sooner — enough to enumerate which emails have
+    accounts. Built once per process from a random secret; it exists only to
+    be compared against and can never match a real password.
+    """
+    global _dummy_password_hash
+    if _dummy_password_hash is None:
+        _dummy_password_hash = SecurityUtils.hash_password(secrets.token_urlsafe(32))
+    return _dummy_password_hash
+
+
 def _client_ip(request: Request) -> str:
     """The peer address of the TCP connection.
 
@@ -136,7 +155,15 @@ async def generate_token(req: LoginRequest, response: Response, db: Session = De
     user = get_user_by_email(db=db, email=req.email)
     logging.info(f"Login attempt for email: {req.email}")
 
-    if not user or not SecurityUtils.verify_password(req.password, user.password_hash):
+    # Always spend the cost of one verify, even when the email is unknown, so
+    # response time doesn't disclose whether an account exists.
+    if user:
+        password_ok = SecurityUtils.verify_password(req.password, user.password_hash)
+    else:
+        SecurityUtils.verify_password(req.password, _get_dummy_hash())
+        password_ok = False
+
+    if not password_ok:
         increment_failed_attempts(db, req.email)
         remaining = get_remaining_attempts(db, req.email)
         if remaining <= 0:

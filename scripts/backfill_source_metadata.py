@@ -26,6 +26,7 @@ import logging
 import os
 import sys
 import xml.etree.ElementTree as ET
+from defusedxml.ElementTree import fromstring as _safe_fromstring
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -91,7 +92,7 @@ def _parse_efetch(xml_text: str) -> dict[str, dict]:
     """Return {pmid: {"pub_year": int|None, "pub_types": [str]}} from an efetch response."""
     out: dict[str, dict] = {}
     try:
-        root = ET.fromstring(xml_text)
+        root = _safe_fromstring(xml_text)
     except ET.ParseError as exc:
         logger.warning("efetch response was not parseable XML: %s", exc)
         return out

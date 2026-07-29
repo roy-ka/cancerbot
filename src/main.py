@@ -105,22 +105,39 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"Failed to ensure ninja user: {e}")
 
-    deletion_sweep_task = None
+    background_tasks = []
     if os.getenv("ENV", "").lower() != "test":
         from src.jobs.account_deletion import run_account_deletion_sweep
-        deletion_sweep_task = asyncio.create_task(run_account_deletion_sweep())
+        from src.jobs.auth_cleanup import run_auth_cleanup_sweep
+        background_tasks.append(asyncio.create_task(run_account_deletion_sweep()))
+        background_tasks.append(asyncio.create_task(run_auth_cleanup_sweep()))
 
     yield
 
     # Shutdown: Cleanup if needed
-    if deletion_sweep_task:
-        deletion_sweep_task.cancel()
+    for task in background_tasks:
+        task.cancel()
     logger.info("Application shutting down")
 
 app = FastAPI(lifespan=lifespan)
 
 allow_origins = os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")
 allow_origins = [origin.strip() for origin in allow_origins]
+
+# Starlette echoes the request Origin when credentials are allowed, so a
+# wildcard here doesn't mean "public read-only API" — it means any site can
+# make authenticated requests with the user's cookie and read the response.
+if "*" in allow_origins:
+    if is_prod():
+        raise RuntimeError(
+            "CORS_ORIGINS='*' cannot be combined with credentialed requests in production — "
+            "it lets any origin issue authenticated requests with the user's session cookie. "
+            "Set CORS_ORIGINS to an explicit comma-separated list of trusted origins."
+        )
+    logger.warning(
+        "CORS_ORIGINS contains '*' with allow_credentials=True — every origin can make "
+        "authenticated requests. Acceptable in development only; this refuses to start in production."
+    )
 
 app.add_middleware(
   CORSMiddleware,
