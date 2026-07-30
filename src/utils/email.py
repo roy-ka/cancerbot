@@ -1,11 +1,26 @@
 import asyncio
 import logging
 import os
+import re
 import threading
 
 from src.utils.utils import is_prod
 
 logger = logging.getLogger(__name__)
+
+_TOKEN_QUERY_RE = re.compile(r"(token=)[^&\s]+", re.IGNORECASE)
+
+
+def _redact_token(url: str) -> str:
+    """Mask the `token` query-param value in a URL before logging.
+
+    These links are only logged in non-prod, but 'non-prod' includes staging —
+    where the root-logger Axiom handler would otherwise ship a live, usable
+    reset/verification/deletion token to a third-party log store. Redacting
+    keeps the flow visible (path + recipient) without emitting the secret.
+    """
+    return _TOKEN_QUERY_RE.sub(r"\1***", url or "")
+
 
 EMAIL_TEMPLATES = {
     "verification": "d-6a6d6095e74549fbb91c18e741cef813",
@@ -69,7 +84,7 @@ def send_fallback_alert(model: str) -> None:
 async def send_verification_email(to: str, name: str, token: str, frontend_url: str) -> None:
     verify_url = f"{frontend_url}/verify-email?token={token}"
     if not is_prod():
-        logger.info("[email] verification link for %s: %s", to, verify_url)
+        logger.info("[email] verification link for %s: %s", to, _redact_token(verify_url))
     await asyncio.to_thread(
         _send_sendgrid,
         to,
@@ -90,7 +105,7 @@ async def send_account_deleted_email(to: str, name: str) -> None:
 
 async def send_password_reset_email(to: str, name: str, link: str) -> None:
     if not is_prod():
-        logger.info("[email] password reset link for %s: %s", to, link)
+        logger.info("[email] password reset link for %s: %s", to, _redact_token(link))
     await asyncio.to_thread(
         _send_sendgrid,
         to,
@@ -103,7 +118,7 @@ async def send_password_reset_email(to: str, name: str, link: str) -> None:
 async def send_delete_account_request_email(to: str, name: str, link: str) -> None:
     """Step 1 — sent as soon as the user asks to delete their account."""
     if not is_prod():
-        logger.info("[email] delete-account confirmation link for %s: %s", to, link)
+        logger.info("[email] delete-account confirmation link for %s: %s", to, _redact_token(link))
     await asyncio.to_thread(
         _send_sendgrid,
         to,

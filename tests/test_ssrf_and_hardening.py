@@ -397,7 +397,11 @@ class TestResetLinkLogging:
         assert "SECRET123" not in caplog.text
 
     @pytest.mark.asyncio
-    async def test_links_still_logged_in_development(self, monkeypatch, caplog):
+    async def test_token_redacted_from_dev_log(self, monkeypatch, caplog):
+        """Even in non-prod the token is masked: 'non-prod' includes staging,
+        where the Axiom log handler would otherwise ship a live token to a
+        third-party store. The link is still logged (path + recipient), just
+        without the secret."""
         import src.utils.email as email_module
 
         monkeypatch.setattr(email_module, "is_prod", lambda: False)
@@ -408,4 +412,27 @@ class TestResetLinkLogging:
                 to="user@example.com", name="User", link="https://app/reset?token=DEVTOKEN"
             )
 
-        assert "DEVTOKEN" in caplog.text
+        assert "DEVTOKEN" not in caplog.text
+        assert "token=***" in caplog.text
+        assert "user@example.com" in caplog.text  # flow still visible
+
+
+class TestRedactToken:
+    def test_masks_token_value(self):
+        from src.utils.email import _redact_token
+        assert _redact_token("https://app/reset?token=SECRET") == "https://app/reset?token=***"
+
+    def test_preserves_other_query_params(self):
+        from src.utils.email import _redact_token
+        out = _redact_token("https://app/verify?token=ABC123&lang=en")
+        assert "token=***" in out
+        assert "lang=en" in out
+        assert "ABC123" not in out
+
+    def test_noop_when_no_token(self):
+        from src.utils.email import _redact_token
+        assert _redact_token("https://app/home") == "https://app/home"
+
+    def test_handles_empty(self):
+        from src.utils.email import _redact_token
+        assert _redact_token("") == ""
