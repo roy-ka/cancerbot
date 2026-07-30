@@ -892,12 +892,19 @@ def _pick_oncology_title(candidates: list[dict]) -> str | None:
     return None
 
 
-def _wiki_search(term: str, limit: int = 5) -> list[dict]:
-    """Call Wikipedia's search API and return result items."""
+def _wiki_search(term: str, limit: int = 5, client: httpx.Client | None = None) -> list[dict]:
+    """Call Wikipedia's search API and return result items.
+
+    Pass a shared `httpx.Client` (see `_search_wikipedia_sources`) to reuse one
+    keep-alive connection across all per-term searches instead of opening a
+    fresh TLS connection per call. Falls back to the module-level `httpx.get`
+    when no client is given (standalone callers, tests).
+    """
+    get = client.get if client is not None else httpx.get
     delay = 1.0
     for attempt in range(_RETRY_MAX):
         try:
-            resp = httpx.get(
+            resp = get(
                 _WIKI_SEARCH_URL,
                 params={
                     "action": "query",
@@ -946,37 +953,42 @@ async def _search_wikipedia_sources(
         batch = _representative_terms(entity_groups, terms)[:10]
         out: list[dict] = []
         seen: set[str] = set()
-        for term in batch:
-            if len(out) >= max_results:
-                break
-            try:
-                candidates = _wiki_search(term)
-                title = _pick_oncology_title(candidates) if candidates else term
-                page = _wiki.page(title)
-                if not page.exists():
-                    page = _wiki.page(term)
+        # One shared client so all per-term search calls reuse a single
+        # keep-alive connection instead of a TLS handshake each. (The
+        # wikipediaapi _wiki.page() calls below use their own urllib client
+        # and aren't poolable through this.)
+        with httpx.Client() as client:
+            for term in batch:
+                if len(out) >= max_results:
+                    break
+                try:
+                    candidates = _wiki_search(term, client=client)
+                    title = _pick_oncology_title(candidates) if candidates else term
+                    page = _wiki.page(title)
                     if not page.exists():
+                        page = _wiki.page(term)
+                        if not page.exists():
+                            continue
+                    if page.title in seen:
                         continue
-                if page.title in seen:
+                    seen.add(page.title)
+                    summary = (page.summary or "").strip()
+                    if len(summary.split()) < MIN_FULLTEXT_WORDS:
+                        continue
+                    out.append(
+                        {
+                            "source_type": "wikipedia",
+                            "pmid": None,
+                            "doi": None,
+                            "title": page.title,
+                            "content_for_embedding": f"{page.title}\n\n{summary}",
+                            "abstract_source": "wikipedia",
+                            "url": page.fullurl,
+                        }
+                    )
+                except Exception as e:
+                    logger.warning(f"[wikipedia] error for term='{term}': {e}")
                     continue
-                seen.add(page.title)
-                summary = (page.summary or "").strip()
-                if len(summary.split()) < MIN_FULLTEXT_WORDS:
-                    continue
-                out.append(
-                    {
-                        "source_type": "wikipedia",
-                        "pmid": None,
-                        "doi": None,
-                        "title": page.title,
-                        "content_for_embedding": f"{page.title}\n\n{summary}",
-                        "abstract_source": "wikipedia",
-                        "url": page.fullurl,
-                    }
-                )
-            except Exception as e:
-                logger.warning(f"[wikipedia] error for term='{term}': {e}")
-                continue
 
         logger.info("[wikipedia] fetched %d pages", len(out))
         return out

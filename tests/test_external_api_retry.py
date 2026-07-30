@@ -184,3 +184,14 @@ class TestWikiSearchRetry:
             result = _wiki_search("cancer")
         assert result == []
         mock_sleep.assert_not_called()
+
+    def test_uses_shared_client_when_provided(self):
+        """When a client is passed (the pooled _fetch path), the call routes
+        through client.get for connection reuse, not the module-level httpx.get."""
+        client = MagicMock()
+        client.get.return_value = _mock_response(200, json_data={"query": {"search": [{"title": "Cancer"}]}})
+        with patch("httpx.get") as module_get:
+            result = _wiki_search("cancer", client=client)
+        assert result == [{"title": "Cancer"}]
+        client.get.assert_called_once()
+        module_get.assert_not_called()
