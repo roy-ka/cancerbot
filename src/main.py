@@ -57,7 +57,8 @@ def _ensure_ninja_user() -> None:
             return
         from src.db.models import User
         ninja = User(
-            name="Ninja",
+            first_name="Ninja",
+            last_name="Admin",
             email=email,
             password_hash=SecurityUtils.hash_password(password),
             email_verified=True,

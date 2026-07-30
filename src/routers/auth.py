@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from src.deps.db import get_db
 from src.auth.security import SecurityUtils
 from src.deps.auth import get_current_user
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from datetime import timedelta, datetime, timezone
 import re
 import logging
@@ -56,7 +56,8 @@ PASSWORD_REGEX_PATTERNS = {
 
 
 class CreateUserRequest(BaseModel):
-    name: str
+    first_name: str = Field(..., min_length=1, max_length=150)
+    last_name: str = Field(..., min_length=1, max_length=150)
     email: EmailStr
     password: str
 
@@ -130,13 +131,14 @@ async def register_user(req: CreateUserRequest, request: Request, background_tas
     password_hash = SecurityUtils.hash_password(req.password)
     user = create_user(
         db=db,
-        name=req.name,
+        first_name=req.first_name.strip(),
+        last_name=req.last_name.strip(),
         email=req.email,
         password_hash=password_hash,
     )
     token = create_verification_token(db=db, user_id=user.id)
     frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
-    background_tasks.add_task(send_verification_email, to=user.email, name=user.name, token=token, frontend_url=frontend_url)
+    background_tasks.add_task(send_verification_email, to=user.email, name=user.display_name, token=token, frontend_url=frontend_url)
     resp: dict = {"message": "Please check your email to verify your account.", "email": user.email}
     if not is_prod():
         resp["verification_token"] = token
@@ -234,7 +236,8 @@ async def check_auth(current_user=Depends(get_current_user), db: Session = Depen
         "authenticated": True,
         "user_id": str(current_user.id),
         "email": current_user.email,
-        "name": current_user.name,
+        "first_name": current_user.first_name,
+        "last_name": current_user.last_name,
         "terms_version": current_user.terms_version,
         "needs_terms_update": needs_terms_update,
         "is_ninja": current_user.is_ninja,
@@ -269,7 +272,7 @@ async def forgot_password(req: ForgotPasswordRequest, background_tasks: Backgrou
         background_tasks.add_task(
             send_password_reset_email,
             to=user.email,
-            name=user.name or "User",
+            name=user.display_name,
             link=reset_link,
         )
     return {"ok": True}
@@ -332,7 +335,7 @@ async def request_delete_account(
     background_tasks.add_task(
         send_delete_account_request_email,
         to=current_user.email,
-        name=current_user.name or "User",
+        name=current_user.display_name,
         link=link,
     )
     resp: dict = {"ok": True}
@@ -382,7 +385,7 @@ async def confirm_delete_account(
     background_tasks.add_task(
         send_delete_account_scheduled_email,
         to=user.email,
-        name=user.name or "User",
+        name=user.display_name,
         deletion_date=deletion_date.strftime("%B %d, %Y"),
     )
     response.delete_cookie(key="access_token", path="/", httponly=True, secure=is_prod(), samesite="lax")
@@ -437,5 +440,5 @@ async def resend_verification(req: ResendVerificationRequest, background_tasks: 
     if user and not user.email_verified:
         token = create_verification_token(db=db, user_id=user.id)
         frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
-        background_tasks.add_task(send_verification_email, to=user.email, name=user.name, token=token, frontend_url=frontend_url)
+        background_tasks.add_task(send_verification_email, to=user.email, name=user.display_name, token=token, frontend_url=frontend_url)
     return {"ok": True}

@@ -67,6 +67,13 @@ class TestListUsers:
         emails = [u["email"] for u in response.json()["users"]]
         assert test_user.email in emails
 
+    def test_returns_first_and_last_name(self, ninja_client, test_user):
+        response = ninja_client.get("/ninja/users/")
+        row = next(u for u in response.json()["users"] if u["email"] == test_user.email)
+        assert row["first_name"] == test_user.first_name
+        assert row["last_name"] == test_user.last_name
+        assert "name" not in row
+
 
 class TestListUserConversations:
     def test_lists_target_users_conversations(self, ninja_client, test_user, test_conversation):
@@ -242,7 +249,7 @@ class TestEnsureNinjaUser:
         from src.db.models import User
 
         create_user(
-            db_session, name="Ninja", email="existing-ninja@example.com",
+            db_session, first_name="Ninja", last_name="Admin", email="existing-ninja@example.com",
             password_hash=SecurityUtils.hash_password("Whatever123!"),
         )
         monkeypatch.setenv("NINJA_EMAIL", "existing-ninja@example.com")

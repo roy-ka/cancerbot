@@ -14,7 +14,7 @@ _SWEEP_INTERVAL_SECONDS = 3600
 async def _sweep_once(db) -> None:
     due = get_users_due_for_deletion(db)
     for user in due:
-        to, name, user_id = user.email, user.name or "User", user.id
+        to, name, user_id = user.email, user.display_name, user.id
         try:
             delete_user(db=db, user_id=user_id)
         except Exception:

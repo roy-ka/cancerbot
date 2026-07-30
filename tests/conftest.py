@@ -57,7 +57,7 @@ def db_session(TestingSessionLocal):
 def test_user(db_session):
     user = create_user(
         db_session,
-        name="Test User",
+        first_name="Test", last_name="User",
         email="testuser@example.com",
         password_hash=SecurityUtils.hash_password("TestPass123!"),
     )
@@ -94,7 +94,7 @@ def client(TestingSessionLocal, test_user):
 def test_ninja_user(db_session):
     user = create_user(
         db_session,
-        name="Ninja",
+        first_name="Ninja", last_name="Admin",
         email="ninja-test@example.com",
         password_hash=SecurityUtils.hash_password("NinjaPass123!"),
     )

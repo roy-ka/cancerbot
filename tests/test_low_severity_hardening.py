@@ -88,7 +88,7 @@ class TestAuthorizationOrdering:
 
         other = create_user(
             db=db_session,
-            name="Other",
+            first_name="Other", last_name="Owner",
             email="other-owner@example.com",
             password_hash=SecurityUtils.hash_password("Password1!"),
         )

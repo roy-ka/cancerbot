@@ -12,7 +12,7 @@ export default async function globalSetup() {
   const api = await request.newContext({ baseURL: E2E_API_URL })
 
   const reg = await api.post('/auth/register/', {
-    data: { name: 'E2E User', email: E2E_EMAIL, password: E2E_PASSWORD },
+    data: { first_name: 'E2E', last_name: 'User', email: E2E_EMAIL, password: E2E_PASSWORD },
   })
 
   if (reg.status() === 201) {

@@ -50,7 +50,7 @@ class TestAccountDeletionSweep:
 
         other_user = create_user(
             db_session,
-            name="Other User",
+            first_name="Other", last_name="User",
             email="other-sweep-target@example.com",
             password_hash=SecurityUtils.hash_password("TestPass123!"),
         )

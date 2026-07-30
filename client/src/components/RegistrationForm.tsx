@@ -99,7 +99,8 @@ export default function RegistrationForm({
   const [password, setPassword] = useState('')
   const [emailError, setEmailError] = useState(false)
   const [passwordError, setPasswordError] = useState(false)
-  const [name, setName] = useState('')
+  const [firstName, setFirstName] = useState('')
+  const [lastName, setLastName] = useState('')
   const [termsAccepted, setTermsAccepted] = useState(false)
   const [error, setError] = useState('')
   const [emailSent, setEmailSent] = useState(false)
@@ -135,7 +136,7 @@ export default function RegistrationForm({
       return
     }
     setError('')
-    register({ email, password, name }).catch((err) => {
+    register({ email, password, first_name: firstName, last_name: lastName }).catch((err) => {
       console.error('Registration error:', err)
       setError(err.message)
     })
@@ -152,9 +153,11 @@ export default function RegistrationForm({
     setPassword(password)
     setPasswordError(!verifyPassword(password))
   }
-  const changeName = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const name = e.target.value
-    setName(name)
+  const changeFirstName = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setFirstName(e.target.value)
+  }
+  const changeLastName = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setLastName(e.target.value)
   }
 
   if (emailSent) {
@@ -169,13 +172,23 @@ export default function RegistrationForm({
           <TextField
             fullWidth
             required
-            id="name"
-            name="name"
-            label="Full name"
-            type="name"
-            autoComplete="name"
+            id="first_name"
+            name="first_name"
+            label="First name"
+            autoComplete="given-name"
             variant="outlined"
-            onChange={changeName}
+            onChange={changeFirstName}
+          />
+
+          <TextField
+            fullWidth
+            required
+            id="last_name"
+            name="last_name"
+            label="Last name"
+            autoComplete="family-name"
+            variant="outlined"
+            onChange={changeLastName}
           />
 
           <TextField

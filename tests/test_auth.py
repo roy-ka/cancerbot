@@ -10,7 +10,7 @@ class TestRegister:
         response = anon_client.post(
             "/auth/register/",
             json={
-                "name": "New User",
+                "first_name": "New", "last_name": "User",
                 "email": "newuser@example.com",
                 "password": "SecurePass123!",
             },
@@ -19,11 +19,33 @@ class TestRegister:
         data = response.json()
         assert data["email"] == "newuser@example.com"
 
+    def test_register_persists_first_and_last_name(self, anon_client, db_session):
+        anon_client.post(
+            "/auth/register/",
+            json={
+                "first_name": "Ada", "last_name": "Lovelace",
+                "email": "ada@example.com",
+                "password": "SecurePass123!",
+            },
+        )
+        from src.db.repositories.users import get_user_by_email
+        user = get_user_by_email(db_session, "ada@example.com")
+        assert user.first_name == "Ada"
+        assert user.last_name == "Lovelace"
+        assert user.display_name == "Ada Lovelace"
+
+    def test_register_missing_last_name_returns_422(self, anon_client):
+        response = anon_client.post(
+            "/auth/register/",
+            json={"first_name": "Solo", "email": "solo@example.com", "password": "SecurePass123!"},
+        )
+        assert response.status_code == 422
+
     def test_register_duplicate_email_returns_400(self, anon_client, test_user):
         response = anon_client.post(
             "/auth/register/",
             json={
-                "name": "Another User",
+                "first_name": "Another", "last_name": "User",
                 "email": test_user.email,
                 "password": "AnotherPass123!",
             },
@@ -38,7 +60,7 @@ class TestRegister:
         response = anon_client.post(
             "/auth/register/",
             json={
-                "name": "User",
+                "first_name": "Reg", "last_name": "User",
                 "email": "user@example.com",
                 "password": "short",
             },
@@ -145,7 +167,8 @@ class TestForgotPassword:
             call_kwargs = mock_send.call_args[1]
             assert call_kwargs["to"] == test_user.email
             assert "token=" in call_kwargs["link"]
-            assert call_kwargs["name"] is not None
+            # Emails greet with the user's full name (display_name), not just first
+            assert call_kwargs["name"] == test_user.display_name == "Test User"
 
     def test_forgot_password_missing_email_returns_422(self, anon_client):
         response = anon_client.post("/auth/forgot-password/", json={})
@@ -192,7 +215,8 @@ class TestCheckAuth:
         assert response.status_code == 200
         data = response.json()
         assert "email" in data
-        assert "name" in data
+        assert "first_name" in data
+        assert "last_name" in data
 
     def test_check_auth_unauthenticated_returns_401(self, anon_client):
         response = anon_client.get("/auth/check")
@@ -202,7 +226,7 @@ class TestCheckAuth:
 class TestRateLimiting:
     def test_register_blocked_after_limit(self, anon_client):
         from src.db.repositories.rate_limit import MAX_REGISTER_ATTEMPTS
-        payload = {"name": "User", "email": "x@example.com", "password": "SecurePass123!"}
+        payload = {"first_name": "Reg", "last_name": "User", "email": "x@example.com", "password": "SecurePass123!"}
         for _ in range(MAX_REGISTER_ATTEMPTS):
             anon_client.post("/auth/register/", json=payload)
         response = anon_client.post("/auth/register/", json=payload)
@@ -211,8 +235,8 @@ class TestRateLimiting:
     def test_register_not_blocked_before_limit(self, anon_client):
         from src.db.repositories.rate_limit import MAX_REGISTER_ATTEMPTS
         for i in range(MAX_REGISTER_ATTEMPTS - 1):
-            anon_client.post("/auth/register/", json={"name": "U", "email": f"u{i}@x.com", "password": "SecurePass123!"})
-        response = anon_client.post("/auth/register/", json={"name": "U", "email": "last@x.com", "password": "SecurePass123!"})
+            anon_client.post("/auth/register/", json={"first_name": "U", "last_name": "U", "email": f"u{i}@x.com", "password": "SecurePass123!"})
+        response = anon_client.post("/auth/register/", json={"first_name": "U", "last_name": "U", "email": "last@x.com", "password": "SecurePass123!"})
         assert response.status_code != 429
 
     def test_forgot_password_blocked_after_limit(self, anon_client, test_user):

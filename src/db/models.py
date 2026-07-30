@@ -25,7 +25,8 @@ class User(Base):
     __tablename__ = "users"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
-    name = Column(String(150), nullable=True)
+    first_name = Column(String(150), nullable=True)
+    last_name = Column(String(150), nullable=True)
     email = Column(String(320), unique=True, index=True, nullable=False)
     password_hash = Column(String(255), nullable=False)
     email_verified = Column(Boolean, default=False, nullable=False)
@@ -34,6 +35,13 @@ class User(Base):
     deletion_scheduled_at = Column(DateTime(timezone=True), nullable=True)
     is_ninja = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+    @property
+    def display_name(self) -> str:
+        """Single-string name for greetings/UI. Falls back to 'User' when
+        both parts are empty (e.g. rows backfilled from a NULL legacy name)."""
+        full = f"{self.first_name or ''} {self.last_name or ''}".strip()
+        return full or "User"
 
     conversations: Mapped[List["Conversation"]] = relationship(
         "Conversation",

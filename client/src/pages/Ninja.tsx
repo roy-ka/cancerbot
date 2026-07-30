@@ -19,7 +19,8 @@ import type { Source } from '../types'
 
 type NinjaUser = {
   id: string
-  name: string | null
+  first_name: string | null
+  last_name: string | null
   email: string
   created_at: string | null
 }
@@ -184,7 +185,7 @@ export default function Ninja() {
         <List>
           {users.map((u) => (
             <ListItemButton key={u.id} onClick={() => openUser(u)} sx={{ borderRadius: 2, mb: 0.5 }}>
-              <ListItemText primary={u.name || u.email} secondary={u.email} />
+              <ListItemText primary={`${u.first_name || ''} ${u.last_name || ''}`.trim() || u.email} secondary={u.email} />
             </ListItemButton>
           ))}
           {users.length === 0 && (

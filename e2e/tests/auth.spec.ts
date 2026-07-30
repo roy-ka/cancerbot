@@ -33,6 +33,33 @@ test.describe('unauthenticated', () => {
     await expect(page).toHaveURL(/\/(terms|chat)?(\?.*)?$/, { timeout: 15_000 })
     await ctx.close()
   })
+
+  test('registration form has separate first and last name fields', async ({ browser }: { browser: Browser }) => {
+    const ctx = await browser.newContext()
+    const page = await ctx.newPage()
+    await page.goto('/login')
+
+    // Switch to the Register tab
+    await page.getByRole('button', { name: /^register$/i }).click()
+
+    // The name field is now split in two
+    await expect(page.locator('input[name="first_name"]')).toBeVisible()
+    await expect(page.locator('input[name="last_name"]')).toBeVisible()
+    await expect(page.locator('input[name="name"]')).toHaveCount(0)
+
+    // A unique email per run so we don't collide with a prior registration
+    const email = `e2e-reg-${Date.now()}@example.com`
+    await page.fill('input[name="first_name"]', 'Grace')
+    await page.fill('input[name="last_name"]', 'Hopper')
+    await page.fill('input[name="email"]', email)
+    await page.fill('input[name="password"]', 'SecurePass123!')
+    await page.locator('input[type="checkbox"]').check()
+    await page.click('button[type="submit"]')
+
+    // Successful registration shows the "check your email" screen
+    await expect(page.getByText(/check your email/i)).toBeVisible({ timeout: 15_000 })
+    await ctx.close()
+  })
 })
 
 // Authenticated test — uses the saved storageState from globalSetup

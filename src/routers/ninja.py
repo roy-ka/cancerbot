@@ -28,7 +28,8 @@ async def list_users(
         "users": [
             {
                 "id": str(u.id),
-                "name": u.name,
+                "first_name": u.first_name,
+                "last_name": u.last_name,
                 "email": u.email,
                 "created_at": u.created_at.isoformat() if u.created_at else None,
             }

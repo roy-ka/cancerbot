@@ -16,30 +16,31 @@ class TestUserRepository:
     def test_create_user_returns_user_with_id(self, db_session):
         user = create_user(
             db_session,
-            name="Alice",
+            first_name="Alice", last_name="A",
             email="alice@example.com",
             password_hash=SecurityUtils.hash_password("AlicePass123"),
         )
         assert user.id is not None
-        assert user.name == "Alice"
+        assert user.first_name == "Alice"
+        assert user.last_name == "A"
         assert user.email == "alice@example.com"
 
     def test_create_user_persists_in_db(self, db_session):
         user = create_user(
             db_session,
-            name="Bob",
+            first_name="Bob", last_name="B",
             email="bob@example.com",
             password_hash=SecurityUtils.hash_password("BobPass123"),
         )
         db_session.commit()
         fetched = get_user_by_email(db_session, "bob@example.com")
         assert fetched.id == user.id
-        assert fetched.name == "Bob"
+        assert fetched.first_name == "Bob"
 
     def test_get_user_by_email_returns_existing_user(self, db_session, test_user):
         found = get_user_by_email(db_session, test_user.email)
         assert found.id == test_user.id
-        assert found.name == test_user.name
+        assert found.first_name == test_user.first_name
 
     def test_get_user_by_email_returns_none_for_missing(self, db_session):
         found = get_user_by_email(db_session, "nonexistent@example.com")
