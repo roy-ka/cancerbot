@@ -40,6 +40,15 @@ class TestRequestDelete:
         response = anon_client.post("/auth/request-delete/")
         assert response.status_code == 401
 
+    def test_rate_limited_after_max_attempts(self, client, test_user, db_session):
+        from src.db.repositories.rate_limit import MAX_REQUEST_DELETE_ATTEMPTS
+        with patch("src.routers.auth.send_delete_account_request_email", new=AsyncMock()):
+            for _ in range(MAX_REQUEST_DELETE_ATTEMPTS):
+                assert _request_delete(client).status_code == 200
+            blocked = _request_delete(client)
+        assert blocked.status_code == 429
+        assert "too many" in blocked.json()["detail"].lower()
+
 
 class TestConfirmDelete:
     def test_success_schedules_deletion_and_clears_cookie(self, client, test_user, db_session):

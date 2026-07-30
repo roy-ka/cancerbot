@@ -38,6 +38,7 @@ from src.db.repositories.rate_limit import (
     record_attempt,
     MAX_REGISTER_ATTEMPTS,
     MAX_FORGOT_PASSWORD_ATTEMPTS,
+    MAX_REQUEST_DELETE_ATTEMPTS,
 )
 from src.utils.email import (
     send_password_reset_email,
@@ -329,6 +330,13 @@ async def request_delete_account(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
+    # Throttle per user (this endpoint is authenticated) so a hijacked session
+    # or buggy client can't spam deletion-confirmation emails at an account.
+    delete_key = f"request-delete:{current_user.id}"
+    if is_rate_limited(db, delete_key):
+        raise HTTPException(status_code=429, detail="Too many account-deletion requests. Please try again later.")
+    record_attempt(db, delete_key, MAX_REQUEST_DELETE_ATTEMPTS)
+
     token = create_deletion_request_token(db=db, user_id=current_user.id)
     frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
     link = f"{frontend_url}/confirm-delete?token={token}"
