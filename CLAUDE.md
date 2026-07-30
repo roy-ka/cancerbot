@@ -185,7 +185,7 @@ Frontend first calls `POST /conversations/create/` (lightweight DB-only, returns
 4. **External search** runs in parallel: PubMed (4 results), CrossRef (4 results), Wikipedia (3 results), ClinicalTrials.gov (3 results) queried using NLP-extracted terms (`src/routers/conversation_helper.py`). Wikipedia uses the search API first and picks the most oncology-relevant page from candidates. ClinicalTrials.gov hits the v2 REST API directly (not `pytrials`) and is filtered to `overallStatus=COMPLETED` — this is the *evidence* use case (grounding answers in trial findings); a separate opt-in *participation* feature (recruiting trials by location) is deferred. PubMed and ClinicalTrials share the AND-of-OR-groups boolean query builder (`_build_boolean_term_query`).
 5. New external sources are embedded via Ollama (`nomic-embed-text`) and indexed into OpenSearch `sources_index` as **150-word chunks with 40-word overlap**. Each chunk gets `id={base_id}:c{n}`, `source_id={base_id}`, `chunk_index`, `full_text` (original), and `tags` (search terms that retrieved it). Dedup is by `source_id` — if any chunk of a base ID exists, the whole source is skipped. Every chunk in the batch is embedded via `OllamaConnector.embed_texts` (batched, `_EMBED_BATCH_SIZE` per request) and written with a single `dbConnector.bulk_index_to_db` call that refreshes **once** at the end. Do not go back to `embed_text` + `index_to_db(refresh=True)` per chunk here: that was one Ollama round trip and one forced Lucene segment flush per chunk, i.e. dozens of each per chat message. The trailing refresh is what keeps the freshly indexed chunks visible to the retrieval query that runs immediately after.
 6. External search results are recorded in `external_search_results` table
-7. `src/retrieval/__init__.py:run_retrieval` embeds the query and runs hybrid BM25 + KNN search on `sources_index` with `collapse` on `source_id` — returns top 5 unique sources (1 best chunk per source)
+7. `src/retrieval/__init__.py:run_retrieval` embeds the query and runs the hybrid query in `search.py:search_sources` on `sources_index` (matching in `must`, evidence/recency/disease-area boosts in `should`, word-count `filter`, excluded-pub-type `must_not` — see the Retrieval section). It fetches `k*4` hits and **dedupes by `source_id` in Python** (one best chunk per source), returning the top 5. It runs inline in the caller's worker thread — no separate executor
 8. Search analytics recorded in `search_analytics` table
 9. `src/classes/ollama_connector.py` builds a prompt with history + context (cited as `[source1]`, `[source2]`, ...) and calls Groq chat completions (`GROQ_MODEL_NAME`). On `groq.GroqError`, falls back to Gemini (`GEMINI_FALLBACK_MODEL`).
 10. Post-processing replaces `[source1]` aliases with stable base IDs (`pmid:xxx`, `doi:xxx`, `nct:NCTxxx`, `url:<sha1>`) — the `:cN` chunk suffix is stripped before aliases are built
@@ -203,7 +203,7 @@ Indices are auto-created on startup via `dbConnector.ensure_all_indexes()`.
 
 **Source document fields (chunked schema):**
 - `id` — `{base_id}:c{n}` (e.g. `pmid:12345:c0`) — unique per chunk
-- `source_id` — base ID without chunk suffix (e.g. `pmid:12345`) — used for dedup and `collapse`
+- `source_id` — base ID without chunk suffix (e.g. `pmid:12345`) — used for dedup (Python-side, in `search_sources`)
 - `chunk_index` — position within source (0-based)
 - `full_text` — original full text before chunking
 - `content_for_embedding` — this chunk's 150-word window (what gets embedded and sent to LLM)
@@ -240,10 +240,23 @@ is a single-message wrapper around it. `get_messages_by_conversation_id` and
 puts one query per assistant message on every conversation open.
 
 **Boosts must stay `should`/`must_not`, never positive `filter`s.** Most of the corpus predates these fields; a `should` clause just means "no boost" for those docs, whereas a positive filter would make every doc lacking the field silently unreachable — exactly what happened when `full_text_word_count` was first added as a range filter. Boost weights are unmeasured heuristics; they're named constants at the top of `search.py` for tuning.
-- Works with Lucene-engine KNN (OpenSearch 3); requires `source_id` to be a `keyword` field
-- **Caveat**: OpenSearch silently drops documents that have no value for the collapse field. Docs indexed by `embedding.py` before the chunked schema was introduced lack `source_id` and are therefore invisible to retrieval until `backfill_chunks.py` migrates them.
+- Works with Lucene-engine KNN (OpenSearch 3); requires `source_id` to be a `keyword` field for the Python-side dedup to group chunks reliably
+- **Dedup is Python-side, not OpenSearch `collapse`**: `search_sources` fetches `k_results * 4` hits and keeps the first chunk per `source_id` (falling back to the `:cN`-stripped `id` for old-format docs), then trims to `k_results`. `collapse` was avoided because on indices where `source_id` is mapped as `text` (not `keyword`) it 400s. Fetching a multiple of `k` is what leaves enough hits to still yield `k` unique sources after dedup.
+- **Caveat**: docs indexed by `embedding.py` before the chunked schema lack `source_id`; dedup falls back to their bare `id`, but they also lack `full_text_word_count` and so are excluded by the retrieval `filter` until `backfill_chunks.py` / `backfill_full_text_word_count.py` migrate them.
 
 **Mapping caveat**: `_ensure_chunk_fields_mapping()` (`db_connector.py`) must not declare `full_text_word_count` — it's already dynamically mapped as `long`, and `put_mapping` is atomic, so declaring it as `integer` makes OpenSearch reject the *entire* request and silently take the other field mappings down with it. Without those, `pub_types`/`disease_areas` fall back to analyzed `text` and exact-match `terms` queries stop working.
+
+### RAG engine — known limitations & improvement opportunities
+Deliberate current state and where it's weak, roughly highest-impact first. Several (nomic prefixes, RRF) require **re-embedding the whole corpus**, so weigh a reindex before starting them.
+
+1. **No `nomic-embed-text` task prefixes.** `OllamaConnector.embed_text`/`embed_texts` send raw text; nomic is trained to expect `search_document:` on indexed chunks and `search_query:` on queries, and omitting them measurably hurts retrieval. Adopting this means re-embedding the corpus (doc/query prefixes must match) — do it as a versioned reindex, not in place.
+2. **`calculate_search_metrics` assumes 0–1 scores** (`int(score*100)`) but the hybrid query's scores are unbounded (~5–20 observed) — so `search_analytics` top/avg/min are recorded as ~500–2000, i.e. meaningless. That table exists to tune retrieval, so fix normalization (or store raw scores) *before* trying to tune the boost weights.
+3. **Hybrid fusion is additive raw-score blending, not rank fusion.** KNN (cosine, ~0–2 after ×2) and BM25 (unbounded) are summed in one `should`, so scale mismatch lets one dominate per query. Reciprocal Rank Fusion or OpenSearch's normalization/hybrid processor would combine them fairly.
+4. **No reranking.** Top-5 by raw score go straight to the LLM. Retrieving wider (k≈20) then reranking to 5 (cross-encoder, or a cheap LLM-judge pass) is the standard precision upgrade.
+5. **The dense (KNN) clause embeds the joined representative terms, not the natural question.** Terms were chosen to fix keyword-API/BM25 behaviour (drug-vs-disease drowning); dense retrieval may do better on the raw question. Worth A/B-testing embedding the question for the vector clause while keeping terms for BM25.
+6. **Cross-source duplicates.** The same paper often returns from both PubMed (`pmid:`) and CrossRef (`doi:`) with different `source_id`s, so the LLM can see one abstract twice. Dedup by shared DOI across sources.
+7. **`claims_index` is created + embedded on every startup but never queried.** Either use claims in retrieval or stop maintaining the index.
+8. **Chunking is blind fixed-window (150w/40w overlap).** Fine for abstracts (which rarely chunk), but splits trial records and OA full-text mid-sentence; sentence/section-aware chunking would help the longer sources.
 
 ### Data Files (`data/`)
 - `sources_canonical.jsonl` — deduplicated sources (merged by PMID > DOI > URL > title)
