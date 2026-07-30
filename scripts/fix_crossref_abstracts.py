@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 import httpx
 
 from src.retrieval.db_connector import dbConnector
-from src.classes.ollama_connector import OllamaConnector
+from src.classes.embedding_connector import EmbeddingConnector
 from src.routers.conversation_helper import (
     _chunk_text,
     _resolve_doi,
@@ -163,7 +163,7 @@ async def main(limit: int | None, dry_run: bool) -> None:
                 logger.info("Deleted %d old chunk(s) for %s", deleted, source_id)
 
                 for chunk_index, chunk_text in enumerate(chunks):
-                    embedding = OllamaConnector.embed_text(chunk_text)
+                    embedding = EmbeddingConnector.embed_text(chunk_text)
                     dbConnector.index_to_db(
                         "sources_index",
                         {

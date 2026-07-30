@@ -45,7 +45,7 @@ import httpx
 from src.db.session import SessionLocal
 from src.db.models import Message
 from src.retrieval.db_connector import dbConnector
-from src.classes.ollama_connector import OllamaConnector
+from src.classes.embedding_connector import EmbeddingConnector
 from src.routers.conversation_helper import (
     _chunk_text,
     _resolve_doi,
@@ -121,7 +121,7 @@ async def _repair_pmid(client: httpx.AsyncClient, source_id: str, pmid: str) -> 
 def _index_chunks(source_id: str, content: str, *, source_type: str, pmid: str | None, doi: str | None, title: str | None) -> None:
     chunks = _chunk_text(content)
     for chunk_index, chunk_text in enumerate(chunks):
-        embedding = OllamaConnector.embed_text(chunk_text)
+        embedding = EmbeddingConnector.embed_text(chunk_text)
         dbConnector.index_to_db(
             "sources_index",
             {

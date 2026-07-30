@@ -104,31 +104,9 @@ class OllamaConnector:
       cls._async_groq = AsyncGroq(api_key=os.getenv("GROQ_API_KEY"))
     return cls._async_groq
 
-  @classmethod
-  def embed_text(cls, text):
-    logger.debug("[ollama] embed model=%s input_len=%d", cls.embed_model, len(text))
-    response = cls.ollama.embed(model=cls.embed_model, input=text)
-    return response.embeddings[0]
-
-  @classmethod
-  def embed_texts(cls, texts: Sequence[str]) -> list:
-    """Embed several texts in one Ollama request.
-
-    Ollama's /api/embed accepts a list for `input` and returns one vector per
-    item, so a source's chunks cost a single round trip instead of one per
-    chunk. Returns vectors in the same order as `texts`.
-    """
-    texts = list(texts)
-    if not texts:
-      return []
-    logger.debug("[ollama] embed batch model=%s count=%d", cls.embed_model, len(texts))
-    response = cls.ollama.embed(model=cls.embed_model, input=texts)
-    embeddings = list(response.embeddings)
-    if len(embeddings) != len(texts):
-      raise ValueError(
-        f"Ollama returned {len(embeddings)} embeddings for {len(texts)} inputs"
-      )
-    return embeddings
+  # Embeddings have moved to src/classes/embedding_connector.py
+  # (Hugging Face Inference API). This class now covers text generation only:
+  # Groq, with Gemini as the fallback.
 
   @classmethod
   def _build_prompt(

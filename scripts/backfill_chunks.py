@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 from src.db.session import SessionLocal
 from src.db.models import Message
 from src.retrieval.db_connector import dbConnector
-from src.classes.ollama_connector import OllamaConnector
+from src.classes.embedding_connector import EmbeddingConnector
 from src.routers.conversation_helper import _chunk_text
 
 _SCROLL_TTL = "5m"
@@ -155,7 +155,7 @@ def main() -> None:
 
         try:
             for chunk_index, chunk_text in enumerate(chunks):
-                embedding = OllamaConnector.embed_text(chunk_text)
+                embedding = EmbeddingConnector.embed_text(chunk_text)
                 dbConnector.index_to_db(
                     "sources_index",
                     {

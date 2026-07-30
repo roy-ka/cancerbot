@@ -15,7 +15,7 @@ import httpx
 import logging
 import wikipediaapi
 from bs4 import BeautifulSoup
-from src.classes.ollama_connector import OllamaConnector
+from src.classes.embedding_connector import EmbeddingConnector
 
 logger = logging.getLogger(__name__)
 from src.retrieval.db_connector import dbConnector
@@ -1081,7 +1081,7 @@ def _embed_and_index_sources(
         embeddings: list = []
         for start in range(0, len(pending_docs), _EMBED_BATCH_SIZE):
             batch = pending_docs[start : start + _EMBED_BATCH_SIZE]
-            embeddings.extend(OllamaConnector.embed_texts([d["content_for_embedding"] for d in batch]))
+            embeddings.extend(EmbeddingConnector.embed_texts([d["content_for_embedding"] for d in batch]))
     except Exception as e:
         logger.warning(f"[index] batch embedding failed for {len(pending_docs)} chunk(s): {e}")
         return indexed, skipped + len(pending_docs)

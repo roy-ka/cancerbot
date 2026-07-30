@@ -214,7 +214,7 @@ class TestBatchEmbedAndBulkIndex:
         }
 
         embed = MagicMock(side_effect=lambda texts: [[0.1] * 768 for _ in texts])
-        with patch("src.routers.conversation_helper.OllamaConnector.embed_texts", embed):
+        with patch("src.routers.conversation_helper.EmbeddingConnector.embed_texts", embed):
             _embed_and_index_sources([source], terms=["cancer"])
 
         # 300 words → 3 chunks, but a single embedding call
@@ -232,7 +232,7 @@ class TestBatchEmbedAndBulkIndex:
             for i in range(3)
         ]
 
-        with patch("src.routers.conversation_helper.OllamaConnector.embed_texts",
+        with patch("src.routers.conversation_helper.EmbeddingConnector.embed_texts",
                    side_effect=lambda texts: [[0.1] * 768 for _ in texts]):
             indexed, _ = _embed_and_index_sources(sources, terms=["cancer"])
 
@@ -247,7 +247,7 @@ class TestBatchEmbedAndBulkIndex:
         source = {"source_type": "pubmed", "pmid": "1", "title": "T",
                   "content_for_embedding": " ".join(["word"] * 300)}
 
-        with patch("src.routers.conversation_helper.OllamaConnector.embed_texts",
+        with patch("src.routers.conversation_helper.EmbeddingConnector.embed_texts",
                    side_effect=RuntimeError("ollama down")):
             indexed, skipped = _embed_and_index_sources([source], terms=["cancer"])
 
@@ -264,7 +264,7 @@ class TestBatchEmbedAndBulkIndex:
         source = {"source_type": "pubmed", "pmid": "1", "title": "T",
                   "content_for_embedding": " ".join(["word"] * 300)}
 
-        with patch("src.routers.conversation_helper.OllamaConnector.embed_texts",
+        with patch("src.routers.conversation_helper.EmbeddingConnector.embed_texts",
                    side_effect=lambda texts: [[0.1] * 768 for _ in texts]):
             indexed, skipped = _embed_and_index_sources([source], terms=["cancer"])
 
@@ -297,34 +297,31 @@ class TestBatchEmbedAndBulkIndex:
 
 
 class TestEmbedTexts:
-    def test_batch_returns_one_vector_per_input(self):
-        from src.classes.ollama_connector import OllamaConnector
+    """Embeddings now come from the Hugging Face Inference API.
 
-        response = MagicMock()
-        response.embeddings = [[0.1] * 768, [0.2] * 768]
-        with patch.object(OllamaConnector, "ollama") as ollama:
-            ollama.embed.return_value = response
-            out = OllamaConnector.embed_texts(["a", "b"])
+    Its feature_extraction endpoint takes one input at a time, so embed_texts
+    is a loop rather than the single batched request Ollama supported. The
+    caller-side batching in _embed_and_index_sources still holds (see
+    TestBatchEmbedAndBulkIndex); what's lost is the one-round-trip-per-batch
+    property, which no longer has an API to rest on.
+    """
 
-        assert out == [[0.1] * 768, [0.2] * 768]
-        assert ollama.embed.call_args.kwargs["input"] == ["a", "b"]
+    def test_returns_one_vector_per_input_in_order(self):
+        from src.classes.embedding_connector import EmbeddingConnector
+
+        with patch.object(EmbeddingConnector, "client") as client:
+            client.feature_extraction.side_effect = [[0.1] * 384, [0.2] * 384]
+            out = EmbeddingConnector.embed_texts(["a", "b"])
+
+        assert out == [[0.1] * 384, [0.2] * 384]
+        assert client.feature_extraction.call_count == 2
 
     def test_empty_input_makes_no_request(self):
-        from src.classes.ollama_connector import OllamaConnector
+        from src.classes.embedding_connector import EmbeddingConnector
 
-        with patch.object(OllamaConnector, "ollama") as ollama:
-            assert OllamaConnector.embed_texts([]) == []
-        ollama.embed.assert_not_called()
-
-    def test_count_mismatch_raises_rather_than_misaligning_vectors(self):
-        from src.classes.ollama_connector import OllamaConnector
-
-        response = MagicMock()
-        response.embeddings = [[0.1] * 768]
-        with patch.object(OllamaConnector, "ollama") as ollama:
-            ollama.embed.return_value = response
-            with pytest.raises(ValueError):
-                OllamaConnector.embed_texts(["a", "b"])
+        with patch.object(EmbeddingConnector, "client") as client:
+            assert EmbeddingConnector.embed_texts([]) == []
+        client.feature_extraction.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

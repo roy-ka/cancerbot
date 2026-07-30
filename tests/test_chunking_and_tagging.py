@@ -86,7 +86,7 @@ def _indexed_docs(mock_db) -> list:
 def _patch_embeddings():
     """Patch the batch embedder — one vector back per input chunk."""
     return patch(
-        "src.routers.conversation_helper.OllamaConnector.embed_texts",
+        "src.routers.conversation_helper.EmbeddingConnector.embed_texts",
         side_effect=lambda texts: [[0.1] * 768 for _ in texts],
     )
 

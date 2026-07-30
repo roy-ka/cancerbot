@@ -175,7 +175,7 @@ class TestClinicalTrialIndexing:
         fake_db.existing_base_source_ids.return_value = set()
         fake_db.bulk_index_to_db.side_effect = lambda index_name, docs: (len(list(docs)), [])
         with patch("src.routers.conversation_helper.dbConnector", return_value=fake_db), \
-             patch("src.routers.conversation_helper.OllamaConnector.embed_texts",
+             patch("src.routers.conversation_helper.EmbeddingConnector.embed_texts",
                    side_effect=lambda texts: [[0.1] * 768 for _ in texts]):
             _embed_and_index_sources([source], terms=["glioblastoma"])
 

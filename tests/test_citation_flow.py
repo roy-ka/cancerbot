@@ -193,7 +193,7 @@ class TestRetrievalStripsChunkSuffix:
         hits = [self._mock_os_hit("pmid:100:c0"), self._mock_os_hit("doi:10.1/y:c2")]
 
         with (
-            patch("src.retrieval.OllamaConnector.embed_text", return_value=[0.1] * 768),
+            patch("src.retrieval.EmbeddingConnector.embed_text", return_value=[0.1] * 768),
             patch("src.retrieval.search_sources", return_value=hits),
         ):
             result = run_retrieval("glioblastoma treatment")
@@ -209,7 +209,7 @@ class TestRetrievalStripsChunkSuffix:
         hits = [{"_score": 0.5, "_index": "v1.5_en_nomic_index", "_source": {}}]
 
         with (
-            patch("src.retrieval.OllamaConnector.embed_text", return_value=[0.1] * 768),
+            patch("src.retrieval.EmbeddingConnector.embed_text", return_value=[0.1] * 768),
             patch("src.retrieval.search_sources", return_value=hits),
         ):
             result = run_retrieval("cancer")

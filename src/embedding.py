@@ -2,7 +2,7 @@ from pathlib import Path
 import hashlib
 import pandas as pd
 from .retrieval.db_connector import dbConnector
-from .classes.ollama_connector import OllamaConnector
+from .classes.embedding_connector import EmbeddingConnector
 from dotenv import load_dotenv
 import os
 load_dotenv()
@@ -66,7 +66,7 @@ def stable_id_for_source(row: dict) -> str:
 def build_claim_document(row):
 		record = row.copy()
 		record['index'] = index_name
-		record['embedding'] = OllamaConnector.embed_text(record['protocol_claim_en'])
+		record['embedding'] = EmbeddingConnector.embed_text(record['protocol_claim_en'])
 		record['content_for_embedding'] = record['protocol_claim_en']
 		record['created_at'] = pd.Timestamp.now().isoformat()
 		record['id'] = stable_id_for_claim(record)
@@ -89,7 +89,7 @@ def build_source_document(row):
 			'tags': row['tags'],
 			'abstract_source': row['abstract_source'],
 			'url': row['url'],
-			'embedding': OllamaConnector.embed_text(row['content_for_embedding'])
+			'embedding': EmbeddingConnector.embed_text(row['content_for_embedding'])
 		}
 		return record
 

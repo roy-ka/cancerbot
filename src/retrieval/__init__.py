@@ -1,5 +1,5 @@
 from .search import search_sources
-from ..classes.ollama_connector import OllamaConnector
+from ..classes.embedding_connector import EmbeddingConnector
 from .db_connector import dbConnector
 
 import logging
@@ -27,7 +27,7 @@ def calculate_search_metrics(query: str, results: list) -> dict:
 
 def run_retrieval(query: str, k_primary: int = 5, disease_areas: list | None = None) -> dict:
   logger.info("[retrieval] query='%s' disease_areas=%s", query[:120], disease_areas)
-  query_embedding = OllamaConnector.embed_text(query)
+  query_embedding = EmbeddingConnector.embed_text(query)
   logger.info("[retrieval] embedding_dim=%d", len(query_embedding))
   # Called from a worker thread (asyncio.to_thread) and the result is needed
   # immediately, so this runs inline — handing it to another pool only added a

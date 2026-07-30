@@ -30,6 +30,7 @@ jobs:
     env:
       JWT_SECRET: ci-test-jwt-secret-not-for-production
       EMBED_MODEL_NAME: nomic-embed-text
+      HUGGINGFACE_API_KEY: test-hf-key-not-for-production
       GROQ_MODEL_NAME: llama-3.3-70b-versatile
       ENV: test
       SENDGRID_API_KEY: ""
