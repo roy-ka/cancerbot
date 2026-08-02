@@ -5,12 +5,15 @@ import { ThemeProvider as MuiThemeProvider } from '@mui/material/styles'
 import CssBaseline from '@mui/material/CssBaseline'
 import { ThemeProvider } from './context/ThemeContext'
 import { darkTheme } from './theme'
+import { SchemaProvider } from './schema-monitor'
 
 function Root() {
   return (
     <MuiThemeProvider theme={darkTheme}>
       <CssBaseline />
-      <App />
+      <SchemaProvider>
+        <App />
+      </SchemaProvider>
     </MuiThemeProvider>
   )
 }
