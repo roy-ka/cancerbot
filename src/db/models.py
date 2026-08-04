@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import  List, Optional
 from uuid import uuid4
 
-from sqlalchemy import Column, DateTime, ForeignKey, String, Text, JSON, Integer, Boolean
+from sqlalchemy import Column, DateTime, Float, ForeignKey, String, Text, JSON, Integer, Boolean
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, relationship
 from .base import Base
@@ -219,9 +219,14 @@ class SearchAnalytic(Base):
     message_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     search_query = Column(String(500), nullable=False, index=True)
     result_count = Column(Integer, nullable=False, default=0)
-    top_score = Column(Integer, nullable=True)  # Highest relevance score from OpenSearch (0-100)
-    avg_score = Column(Integer, nullable=True)  # Average relevance score
-    min_score = Column(Integer, nullable=True)  # Lowest relevance score
+    # Raw retrieval scores, stored unscaled. These are the fused RRF scores from
+    # search_sources (~0.01-0.03), NOT 0-100 percentages: they were ints scaled
+    # by 100 on the assumption that OpenSearch returned 0-1 scores, which the
+    # hybrid query never did. Rows written before this became a float are
+    # meaningless (~500-2000) and must be excluded from any analysis.
+    top_score = Column(Float, nullable=True)  # Highest fused score in the result set
+    avg_score = Column(Float, nullable=True)  # Mean fused score
+    min_score = Column(Float, nullable=True)  # Lowest fused score
     sufficient_evidence = Column(Integer, default=0, nullable=False)  # 1 if LLM had enough context, 0 otherwise
     fallback_triggered = Column(Integer, default=0, nullable=False)  # 1 if fallback NLP search was triggered
     notes = Column(Text, nullable=True)  # Any additional notes (e.g., error messages)

@@ -257,6 +257,14 @@ async def _process_post_message(
         if first_title and first_title != req.content:
             retrieval_query = first_title
 
+    # The dense (KNN) half searches on the natural question instead of the
+    # joined terms: the terms exist to fix BM25/keyword-API behaviour, while
+    # the embedding model is trained on sentences. Rank fusion keeps the two
+    # halves independent, so they can describe the query differently. The
+    # exception is a message that was just a URL — there the fetched page
+    # title is the only meaningful thing to embed.
+    dense_query = retrieval_query if url_context_items else ((req.content or '').strip() or retrieval_query)
+
     # Disease areas of the query's own entities (e.g. "brain cancer" for GBM)
     # let retrieval boost sources tagged with the same area.
     query_disease_areas = sorted({
@@ -265,7 +273,7 @@ async def _process_post_message(
         if (g.get('category') or '').strip()
     })
 
-    context = await asyncio.to_thread(run_retrieval, retrieval_query, 5, query_disease_areas)
+    context = await asyncio.to_thread(run_retrieval, retrieval_query, 5, query_disease_areas, dense_query)
     logging.info(f"[conversation] retrieved sources={len(context.get('sources_ids', []))} url_ctx={len(url_context_items)}")
 
     # Prepend URL context items (fetched from message content) directly to generation context

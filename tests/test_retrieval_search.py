@@ -1,9 +1,11 @@
-"""Tests for src.retrieval.search.search_sources query construction.
+"""Tests for src.retrieval.search.search_sources query construction and fusion.
 
 Covers the full_text_word_count filter that excludes short sources from
-retrieval without deleting them from the index, plus the tag-based
-evidence/recency/disease-area boosting.
+retrieval without deleting them from the index, the tag-based
+evidence/recency/disease-area boosting, the Reciprocal Rank Fusion that
+combines the dense and lexical halves, and cross-source DOI dedup.
 """
+import re
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
@@ -13,49 +15,145 @@ from src.retrieval.search import (
     EXCLUDED_PUB_TYPES,
     HIGH_EVIDENCE_MIN,
     RECENT_YEARS,
+    RRF_K,
 )
 
 
-def _make_db(hits=None):
+def _hit(id_, score=1.0, **source_fields):
+    source = {"id": id_, "source_id": re.sub(r":c\d+$", "", id_)}
+    source.update(source_fields)
+    return {"_id": id_, "_score": score, "_source": source}
+
+
+def _response(hits):
+    return {"hits": {"hits": list(hits), "total": {"value": len(hits)}}}
+
+
+def _make_db(*responses):
+    """Mock connector. Defaults to two empty responses so body-construction
+    tests get one per sub-query."""
     db = MagicMock()
-    db.search.return_value = {"hits": {"hits": hits or [], "total": {"value": len(hits or [])}}}
+    db.msearch.return_value = list(responses) if responses else [_response([]), _response([])]
     return db
 
 
-class TestFullTextWordCountFilter:
-    def test_query_filters_on_full_text_word_count(self):
+def _bodies(db):
+    _, kwargs = db.msearch.call_args
+    return kwargs["bodies"]
+
+
+def _dense_and_lexical(db):
+    """Split the issued sub-queries by which match clause they carry."""
+    dense = lexical = None
+    for body in _bodies(db):
+        clauses = body["query"]["bool"]["must"][0]["bool"]["should"]
+        if any("knn" in c for c in clauses):
+            dense = body
+        else:
+            lexical = body
+    return dense, lexical
+
+
+class TestSubQuerySplit:
+    """The hybrid query is issued as two independent ranked lists in one
+    msearch round trip, so they can be rank-fused rather than score-blended."""
+
+    def test_two_sub_queries_issued_in_one_round_trip(self):
+        db = _make_db()
+        search_sources(db, text="glioblastoma", vector=[0.1, 0.2])
+
+        assert db.msearch.call_count == 1
+        assert len(_bodies(db)) == 2
+        dense, lexical = _dense_and_lexical(db)
+        assert dense is not None and lexical is not None
+
+    def test_dense_carries_vector_and_lexical_carries_text(self):
+        db = _make_db()
+        search_sources(db, text="glioblastoma", vector=[0.1, 0.2])
+        dense, lexical = _dense_and_lexical(db)
+
+        knn = dense["query"]["bool"]["must"][0]["bool"]["should"][0]["knn"]["embedding"]
+        assert knn["vector"] == [0.1, 0.2]
+
+        matches = lexical["query"]["bool"]["must"][0]["bool"]["should"]
+        assert [list(m.keys())[0] for m in matches] == ["match", "match"]
+        assert matches[0]["match"]["content_for_embedding"]["query"] == "glioblastoma"
+        assert matches[1]["match"]["title"]["query"] == "glioblastoma"
+
+    def test_text_and_vector_may_describe_the_query_differently(self):
+        """run_retrieval embeds the natural question while passing terms for
+        BM25 — the two halves must not be assumed to share a string."""
+        db = _make_db()
+        search_sources(db, text="glioblastoma temozolomide", vector=[0.5])
+        dense, lexical = _dense_and_lexical(db)
+
+        assert dense["query"]["bool"]["must"][0]["bool"]["should"][0]["knn"]["embedding"]["vector"] == [0.5]
+        assert lexical["query"]["bool"]["must"][0]["bool"]["should"][0]["match"][
+            "content_for_embedding"]["query"] == "glioblastoma temozolomide"
+
+    def test_vector_only_issues_dense_alone(self):
+        db = _make_db(_response([]))
+        search_sources(db, text=None, vector=[0.1])
+        dense, lexical = _dense_and_lexical(db)
+
+        assert len(_bodies(db)) == 1
+        assert dense is not None and lexical is None
+
+    def test_text_only_issues_lexical_alone(self):
+        db = _make_db(_response([]))
+        search_sources(db, text="cancer", vector=None)
+        dense, lexical = _dense_and_lexical(db)
+
+        assert len(_bodies(db)) == 1
+        assert lexical is not None and dense is None
+
+    def test_neither_text_nor_vector_searches_nothing(self):
+        db = _make_db()
+        assert search_sources(db, text=None, vector=None) == []
+        db.msearch.assert_not_called()
+
+    def test_oversized_fetch_leaves_room_for_dedup(self):
+        db = _make_db()
+        search_sources(db, text="cancer", vector=[0.1], k_results=5)
+
+        for body in _bodies(db):
+            assert body["size"] == 20
+
+    def test_embedding_never_requested_in_source(self):
+        """A 768-float array is ~15KB of JSON per hit."""
+        db = _make_db()
+        search_sources(db, text="cancer", vector=[0.1])
+
+        for body in _bodies(db):
+            assert "embedding" not in body["_source"]
+            assert "doi" in body["_source"]  # needed for cross-source dedup
+
+
+class TestSharedEnvelopeOnBothSubQueries:
+    """Every filter/boost/exclusion must ride on both halves — otherwise one
+    list could surface a doc the other would have excluded."""
+
+    def test_word_count_filter_on_both(self):
         db = _make_db()
         search_sources(db, text="glioblastoma treatment", vector=[0.1, 0.2])
 
-        _, kwargs = db.search.call_args
-        body = kwargs["body"]
-        filters = body["query"]["bool"]["filter"]
-        assert {"range": {"full_text_word_count": {"gte": MIN_FULLTEXT_WORDS}}} in filters
+        for body in _bodies(db):
+            filters = body["query"]["bool"]["filter"]
+            assert {"range": {"full_text_word_count": {"gte": MIN_FULLTEXT_WORDS}}} in filters
 
     def test_filter_present_even_with_text_only_query(self):
-        db = _make_db()
+        db = _make_db(_response([]))
         search_sources(db, text="glioblastoma treatment", vector=None)
 
-        _, kwargs = db.search.call_args
-        body = kwargs["body"]
-        filters = body["query"]["bool"]["filter"]
+        filters = _bodies(db)[0]["query"]["bool"]["filter"]
         assert {"range": {"full_text_word_count": {"gte": MIN_FULLTEXT_WORDS}}} in filters
 
-    def test_returns_deduped_hits_unaffected_by_filter_addition(self):
-        hits = [
-            {"_id": "a:c0", "_source": {"id": "a:c0", "source_id": "a"}, "_score": 1.0},
-            {"_id": "a:c1", "_source": {"id": "a:c1", "source_id": "a"}, "_score": 0.9},
-            {"_id": "b:c0", "_source": {"id": "b:c0", "source_id": "b"}, "_score": 0.8},
-        ]
-        db = _make_db(hits)
-        result = search_sources(db, text="cancer", vector=[0.1], k_results=5)
+    def test_excluded_pub_types_are_must_not_on_both(self):
+        db = _make_db()
+        search_sources(db, text="cancer", vector=[0.1])
 
-        assert [h["_source"]["source_id"] for h in result] == ["a", "b"]
-
-
-def _bool_body(db):
-    _, kwargs = db.search.call_args
-    return kwargs["body"]["query"]["bool"]
+        for body in _bodies(db):
+            assert {"terms": {"pub_types": EXCLUDED_PUB_TYPES}} in body["query"]["bool"]["must_not"]
 
 
 class TestMatchingSeparatedFromScoring:
@@ -67,29 +165,27 @@ class TestMatchingSeparatedFromScoring:
     def test_match_clauses_are_under_must_not_should(self):
         db = _make_db()
         search_sources(db, text="glioblastoma", vector=[0.1])
-        bool_q = _bool_body(db)
 
-        inner = bool_q["must"][0]["bool"]
-        assert inner["minimum_should_match"] == 1
-        clause_types = [list(c.keys())[0] for c in inner["should"]]
-        assert "knn" in clause_types
-        assert clause_types.count("match") == 2
+        for body in _bodies(db):
+            inner = body["query"]["bool"]["must"][0]["bool"]
+            assert inner["minimum_should_match"] == 1
 
     def test_outer_should_has_no_minimum_should_match(self):
         db = _make_db()
         search_sources(db, text="glioblastoma", vector=[0.1])
-        bool_q = _bool_body(db)
 
-        # Boost-only clauses must never be able to satisfy matching on their own
-        assert "minimum_should_match" not in bool_q
-        assert len(bool_q["should"]) >= 4
+        for body in _bodies(db):
+            bool_q = body["query"]["bool"]
+            # Boost-only clauses must never be able to satisfy matching on their own
+            assert "minimum_should_match" not in bool_q
+            assert len(bool_q["should"]) >= 4
 
 
 class TestEvidenceAndRecencyBoosts:
     def test_high_evidence_boost_clause_present(self):
         db = _make_db()
         search_sources(db, text="cancer", vector=[0.1])
-        shoulds = _bool_body(db)["should"]
+        shoulds = _bodies(db)[0]["query"]["bool"]["should"]
 
         evidence_clauses = [c for c in shoulds if "range" in c and "evidence_level" in c["range"]]
         assert any(c["range"]["evidence_level"]["gte"] == HIGH_EVIDENCE_MIN for c in evidence_clauses)
@@ -97,25 +193,18 @@ class TestEvidenceAndRecencyBoosts:
     def test_recency_boost_uses_current_year(self):
         db = _make_db()
         search_sources(db, text="cancer", vector=[0.1])
-        shoulds = _bool_body(db)["should"]
+        shoulds = _bodies(db)[0]["query"]["bool"]["should"]
 
         year_clauses = [c for c in shoulds if "range" in c and "pub_year" in c["range"]]
         current_year = datetime.now(timezone.utc).year
         assert any(c["range"]["pub_year"]["gte"] == current_year - RECENT_YEARS for c in year_clauses)
-
-    def test_excluded_pub_types_are_must_not(self):
-        db = _make_db()
-        search_sources(db, text="cancer", vector=[0.1])
-        bool_q = _bool_body(db)
-
-        assert {"terms": {"pub_types": EXCLUDED_PUB_TYPES}} in bool_q["must_not"]
 
 
 class TestDiseaseAreaBoost:
     def test_disease_area_clause_added_when_provided(self):
         db = _make_db()
         search_sources(db, text="GBM", vector=[0.1], disease_areas=["Brain Cancer"])
-        shoulds = _bool_body(db)["should"]
+        shoulds = _bodies(db)[0]["query"]["bool"]["should"]
 
         area_clauses = [c for c in shoulds if "terms" in c and "disease_areas" in c["terms"]]
         assert len(area_clauses) == 1
@@ -124,7 +213,7 @@ class TestDiseaseAreaBoost:
     def test_no_disease_area_clause_when_absent(self):
         db = _make_db()
         search_sources(db, text="cancer", vector=[0.1])
-        shoulds = _bool_body(db)["should"]
+        shoulds = _bodies(db)[0]["query"]["bool"]["should"]
 
         assert not [c for c in shoulds if "terms" in c and "disease_areas" in c["terms"]]
 
@@ -138,14 +227,214 @@ class TestGracefulDegradationForUntaggedDocs:
     def test_new_metadata_never_appears_as_a_positive_filter(self):
         db = _make_db()
         search_sources(db, text="cancer", vector=[0.1], disease_areas=["brain cancer"])
-        filters = _bool_body(db)["filter"]
 
-        filtered_fields = set()
-        for clause in filters:
-            for body in clause.values():
-                filtered_fields.update(body.keys())
+        for body in _bodies(db):
+            filtered_fields = set()
+            for clause in body["query"]["bool"]["filter"]:
+                for filter_body in clause.values():
+                    filtered_fields.update(filter_body.keys())
 
-        # Only the (already backfilled) word-count field may gate matching
-        assert filtered_fields == {"full_text_word_count"}
-        for field in ("evidence_level", "pub_year", "disease_areas", "pub_types"):
-            assert field not in filtered_fields
+            # Only the (already backfilled) word-count field may gate matching
+            assert filtered_fields == {"full_text_word_count"}
+            for field in ("evidence_level", "pub_year", "disease_areas", "pub_types"):
+                assert field not in filtered_fields
+
+
+class TestChunkDedup:
+    def test_one_chunk_per_source(self):
+        hits = [_hit("a:c0"), _hit("a:c1"), _hit("b:c0")]
+        db = _make_db(_response(hits), _response([]))
+        result = search_sources(db, text="cancer", vector=[0.1], k_results=5)
+
+        assert [h["_source"]["source_id"] for h in result] == ["a", "b"]
+
+    def test_extra_chunks_do_not_earn_extra_fusion_credit(self):
+        """Two chunks of the same source at ranks 1-2 must not let it collect
+        two RRF contributions, and must not push the next source's rank down."""
+        hits = [_hit("a:c0"), _hit("a:c1"), _hit("b:c0")]
+        db = _make_db(_response(hits), _response([]))
+        result = search_sources(db, text="cancer", vector=[0.1], k_results=5)
+
+        by_id = {h["_source"]["source_id"]: h for h in result}
+        assert by_id["a"]["_score"] == 1.0 / (RRF_K + 1)
+        # b is rank 2 after a's chunks collapse, not rank 3
+        assert by_id["b"]["_score"] == 1.0 / (RRF_K + 2)
+
+    def test_legacy_docs_without_source_id_dedupe_on_stripped_id(self):
+        legacy = [
+            {"_id": "old:c0", "_score": 1.0, "_source": {"id": "old:c0"}},
+            {"_id": "old:c1", "_score": 0.9, "_source": {"id": "old:c1"}},
+        ]
+        db = _make_db(_response(legacy), _response([]))
+        result = search_sources(db, text="cancer", vector=[0.1])
+
+        assert len(result) == 1
+
+
+class TestReciprocalRankFusion:
+    def test_agreement_between_lists_beats_a_single_top_hit(self):
+        dense = [_hit("a:c0"), _hit("b:c0"), _hit("c:c0")]
+        lexical = [_hit("b:c0"), _hit("c:c0"), _hit("a:c0")]
+        db = _make_db(_response(dense), _response(lexical))
+        result = search_sources(db, text="cancer", vector=[0.1], k_results=5)
+
+        # b: ranks 2 + 1 beats a: ranks 1 + 3
+        assert [h["_source"]["source_id"] for h in result][0] == "b"
+
+    def test_raw_score_magnitude_does_not_decide_ranking(self):
+        """The point of rank fusion: BM25 is unbounded and KNN cosine is not,
+        so a huge BM25 score must not outrank a doc both lists surfaced."""
+        dense = [_hit("b:c0", score=0.5), _hit("a:c0", score=0.4)]
+        lexical = [_hit("a:c0", score=9999.0), _hit("c:c0", score=9998.0)]
+        db = _make_db(_response(dense), _response(lexical))
+        result = search_sources(db, text="cancer", vector=[0.1], k_results=5)
+
+        ids = [h["_source"]["source_id"] for h in result]
+        assert ids[0] == "a"          # in both lists
+        assert ids.index("b") < ids.index("c")  # 0.5 cosine outranks a 9998 BM25 score
+
+    def test_fused_score_replaces_per_modality_score(self):
+        dense = [_hit("a:c0", score=17.3)]
+        db = _make_db(_response(dense), _response([]))
+        result = search_sources(db, text="cancer", vector=[0.1])
+
+        assert result[0]["_score"] == 1.0 / (RRF_K + 1)
+        assert result[0]["_component_ranks"] == {"dense": 1}
+
+    def test_component_ranks_record_both_lists(self):
+        db = _make_db(_response([_hit("a:c0")]), _response([_hit("a:c0")]))
+        result = search_sources(db, text="cancer", vector=[0.1])
+
+        assert result[0]["_component_ranks"] == {"dense": 1, "lexical": 1}
+        assert result[0]["_score"] == 2.0 / (RRF_K + 1)
+
+    def test_results_trimmed_to_k(self):
+        dense = [_hit(f"s{i}:c0") for i in range(10)]
+        db = _make_db(_response(dense), _response([]))
+        result = search_sources(db, text="cancer", vector=[0.1], k_results=3)
+
+        assert len(result) == 3
+
+
+class TestSubQueryFailureDegradesGracefully:
+    """msearch reports a failing sub-query inline instead of raising, so one
+    broken half must degrade to single-modality search, not lose everything."""
+
+    def test_failed_dense_still_returns_lexical_results(self):
+        db = _make_db({"error": {"type": "search_phase_execution_exception"}},
+                      _response([_hit("a:c0")]))
+        result = search_sources(db, text="cancer", vector=[0.1])
+
+        assert [h["_source"]["source_id"] for h in result] == ["a"]
+        assert result[0]["_component_ranks"] == {"lexical": 1}
+
+    def test_all_sub_queries_failing_returns_empty(self):
+        db = _make_db({"error": "boom"}, {"error": "boom"})
+        assert search_sources(db, text="cancer", vector=[0.1]) == []
+
+    def test_msearch_raising_is_swallowed(self):
+        db = MagicMock()
+        db.msearch.side_effect = RuntimeError("OpenSearch not available")
+
+        assert search_sources(db, text="cancer", vector=[0.1]) == []
+
+
+class TestCrossSourceDoiDedup:
+    """The same paper routinely returns from PubMed as pmid:… and from
+    CrossRef as doi:… — distinct source_ids, one abstract. Without this the
+    LLM sees it twice and can cite it as two independent sources."""
+
+    def test_same_doi_under_different_source_ids_collapses(self):
+        dense = [
+            _hit("pmid:123:c0", doi="10.1000/abc"),
+            _hit("doi:10.1000/abc:c0", doi="10.1000/abc"),
+        ]
+        db = _make_db(_response(dense), _response([]))
+        result = search_sources(db, text="cancer", vector=[0.1], k_results=5)
+
+        assert len(result) == 1
+        assert result[0]["_source"]["source_id"] == "pmid:123"  # the better-ranked one
+
+    def test_doi_matching_is_case_and_whitespace_insensitive(self):
+        dense = [
+            _hit("pmid:123:c0", doi="10.1000/ABC"),
+            _hit("doi:10.1000/abc:c0", doi="  10.1000/abc  "),
+        ]
+        db = _make_db(_response(dense), _response([]))
+        result = search_sources(db, text="cancer", vector=[0.1])
+
+        assert len(result) == 1
+
+    def test_sources_without_doi_are_untouched(self):
+        """Most of the corpus predates DOI capture — absence must not collapse
+        unrelated sources together."""
+        dense = [_hit("url:aaa:c0"), _hit("url:bbb:c0"), _hit("nct:NCT1:c0")]
+        db = _make_db(_response(dense), _response([]))
+        result = search_sources(db, text="cancer", vector=[0.1], k_results=5)
+
+        assert len(result) == 3
+
+    def test_distinct_dois_are_kept(self):
+        dense = [_hit("pmid:1:c0", doi="10.1/a"), _hit("pmid:2:c0", doi="10.1/b")]
+        db = _make_db(_response(dense), _response([]))
+        result = search_sources(db, text="cancer", vector=[0.1], k_results=5)
+
+        assert len(result) == 2
+
+    def test_dedup_survives_to_fill_k(self):
+        """Dropping a duplicate must not leave a short result set when more
+        unique sources were available further down."""
+        dense = [
+            _hit("pmid:1:c0", doi="10.1/a"),
+            _hit("doi:10.1/a:c0", doi="10.1/a"),
+            _hit("pmid:2:c0", doi="10.1/b"),
+        ]
+        db = _make_db(_response(dense), _response([]))
+        result = search_sources(db, text="cancer", vector=[0.1], k_results=2)
+
+        assert [h["_source"]["source_id"] for h in result] == ["pmid:1", "pmid:2"]
+
+
+class TestSearchMetrics:
+    """Scores are recorded raw. They were multiplied by 100 and cast to int on
+    the assumption that OpenSearch returned 0-1 scores; it never did, so every
+    row held a meaningless ~500-2000. With RRF scores (~0.01-0.03) an int
+    column would truncate all of them to 0."""
+
+    def test_scores_are_stored_raw_not_scaled(self):
+        from src.retrieval import calculate_search_metrics
+
+        results = [{"_score": 0.0328}, {"_score": 0.0161}]
+        metrics = calculate_search_metrics("cancer", results)
+
+        assert metrics["top_score"] == 0.0328
+        assert metrics["min_score"] == 0.0161
+        assert abs(metrics["avg_score"] - 0.02445) < 1e-9
+        assert metrics["result_count"] == 2
+
+    def test_small_scores_survive_instead_of_truncating_to_zero(self):
+        from src.retrieval import calculate_search_metrics
+
+        metrics = calculate_search_metrics("cancer", [{"_score": 1.0 / (RRF_K + 1)}])
+        assert metrics["top_score"] > 0
+
+    def test_empty_results_give_none_scores(self):
+        from src.retrieval import calculate_search_metrics
+
+        metrics = calculate_search_metrics("cancer", [])
+        assert metrics["result_count"] == 0
+        assert metrics["top_score"] is None
+        assert metrics["avg_score"] is None
+        assert metrics["min_score"] is None
+
+    def test_missing_score_field_treated_as_zero(self):
+        from src.retrieval import calculate_search_metrics
+
+        metrics = calculate_search_metrics("cancer", [{"_source": {}}])
+        assert metrics["min_score"] == 0
+
+    def test_query_is_truncated_for_the_column(self):
+        from src.retrieval import calculate_search_metrics
+
+        metrics = calculate_search_metrics("x" * 900, [])
+        assert len(metrics["search_query"]) == 500

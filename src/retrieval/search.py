@@ -38,10 +38,38 @@ RECENT_YEARS = 5
 SEMI_RECENT_BOOST = 0.5     # published within SEMI_RECENT_YEARS
 SEMI_RECENT_YEARS = 10
 
+# Weight of the vector clause inside the dense sub-query. Uniform scaling can't
+# reorder the dense list on its own, but it does set how much a strong cosine
+# match is worth *relative to* the metadata boosts above, which is what this
+# number actually controls.
+KNN_BOOST = 2
+BM25_CONTENT_BOOST = 1
+BM25_TITLE_BOOST = 1.5
+
+# Reciprocal Rank Fusion smoothing constant. 60 is the value from the original
+# RRF paper and the de-facto default: it flattens the 1/(k+rank) curve enough
+# that a single list's top hit doesn't automatically win, while still favouring
+# documents both lists rank highly.
+RRF_K = 60
+
+# Only the fields the caller actually consumes: the prompt builder reads
+# content_for_embedding + id, dedup reads source_id + doi, and the log line
+# reads evidence_level/pub_year. Excluded above all is `embedding` — a
+# 768-float array that is ~15KB of JSON per hit and pure waste to ship back
+# and deserialize on every single query.
+SOURCE_FIELDS = [
+  "id",
+  "source_id",
+  "content_for_embedding",
+  "evidence_level",
+  "pub_year",
+  "doi",
+]
+
 
 def _scoring_clauses(disease_areas=None):
   """Pure-boost clauses: they raise the score of matching docs but never
-  decide whether a doc matches (that's the `must` block in search_sources).
+  decide whether a doc matches (that's the `must` block in _sub_query).
 
   Every clause targets a field that older documents simply don't have. Because
   they're `should` clauses, a doc without the field just misses the boost —
@@ -67,105 +95,201 @@ def _scoring_clauses(disease_areas=None):
   return clauses
 
 
-def search_sources(db, text=None, vector=None, k_results: int = 5, disease_areas=None):
-  try:
-    knn_query = {
-        "knn": {
-          "embedding": {
-            "vector": vector,
-            "k": k_results * 4,
-            'boost': 2
-          },
-        }
-      }
-    text_query = [{
-      "match": {
-        "content_for_embedding": {
-          'query': text,
-          'boost': 1
-        },
-      },
-    },{
-      "match": {
-        "title": {
-          'query': text,
-          'boost': 1.5
-        },
-      },
-    }]
-    match_clauses = []
-    if vector:
-      match_clauses.append(knn_query)
-    if text:
-      match_clauses += text_query
+def _sub_query(match_clauses, size, disease_areas):
+  """One half of the hybrid search: the given match clauses plus the shared
+  boost/filter/exclusion envelope.
 
-    # Matching lives in `must` (a nested bool), scoring in the outer `should`.
-    # Keeping them separate matters: with everything flat under `should` +
-    # minimum_should_match=1, a doc could qualify on a *boost* clause alone
-    # (e.g. any paper from the last 5 years) and get pulled in despite not
-    # matching the query at all.
-    # Fetch more than needed so Python-side dedup still yields k_results unique sources.
-    # collapse is avoided because source_id may be mapped as text (not keyword) in
-    # existing indices, which causes a 400 error.
-    body = {
-      "size": k_results * 4,
-      # Only the fields the caller actually consumes: the prompt builder reads
-      # content_for_embedding + id, dedup reads source_id, and the log line
-      # reads evidence_level/pub_year. Excluded above all is `embedding` — a
-      # 768-float array that is ~15KB of JSON per hit and pure waste to ship
-      # back and deserialize on every single query.
-      "_source": [
-        "id",
-        "source_id",
-        "content_for_embedding",
-        "evidence_level",
-        "pub_year",
-      ],
-      "query": {
-        'bool': {
-          'must': [
-            {'bool': {'should': match_clauses, 'minimum_should_match': 1}}
-          ],
-          'should': _scoring_clauses(disease_areas),
-          'filter': [
-            {'range': {'full_text_word_count': {'gte': MIN_FULLTEXT_WORDS}}},
-          ],
-          'must_not': [
-            {'terms': {'pub_types': EXCLUDED_PUB_TYPES}},
-          ],
-        }
+  Matching lives in `must` (a nested bool), scoring in the outer `should`.
+  Keeping them separate matters: with everything flat under `should` +
+  minimum_should_match=1, a doc could qualify on a *boost* clause alone
+  (e.g. any paper from the last 5 years) and get pulled in despite not
+  matching the query at all. Both sub-queries carry the same envelope so the
+  invariant holds per-list, and fusion never sees a doc that didn't match.
+  """
+  return {
+    "size": size,
+    "_source": SOURCE_FIELDS,
+    "query": {
+      'bool': {
+        'must': [
+          {'bool': {'should': match_clauses, 'minimum_should_match': 1}}
+        ],
+        'should': _scoring_clauses(disease_areas),
+        'filter': [
+          {'range': {'full_text_word_count': {'gte': MIN_FULLTEXT_WORDS}}},
+        ],
+        'must_not': [
+          {'terms': {'pub_types': EXCLUDED_PUB_TYPES}},
+        ],
       }
     }
+  }
 
-    logger.info("[search] executing: text='%s' vector=%s clauses=%d disease_areas=%s",
-                text[:80] if text else None, bool(vector), len(match_clauses), disease_areas)
-    result = db.search(
-      index_type = 'sources_index',
-      body = body
+
+def _dense_body(vector, size, disease_areas):
+  return _sub_query(
+    [{"knn": {"embedding": {"vector": vector, "k": size, "boost": KNN_BOOST}}}],
+    size,
+    disease_areas,
+  )
+
+
+def _lexical_body(text, size, disease_areas):
+  return _sub_query(
+    [
+      {"match": {"content_for_embedding": {"query": text, "boost": BM25_CONTENT_BOOST}}},
+      {"match": {"title": {"query": text, "boost": BM25_TITLE_BOOST}}},
+    ],
+    size,
+    disease_areas,
+  )
+
+
+def _base_id(hit):
+  """Stable per-source key: source_id on chunked docs, the :cN-stripped id on
+  documents indexed before the chunked schema existed."""
+  src = hit.get('_source', {})
+  return src.get('source_id') or re.sub(r':c\d+$', '', src.get('id') or hit.get('_id') or '')
+
+
+def _dedupe_chunks(hits):
+  """Collapse a ranked list to one best-ranked chunk per source.
+
+  This runs *before* fusion on purpose. If two chunks of the same source take
+  ranks 1 and 2, fusing them separately would hand that source two RRF
+  contributions and let one chunk-heavy document outrank a source that both
+  lists agree on.
+  """
+  seen: set = set()
+  out: list = []
+  for hit in hits:
+    base_id = _base_id(hit)
+    if base_id and base_id not in seen:
+      seen.add(base_id)
+      out.append((base_id, hit))
+  return out
+
+
+def _rrf_fuse(ranked_lists):
+  """Reciprocal Rank Fusion across the per-modality ranked lists.
+
+  Fusion is on *rank*, not score. KNN cosine (roughly 0–2 after its boost) and
+  BM25 (unbounded) are not on a comparable scale, so the previous approach —
+  summing both into one `should` — let whichever clause happened to produce
+  the larger raw numbers dominate a given query. Rank fusion gives each list
+  an equal say regardless of its score distribution.
+  """
+  fused: dict = {}
+  for name, hits in ranked_lists:
+    for rank, (base_id, hit) in enumerate(_dedupe_chunks(hits), start=1):
+      entry = fused.get(base_id)
+      if entry is None:
+        # First list to surface this source supplies the hit we return. Both
+        # lists carry valid chunks of the same source; only the chunk text can
+        # differ, and either is a legitimate excerpt to hand the LLM.
+        entry = {'hit': hit, 'score': 0.0, 'ranks': {}}
+        fused[base_id] = entry
+      entry['score'] += 1.0 / (RRF_K + rank)
+      entry['ranks'][name] = rank
+  return fused
+
+
+def _dedupe_cross_source(entries):
+  """Drop repeats of the same paper reached under different stable ids.
+
+  PubMed and CrossRef routinely return one article as both `pmid:…` and
+  `doi:…`, which are distinct source_ids — so without this the LLM can be
+  handed the same abstract twice and cite it as two independent sources.
+  Documents indexed before `doi` was captured simply carry no DOI and pass
+  through untouched.
+  """
+  seen_dois: set = set()
+  out: list = []
+  for entry in entries:
+    doi = (entry['hit'].get('_source', {}).get('doi') or '').strip().lower()
+    if doi:
+      if doi in seen_dois:
+        logger.info("[search] dropping cross-source duplicate of doi=%s", doi)
+        continue
+      seen_dois.add(doi)
+    out.append(entry)
+  return out
+
+
+def search_sources(db, text=None, vector=None, k_results: int = 5, disease_areas=None):
+  """Hybrid retrieval over the sources index.
+
+  Runs the dense (KNN) and lexical (BM25) halves as two independent ranked
+  lists in a single msearch round trip, then combines them with Reciprocal
+  Rank Fusion. `text` and `vector` are deliberately allowed to describe the
+  query differently — the caller embeds the natural question for the vector
+  while passing representative terms for BM25.
+
+  Returned hits carry the fused RRF score in `_score` (small, ~0.01–0.03 —
+  not a relevance percentage) and their per-list ranks in `_component_ranks`.
+  """
+  try:
+    # Fetch more than needed so chunk dedup, fusion and cross-source dedup
+    # still leave k_results unique sources.
+    size = k_results * 4
+
+    requests = []
+    if vector:
+      requests.append(('dense', _dense_body(vector, size, disease_areas)))
+    if text:
+      requests.append(('lexical', _lexical_body(text, size, disease_areas)))
+    if not requests:
+      logger.warning("[search] called with neither text nor vector — nothing to search")
+      return []
+
+    logger.info("[search] executing: text='%s' vector=%s lists=%s disease_areas=%s",
+                text[:80] if text else None, bool(vector),
+                [name for name, _ in requests], disease_areas)
+
+    responses = db.msearch(
+      index_type='sources_index',
+      bodies=[body for _, body in requests],
     )
-    hits = result.get('hits', {}).get('hits', [])
-    total = result.get('hits', {}).get('total', {}).get('value', '?')
-    logger.info("[search] returned %d raw hits (total_matching=%s)", len(hits), total)
 
-    # Deduplicate by source_id (chunked docs) or base id (old-format docs)
-    seen: set = set()
-    deduped: list = []
-    for hit in hits:
-      src = hit.get('_source', {})
-      base_id = src.get('source_id') or re.sub(r':c\d+$', '', src.get('id') or hit.get('_id') or '')
-      if base_id and base_id not in seen:
-        seen.add(base_id)
-        deduped.append(hit)
+    ranked_lists = []
+    for (name, _), response in zip(requests, responses or []):
+      # msearch reports per-sub-query failures inline rather than raising, so
+      # one bad half degrades to single-modality search instead of losing both.
+      if not isinstance(response, dict) or response.get('error'):
+        logger.warning("[search] %s sub-query failed: %s",
+                       name, (response or {}).get('error') if isinstance(response, dict) else response)
+        continue
+      hits = response.get('hits', {}).get('hits', [])
+      total = response.get('hits', {}).get('total', {}).get('value', '?')
+      logger.info("[search] %s returned %d raw hits (total_matching=%s)", name, len(hits), total)
+      ranked_lists.append((name, hits))
 
-    deduped = deduped[:k_results]
-    logger.info("[search] after dedup: %d unique sources", len(deduped))
-    for i, hit in enumerate(deduped):
+    if not ranked_lists:
+      logger.warning("[search] every sub-query failed")
+      return []
+
+    fused = _rrf_fuse(ranked_lists)
+    entries = sorted(fused.values(), key=lambda e: e['score'], reverse=True)
+    logger.info("[search] fused %d unique sources from %d list(s)", len(entries), len(ranked_lists))
+
+    entries = _dedupe_cross_source(entries)[:k_results]
+
+    results = []
+    for entry in entries:
+      hit = entry['hit']
+      # The per-modality raw score is meaningless post-fusion — replace it so
+      # downstream consumers (search_analytics) record the fused score.
+      hit['_score'] = entry['score']
+      hit['_component_ranks'] = entry['ranks']
+      results.append(hit)
+
+    for i, hit in enumerate(results):
       src = hit.get('_source', {})
-      logger.info("[search]   hit %d: id='%s' source_id='%s' score=%s evidence=%s year=%s",
+      logger.info("[search]   hit %d: id='%s' source_id='%s' rrf=%.5f ranks=%s evidence=%s year=%s",
                   i + 1, src.get('id'), src.get('source_id', '(none)'), hit.get('_score'),
-                  src.get('evidence_level', '-'), src.get('pub_year', '-'))
+                  hit.get('_component_ranks'), src.get('evidence_level', '-'), src.get('pub_year', '-'))
 
-    return deduped
-  except Exception as e:
+    return results
+  except Exception:
     logger.exception("Search failed for text=%s", text[:100] if text else None)
     return []

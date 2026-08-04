@@ -27,16 +27,34 @@ from src.retrieval.search import search_sources
 class TestSourceFieldAllowlists:
     def test_search_sources_excludes_embedding_from_source(self):
         db = MagicMock()
-        db.search.return_value = {"hits": {"hits": [], "total": {"value": 0}}}
+        empty = {"hits": {"hits": [], "total": {"value": 0}}}
+        # Hybrid retrieval issues the dense and lexical halves as one msearch
+        db.msearch.return_value = [empty, empty]
 
         search_sources(db, text="glioblastoma", vector=[0.1, 0.2])
 
-        _, kwargs = db.search.call_args
-        source_fields = kwargs["body"]["_source"]
-        assert "embedding" not in source_fields
-        # The prompt builder still needs these two
-        assert "content_for_embedding" in source_fields
-        assert "id" in source_fields
+        _, kwargs = db.msearch.call_args
+        bodies = kwargs["bodies"]
+        assert len(bodies) == 2
+        for body in bodies:
+            source_fields = body["_source"]
+            assert "embedding" not in source_fields
+            # The prompt builder still needs these two
+            assert "content_for_embedding" in source_fields
+            assert "id" in source_fields
+
+    def test_hybrid_search_costs_one_round_trip(self):
+        """Two ranked lists are needed for rank fusion, but they must not cost
+        two sequential OpenSearch round trips on every chat message."""
+        db = MagicMock()
+        empty = {"hits": {"hits": [], "total": {"value": 0}}}
+        db.msearch.return_value = [empty, empty]
+
+        search_sources(db, text="glioblastoma", vector=[0.1, 0.2])
+
+        # Both sub-queries ride in a single msearch call
+        assert db.msearch.call_count == 1
+        assert len(db.msearch.call_args.kwargs["bodies"]) == 2
 
     def test_get_claims_and_sources_requests_only_display_fields(self, monkeypatch):
         client = MagicMock()

@@ -328,32 +328,37 @@ class dbConnector:
       return {'acknowledged': True, 'message': 'Index already exists'}
 
   @classmethod
-  def search(cls, index_type, body):
+  def msearch(cls, index_type, bodies):
+    """Run several search bodies against one index in a single round trip.
+
+    This is the only generic query entry point on the connector. The hybrid
+    retrieval path issues the dense and lexical halves as separate queries so
+    their results can be rank-fused; two sequential single-search calls would
+    work identically but pay two round trips on every chat message. A
+    single-body list is the right way to run one query.
+
+    Returns the raw `responses` list, in request order. OpenSearch reports a
+    failing sub-query as an `error` key on its own response rather than
+    failing the batch, so callers must check each entry.
+    """
     cls._initialize()
     if not cls.db_client:
       raise RuntimeError("OpenSearch client not available")
 
     index_name = cls._model[index_type]
-    query = body.get('query', {})
-    cls.logger.debug(f"[OpenSearch] Searching index '{index_name}' with query: {query}")
+    payload: list = []
+    for body in bodies:
+      payload.append({'index': index_name})
+      payload.append(body)
 
+    cls.logger.debug(f"[OpenSearch] Multi-searching index '{index_name}' with {len(bodies)} sub-queries")
     try:
-      res = cls.db_client.search(
-        index=index_name,
-        body=body
-      )
-      hit_count = len(res.get('hits', {}).get('hits', []))
-      total_hits = res.get('hits', {}).get('total', {}).get('value', 0)
-      cls.logger.debug(f"[OpenSearch] Search returned {hit_count} results (total: {total_hits})")
-
-      # Log document IDs found
-      if hit_count > 0:
-        doc_ids = [hit.get('_source', {}).get('id', hit.get('_id')) for hit in res['hits']['hits']]
-        cls.logger.debug(f"[OpenSearch] Found document IDs: {doc_ids}")
-
-      return res
+      res = cls.db_client.msearch(body=payload)
+      responses = res.get('responses', [])
+      cls.logger.debug(f"[OpenSearch] Multi-search returned {len(responses)} responses")
+      return responses
     except Exception as e:
-      cls.logger.error(f"[OpenSearch] Search failed: {e}")
+      cls.logger.error(f"[OpenSearch] Multi-search failed: {e}")
       raise
 
   @classmethod
