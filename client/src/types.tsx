@@ -29,6 +29,8 @@ export type Source = {
   name: string
   title?: string
   source_type?: string
+  phase?: string | null
+  status?: string | null
 }
 
 export type Message = {

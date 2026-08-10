@@ -29,6 +29,7 @@ def _make_hit(index: str, id_: str, source_id: str, **extra) -> dict:
         "pmid": extra.get("pmid"),
         "doi": extra.get("doi"),
         "content_for_embedding": extra.get("content_for_embedding", "some evidence text"),
+        "full_text": extra.get("full_text"),
         "evidence_score_0_5": extra.get("evidence_score_0_5"),
     }
     return {"_index": index, "_source": doc}
@@ -126,6 +127,76 @@ class TestAddClaimsAndSources:
         ):
             add_claims_and_sources(msg)  # must not raise
         assert msg.sources is None
+
+
+# ---------------------------------------------------------------------------
+# TestClinicalTrialSourceBadge
+# ---------------------------------------------------------------------------
+
+class TestClinicalTrialSourceBadge:
+    """Trial sources are distinguished in the UI. The backend surfaces the
+    trial title as the display name and parses phase/status out of the trial's
+    own full_text (our format) so the client can render a Trial badge without a
+    reindex."""
+
+    _FULL_TEXT = (
+        "A Study of Mebendazole in Glioma\n\n"
+        "Conditions: Glioblastoma | Interventions: Mebendazole | "
+        "Phase: PHASE1 | Status: COMPLETED\n\n"
+        "This completed trial evaluated mebendazole..."
+    )
+
+    def _run(self, sources_ids, hit):
+        msg = _make_message(sources_ids)
+        with patch(
+            "src.db.repositories.messeges.dbConnector.get_claims_and_sources_by_id",
+            return_value={"hits": {"hits": [hit]}},
+        ):
+            add_claims_and_sources(msg)
+        return msg.sources[0]
+
+    def test_trial_name_is_title_not_nct_id(self):
+        hit = _make_hit(
+            "v1.5_en_nomic_index",
+            "nct:NCT01729260:c0",
+            "nct:NCT01729260",
+            source_type="clinicaltrials",
+            title="A Study of Mebendazole in Glioma",
+            full_text=self._FULL_TEXT,
+        )
+        source = self._run(["nct:NCT01729260"], hit)
+        assert source["name"] == "A Study of Mebendazole in Glioma"
+
+    def test_phase_and_status_parsed_from_full_text(self):
+        hit = _make_hit(
+            "v1.5_en_nomic_index",
+            "nct:NCT01729260:c0",
+            "nct:NCT01729260",
+            source_type="clinicaltrials",
+            title="A Study of Mebendazole in Glioma",
+            full_text=self._FULL_TEXT,
+        )
+        source = self._run(["nct:NCT01729260"], hit)
+        assert source["phase"] == "PHASE1"
+        assert source["status"] == "COMPLETED"
+
+    def test_missing_facts_line_leaves_phase_status_none(self):
+        hit = _make_hit(
+            "v1.5_en_nomic_index",
+            "nct:NCT9:c0",
+            "nct:NCT9",
+            source_type="clinicaltrials",
+            title="Bare registration",
+            full_text="Bare registration\n\nNo structured facts here.",
+        )
+        source = self._run(["nct:NCT9"], hit)
+        assert source["phase"] is None and source["status"] is None
+        assert source["name"] == "Bare registration"
+
+    def test_non_trial_source_has_no_phase_status(self):
+        hit = _make_hit("v1.5_en_nomic_index", "pmid:5:c0", "pmid:5", pmid="5")
+        source = self._run(["pmid:5"], hit)
+        assert source["phase"] is None and source["status"] is None
 
 
 # ---------------------------------------------------------------------------

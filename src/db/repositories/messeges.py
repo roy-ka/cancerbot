@@ -38,6 +38,29 @@ def _extract_source_name(url: Optional[str]) -> str:
     return 'unknown'
 
 
+# Clinical-trial full_text carries a structured facts line we wrote ourselves in
+# src/routers/conversation_helper.py (`Phase: <phases> | Status: <overallStatus>`).
+# Parsing our own format lets the UI show a "Trial · Phase · Status" badge without
+# indexing phase/status as separate fields (which would need a reindex/backfill).
+# Keep these patterns in sync with that writer if its `facts` line ever changes.
+# The facts are pipe-separated on one line ("… | Phase: X | Status: Y"), so match
+# the label anywhere and stop at the next `|` or line break.
+_TRIAL_PHASE_RE = re.compile(r'Phase:\s*(.+?)\s*(?:\||\n|$)')
+_TRIAL_STATUS_RE = re.compile(r'Status:\s*(.+?)\s*(?:\||\n|$)')
+
+
+def _parse_trial_facts(full_text: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
+  """Pull (phase, status) out of a clinical-trial source's full_text."""
+  if not full_text:
+    return None, None
+  phase = _TRIAL_PHASE_RE.search(full_text)
+  status = _TRIAL_STATUS_RE.search(full_text)
+  return (
+    phase.group(1).strip() if phase else None,
+    status.group(1).strip() if status else None,
+  )
+
+
 def _hit_to_entry(data: dict) -> Tuple[str, dict]:
   """Convert one OpenSearch _source into a (base_id, display entry) pair."""
   # Strip :cN chunk suffix — base ID is the stable identifier
@@ -46,11 +69,17 @@ def _hit_to_entry(data: dict) -> Tuple[str, dict]:
   url = data.get('url') or data.get('pmid') or data.get('doi')
 
   source_type = data.get('source_type')
+  phase = status = None
   if source_type == 'wikipedia':
     name = data.get('title')
   elif source_type == 'url':
     # Use title if available, otherwise extract the domain from the actual URL
     name = data.get('title') or _extract_source_name(data.get('url'))
+  elif source_type == 'clinicaltrials':
+    # Show the trial's title rather than the raw `nct:NCT…` id, and surface
+    # phase/status so the UI can render a distinct trial badge.
+    name = data.get('title') or base_id
+    phase, status = _parse_trial_facts(data.get('full_text'))
   else:
     name = base_id
 
@@ -62,6 +91,8 @@ def _hit_to_entry(data: dict) -> Tuple[str, dict]:
     'name': name,
     'title': data.get('title'),
     'source_type': source_type,
+    'phase': phase,
+    'status': status,
   }
 
 

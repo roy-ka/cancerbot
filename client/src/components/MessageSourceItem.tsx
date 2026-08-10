@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import {
   Box,
+  Chip,
   IconButton,
   Link,
   Popover,
@@ -8,7 +9,9 @@ import {
   Typography,
 } from '@mui/material'
 import CloseIcon from '@mui/icons-material/Close'
+import BiotechIcon from '@mui/icons-material/Biotech'
 import type { Source } from '../types'
+import { isTrialSource, trialBadgeLabel } from '../utils/trialBadge'
 
 export default function MessageSourceItem({
   text,
@@ -37,7 +40,27 @@ export default function MessageSourceItem({
 
   const handleClose = () => setAnchorEl(null)
 
-  const chip = (
+  const chip = isTrialSource(source) ? (
+    <Chip
+      component="span"
+      icon={<BiotechIcon />}
+      label={trialBadgeLabel(source)}
+      onClick={handleClick}
+      size="small"
+      sx={{
+        cursor: 'pointer',
+        fontWeight: 600,
+        verticalAlign: 'baseline',
+        userSelect: 'none',
+        color: 'secondary.main',
+        borderColor: 'secondary.main',
+        bgcolor: 'transparent',
+        border: '1px solid',
+        '& .MuiChip-icon': { color: 'secondary.main' },
+      }}
+      variant="outlined"
+    />
+  ) : (
     <Box
       component="span"
       onClick={handleClick}

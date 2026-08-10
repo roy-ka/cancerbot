@@ -17,7 +17,14 @@ const E2E_PASSWORD = process.env.E2E_PASSWORD ?? 'E2eTest123!'
 // not to the frontend, so the browser session is irrelevant.
 test.use({ storageState: { cookies: [], origins: [] } })
 
-type ApiSource = { id: string; name: string; source_type: string; url?: string }
+type ApiSource = {
+  id: string
+  name: string
+  source_type: string
+  url?: string
+  phase?: string | null
+  status?: string | null
+}
 type ApiMessage = { id: string; role: string; content: string; sources: ApiSource[] | null }
 
 test.describe('Citation pipeline (API)', () => {
@@ -91,6 +98,50 @@ test.describe('Citation pipeline (API)', () => {
     const sourceIdsFromFetch = (assistant!.sources ?? []).map(s => s.id)
 
     expect(sourceIdsFromFetch.sort()).toEqual(sourceIdsFromCreate.sort())
+
+    await api.dispose()
+  })
+
+  test('clinical-trial sources expose a display name and phase/status shape', async () => {
+    // The UI distinguishes trial sources with a "Trial · Phase · Status" badge,
+    // fed by the backend surfacing the trial title as `name` and parsing
+    // `phase`/`status`. Whether a given query actually retrieves a completed
+    // trial isn't guaranteed, so this asserts the *shape* of any trial source
+    // that appears and skips if none do — rather than pretending a full-stack
+    // trial retrieval is deterministic. A drug-repurposing query is the most
+    // trial-heavy prompt available.
+    const api = await playwrightRequest.newContext({ baseURL: E2E_API_URL })
+
+    const login = await api.post('/auth/login/', {
+      data: { email: E2E_EMAIL, password: E2E_PASSWORD },
+    })
+    expect(login.ok()).toBeTruthy()
+
+    const create = await api.post('/conversations/create/', {
+      data: { title: 'E2E Trial Source Test' },
+    })
+    const { id: conversationId } = await create.json()
+
+    const msg = await api.post(`/conversations/${conversationId}/add_message`, {
+      data: { content: 'Are there completed clinical trials of mebendazole for glioblastoma?' },
+      timeout: 110_000,
+    })
+    expect(msg.ok(), `add_message failed: ${msg.status()} ${await msg.text()}`).toBeTruthy()
+
+    const body = await msg.json()
+    const assistant = (body.messages as ApiMessage[])?.find(m => m.role === 'assistant')
+    const trials = (assistant?.sources ?? []).filter(s => s.source_type === 'clinicaltrials')
+
+    test.skip(trials.length === 0, 'no clinical-trial source retrieved for this query run')
+
+    for (const trial of trials) {
+      // The display name must be the trial title, not the raw `nct:NCT…` id.
+      expect(trial.name, `trial '${trial.id}' name should not be the raw nct id`).not.toMatch(/^nct:/i)
+      expect(trial.name.length).toBeGreaterThan(0)
+      // phase/status keys must be present (value may be null for a bare registration).
+      expect(trial).toHaveProperty('phase')
+      expect(trial).toHaveProperty('status')
+    }
 
     await api.dispose()
   })
