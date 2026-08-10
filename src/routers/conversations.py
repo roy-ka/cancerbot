@@ -273,7 +273,9 @@ async def _process_post_message(
         if (g.get('category') or '').strip()
     })
 
-    context = await asyncio.to_thread(run_retrieval, retrieval_query, 5, query_disease_areas, dense_query)
+    context = await asyncio.to_thread(
+        run_retrieval, retrieval_query, query_disease_areas, dense_query
+    )
     logging.info(f"[conversation] retrieved sources={len(context.get('sources_ids', []))} url_ctx={len(url_context_items)}")
 
     # Prepend URL context items (fetched from message content) directly to generation context

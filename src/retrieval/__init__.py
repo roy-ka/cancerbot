@@ -31,7 +31,6 @@ def calculate_search_metrics(query: str, results: list) -> dict:
 
 def run_retrieval(
   query: str,
-  k_primary: int = 5,
   disease_areas: list | None = None,
   question: str | None = None,
 ) -> dict:
@@ -50,11 +49,11 @@ def run_retrieval(
   logger.info("[retrieval] embedding_dim=%d", len(query_embedding))
   # Called from a worker thread (asyncio.to_thread) and the result is needed
   # immediately, so this runs inline — handing it to another pool only added a
-  # thread hop.
-  sources = search_sources(db, query, query_embedding, k_primary, disease_areas)
+  # thread hop. search_sources already returns the relevance-gated, capped set
+  # (variable count, not a fixed top-k), so there's nothing more to slice here.
+  sources = search_sources(db, query, query_embedding, disease_areas=disease_areas)
 
   metrics = calculate_search_metrics(query, sources)
-  sources = sources[:k_primary]
 
   source_ids = []
   for i, source in enumerate(sources):

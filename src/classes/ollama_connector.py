@@ -240,7 +240,7 @@ class OllamaConnector:
 
       return f"[{alias}] {text}" if text else f"[{alias}]"
 
-    max_context_items = int(os.getenv('OLLAMA_CONTEXT_ITEMS', '6'))
+    max_context_items = int(os.getenv('OLLAMA_CONTEXT_ITEMS', '10'))
     rendered = [render_item(item, i).strip() for i, item in enumerate(context[:max_context_items])]
     context_block = "\n".join(rendered)
 

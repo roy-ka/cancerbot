@@ -52,6 +52,28 @@ BM25_TITLE_BOOST = 1.5
 # documents both lists rank highly.
 RRF_K = 60
 
+# --- Relevance threshold -----------------------------------------------------
+# Instead of always returning a fixed top-k, return every source whose best
+# chunk clears a semantic-relevance floor (up to MAX_RESULTS), so the count
+# tracks how much the corpus actually has to say about the query.
+#
+# The floor is on *cosine similarity to the question*, NOT the RRF score: RRF
+# is rank-based (~0.01–0.03) and every query produces a rank-1 doc regardless
+# of quality, so an RRF threshold would gate on rank, not relevance. Cosine is
+# read from a dedicated pure-KNN probe sub-query (the boosted dense list's
+# score is contaminated by the evidence/recency `should` boosts).
+#
+# MIN_COSINE=0.62 was calibrated against the live index: on-topic medical
+# queries score 0.68–0.88, clearly off-topic ones (checked with unrelated
+# prompts) sit at 0.43–0.58. nomic-embed-text has a high similarity baseline
+# (~0.4 for anything), so the floor sits deliberately above it.
+MIN_COSINE = 0.62
+MAX_RESULTS = 10
+
+# OpenSearch Lucene KNN with space_type=cosinesimil returns _score = (1+cos)/2.
+def _score_to_cosine(score: float) -> float:
+  return 2.0 * score - 1.0
+
 # Only the fields the caller actually consumes: the prompt builder reads
 # content_for_embedding + id, dedup reads source_id + doi, and the log line
 # reads evidence_level/pub_year. Excluded above all is `embedding` — a
@@ -145,6 +167,40 @@ def _lexical_body(text, size, disease_areas):
   )
 
 
+def _probe_body(vector, size):
+  """Pure-KNN sub-query used only to read each source's cosine similarity.
+
+  No `should` boosts (so `_score` is the raw KNN score, `(1+cos)/2`) and no
+  disease-area clause, but it keeps the same `filter`/`must_not` envelope so it
+  never surfaces a doc the real query would have excluded. Not fused into the
+  ranking — it just supplies the relevance floor.
+  """
+  return {
+    "size": size,
+    "_source": ["source_id", "id"],
+    "query": {
+      "bool": {
+        "must": [{"knn": {"embedding": {"vector": vector, "k": size}}}],
+        "filter": [{"range": {"full_text_word_count": {"gte": MIN_FULLTEXT_WORDS}}}],
+        "must_not": [{"terms": {"pub_types": EXCLUDED_PUB_TYPES}}],
+      }
+    },
+  }
+
+
+def _cosine_by_source(probe_hits):
+  """Best (max) cosine similarity per source across its chunks."""
+  best: dict = {}
+  for hit in probe_hits:
+    base_id = _base_id(hit)
+    if not base_id:
+      continue
+    cos = _score_to_cosine(hit.get('_score', 0.0))
+    if base_id not in best or cos > best[base_id]:
+      best[base_id] = cos
+  return best
+
+
 def _base_id(hit):
   """Stable per-source key: source_id on chunked docs, the :cN-stripped id on
   documents indexed before the chunked schema existed."""
@@ -216,7 +272,7 @@ def _dedupe_cross_source(entries):
   return out
 
 
-def search_sources(db, text=None, vector=None, k_results: int = 5, disease_areas=None):
+def search_sources(db, text=None, vector=None, k_results: int = MAX_RESULTS, disease_areas=None):
   """Hybrid retrieval over the sources index.
 
   Runs the dense (KNN) and lexical (BM25) halves as two independent ranked
@@ -225,8 +281,15 @@ def search_sources(db, text=None, vector=None, k_results: int = 5, disease_areas
   query differently — the caller embeds the natural question for the vector
   while passing representative terms for BM25.
 
-  Returned hits carry the fused RRF score in `_score` (small, ~0.01–0.03 —
-  not a relevance percentage) and their per-list ranks in `_component_ranks`.
+  Rather than a fixed top-k, returns every fused source whose best chunk clears
+  MIN_COSINE (semantic relevance to the question), ordered by RRF, capped at
+  `k_results`. If nothing clears the floor but the search matched something,
+  the single top-ranked source is returned so the LLM isn't handed an empty
+  context on a borderline query. `k_results` is a *cap*, not an exact count.
+
+  Returned hits carry the fused RRF score in `_score` (small, ~0.01–0.03 — not
+  a relevance percentage), their per-list ranks in `_component_ranks`, and the
+  relevance cosine in `_relevance_cosine`.
   """
   try:
     # Fetch more than needed so chunk dedup, fusion and cross-source dedup
@@ -238,6 +301,9 @@ def search_sources(db, text=None, vector=None, k_results: int = 5, disease_areas
       requests.append(('dense', _dense_body(vector, size, disease_areas)))
     if text:
       requests.append(('lexical', _lexical_body(text, size, disease_areas)))
+    if vector:
+      # Relevance probe — read only, not fused into the ranking.
+      requests.append(('probe', _probe_body(vector, size)))
     if not requests:
       logger.warning("[search] called with neither text nor vector — nothing to search")
       return []
@@ -252,6 +318,7 @@ def search_sources(db, text=None, vector=None, k_results: int = 5, disease_areas
     )
 
     ranked_lists = []
+    cosine_by_source: dict = {}
     for (name, _), response in zip(requests, responses or []):
       # msearch reports per-sub-query failures inline rather than raising, so
       # one bad half degrades to single-modality search instead of losing both.
@@ -262,32 +329,49 @@ def search_sources(db, text=None, vector=None, k_results: int = 5, disease_areas
       hits = response.get('hits', {}).get('hits', [])
       total = response.get('hits', {}).get('total', {}).get('value', '?')
       logger.info("[search] %s returned %d raw hits (total_matching=%s)", name, len(hits), total)
-      ranked_lists.append((name, hits))
+      if name == 'probe':
+        cosine_by_source = _cosine_by_source(hits)
+      else:
+        ranked_lists.append((name, hits))
 
     if not ranked_lists:
-      logger.warning("[search] every sub-query failed")
+      logger.warning("[search] every ranking sub-query failed")
       return []
 
     fused = _rrf_fuse(ranked_lists)
-    entries = sorted(fused.values(), key=lambda e: e['score'], reverse=True)
-    logger.info("[search] fused %d unique sources from %d list(s)", len(entries), len(ranked_lists))
+    ordered = _dedupe_cross_source(sorted(fused.values(), key=lambda e: e['score'], reverse=True))
+    logger.info("[search] fused %d unique sources from %d list(s)", len(ordered), len(ranked_lists))
 
-    entries = _dedupe_cross_source(entries)[:k_results]
+    # Relevance gate: keep sources whose best-chunk cosine clears the floor.
+    # When no probe ran (lexical-only fallback, e.g. a URL-title query with no
+    # vector) there's nothing to gate on, so keep the ranked order as-is.
+    if cosine_by_source:
+      kept = [e for e in ordered if cosine_by_source.get(_base_id(e['hit']), -1.0) >= MIN_COSINE]
+      if not kept and ordered:
+        kept = ordered[:1]  # never starve the LLM on a borderline query
+        logger.info("[search] no source cleared MIN_COSINE=%.2f — keeping top 1", MIN_COSINE)
+    else:
+      kept = ordered
+
+    kept = kept[:k_results]
 
     results = []
-    for entry in entries:
+    for entry in kept:
       hit = entry['hit']
       # The per-modality raw score is meaningless post-fusion — replace it so
       # downstream consumers (search_analytics) record the fused score.
       hit['_score'] = entry['score']
       hit['_component_ranks'] = entry['ranks']
+      hit['_relevance_cosine'] = cosine_by_source.get(_base_id(hit))
       results.append(hit)
 
+    logger.info("[search] returning %d source(s) above MIN_COSINE=%.2f (cap %d)",
+                len(results), MIN_COSINE, k_results)
     for i, hit in enumerate(results):
       src = hit.get('_source', {})
-      logger.info("[search]   hit %d: id='%s' source_id='%s' rrf=%.5f ranks=%s evidence=%s year=%s",
+      logger.info("[search]   hit %d: id='%s' source_id='%s' rrf=%.5f cos=%s evidence=%s year=%s",
                   i + 1, src.get('id'), src.get('source_id', '(none)'), hit.get('_score'),
-                  hit.get('_component_ranks'), src.get('evidence_level', '-'), src.get('pub_year', '-'))
+                  hit.get('_relevance_cosine'), src.get('evidence_level', '-'), src.get('pub_year', '-'))
 
     return results
   except Exception:

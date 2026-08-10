@@ -9,6 +9,8 @@ import re
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
+import pytest
+
 from src.retrieval.search import (
     search_sources,
     MIN_FULLTEXT_WORDS,
@@ -16,6 +18,9 @@ from src.retrieval.search import (
     HIGH_EVIDENCE_MIN,
     RECENT_YEARS,
     RRF_K,
+    MIN_COSINE,
+    MAX_RESULTS,
+    _score_to_cosine,
 )
 
 
@@ -23,6 +28,12 @@ def _hit(id_, score=1.0, **source_fields):
     source = {"id": id_, "source_id": re.sub(r":c\d+$", "", id_)}
     source.update(source_fields)
     return {"_id": id_, "_score": score, "_source": source}
+
+
+def _probe_hit(id_, cosine):
+    """A probe hit whose raw KNN score decodes back to the given cosine.
+    OpenSearch's cosinesimil returns _score = (1 + cos) / 2."""
+    return _hit(id_, score=(cosine + 1.0) / 2.0)
 
 
 def _response(hits):
@@ -42,10 +53,28 @@ def _bodies(db):
     return kwargs["bodies"]
 
 
+def _is_probe(body):
+    """The relevance probe puts its knn clause directly under `must`; the
+    dense/lexical ranking sub-queries wrap their match clauses in a nested
+    bool. That structural difference is the reliable discriminator."""
+    return "knn" in body["query"]["bool"]["must"][0]
+
+
+def _ranking_bodies(db):
+    """The dense + lexical sub-queries that are actually rank-fused, excluding
+    the read-only cosine probe."""
+    return [b for b in _bodies(db) if not _is_probe(b)]
+
+
+def _probe(db):
+    probes = [b for b in _bodies(db) if _is_probe(b)]
+    return probes[0] if probes else None
+
+
 def _dense_and_lexical(db):
-    """Split the issued sub-queries by which match clause they carry."""
+    """Split the ranking sub-queries by which match clause they carry."""
     dense = lexical = None
-    for body in _bodies(db):
+    for body in _ranking_bodies(db):
         clauses = body["query"]["bool"]["must"][0]["bool"]["should"]
         if any("knn" in c for c in clauses):
             dense = body
@@ -63,7 +92,9 @@ class TestSubQuerySplit:
         search_sources(db, text="glioblastoma", vector=[0.1, 0.2])
 
         assert db.msearch.call_count == 1
-        assert len(_bodies(db)) == 2
+        # dense + lexical are fused; the probe rides along in the same round trip
+        assert len(_ranking_bodies(db)) == 2
+        assert _probe(db) is not None
         dense, lexical = _dense_and_lexical(db)
         assert dense is not None and lexical is not None
 
@@ -96,16 +127,20 @@ class TestSubQuerySplit:
         search_sources(db, text=None, vector=[0.1])
         dense, lexical = _dense_and_lexical(db)
 
-        assert len(_bodies(db)) == 1
+        assert len(_ranking_bodies(db)) == 1
         assert dense is not None and lexical is None
+        # a vector query still carries the relevance probe
+        assert _probe(db) is not None
 
     def test_text_only_issues_lexical_alone(self):
         db = _make_db(_response([]))
         search_sources(db, text="cancer", vector=None)
         dense, lexical = _dense_and_lexical(db)
 
-        assert len(_bodies(db)) == 1
+        assert len(_ranking_bodies(db)) == 1
         assert lexical is not None and dense is None
+        # no vector means no cosine to read, so no probe
+        assert _probe(db) is None
 
     def test_neither_text_nor_vector_searches_nothing(self):
         db = _make_db()
@@ -126,6 +161,7 @@ class TestSubQuerySplit:
 
         for body in _bodies(db):
             assert "embedding" not in body["_source"]
+        for body in _ranking_bodies(db):
             assert "doi" in body["_source"]  # needed for cross-source dedup
 
 
@@ -166,7 +202,7 @@ class TestMatchingSeparatedFromScoring:
         db = _make_db()
         search_sources(db, text="glioblastoma", vector=[0.1])
 
-        for body in _bodies(db):
+        for body in _ranking_bodies(db):
             inner = body["query"]["bool"]["must"][0]["bool"]
             assert inner["minimum_should_match"] == 1
 
@@ -174,7 +210,7 @@ class TestMatchingSeparatedFromScoring:
         db = _make_db()
         search_sources(db, text="glioblastoma", vector=[0.1])
 
-        for body in _bodies(db):
+        for body in _ranking_bodies(db):
             bool_q = body["query"]["bool"]
             # Boost-only clauses must never be able to satisfy matching on their own
             assert "minimum_should_match" not in bool_q
@@ -393,6 +429,138 @@ class TestCrossSourceDoiDedup:
         result = search_sources(db, text="cancer", vector=[0.1], k_results=2)
 
         assert [h["_source"]["source_id"] for h in result] == ["pmid:1", "pmid:2"]
+
+
+class TestRelevanceProbe:
+    """A vector query issues a third, read-only KNN sub-query with no `should`
+    boosts, so its _score is the clean cosine used for the relevance floor."""
+
+    def test_probe_has_no_scoring_boosts(self):
+        db = _make_db()
+        search_sources(db, text="cancer", vector=[0.1])
+
+        probe = _probe(db)
+        assert probe is not None
+        # the boosted dense list would carry a `should`; the probe must not,
+        # or its _score stops being a clean cosine
+        assert "should" not in probe["query"]["bool"]
+
+    def test_probe_keeps_the_filter_envelope(self):
+        """The probe must never surface a doc the real query would exclude."""
+        db = _make_db()
+        search_sources(db, text="cancer", vector=[0.1])
+
+        probe = _probe(db)
+        assert {"range": {"full_text_word_count": {"gte": MIN_FULLTEXT_WORDS}}} \
+            in probe["query"]["bool"]["filter"]
+        assert {"terms": {"pub_types": EXCLUDED_PUB_TYPES}} \
+            in probe["query"]["bool"]["must_not"]
+
+    def test_probe_fetches_only_identity_fields(self):
+        db = _make_db()
+        search_sources(db, text="cancer", vector=[0.1])
+
+        assert set(_probe(db)["_source"]) == {"source_id", "id"}
+
+    def test_score_to_cosine_inverts_opensearch_scoring(self):
+        # _score = (1 + cos) / 2  ->  cos = 2*score - 1
+        assert _score_to_cosine(1.0) == 1.0
+        assert _score_to_cosine(0.9) == pytest.approx(0.8)
+        assert _score_to_cosine(0.5) == 0.0
+
+
+class TestRelevanceThreshold:
+    """Instead of a fixed top-k, the result count tracks how much the corpus
+    actually has to say: keep every source whose best-chunk cosine clears
+    MIN_COSINE, capped at k_results, with a top-1 fallback so a borderline
+    query never hands the LLM an empty context."""
+
+    def test_sources_below_the_floor_are_dropped(self):
+        dense = [_hit("a:c0"), _hit("b:c0"), _hit("c:c0")]
+        probe = [
+            _probe_hit("a:c0", MIN_COSINE + 0.2),
+            _probe_hit("b:c0", MIN_COSINE - 0.2),   # below floor
+            _probe_hit("c:c0", MIN_COSINE + 0.1),
+        ]
+        db = _make_db(_response(dense), _response([]), _response(probe))
+        result = search_sources(db, text="cancer", vector=[0.1])
+
+        assert [h["_source"]["source_id"] for h in result] == ["a", "c"]
+
+    def test_exactly_at_the_floor_is_kept(self):
+        dense = [_hit("a:c0")]
+        db = _make_db(_response(dense), _response([]),
+                      _response([_probe_hit("a:c0", MIN_COSINE)]))
+        result = search_sources(db, text="cancer", vector=[0.1])
+
+        assert [h["_source"]["source_id"] for h in result] == ["a"]
+
+    def test_variable_count_grows_with_relevance(self):
+        """A query the corpus richly covers returns more than a sparse one."""
+        rich = [_hit(f"s{i}:c0") for i in range(6)]
+        rich_probe = [_probe_hit(f"s{i}:c0", MIN_COSINE + 0.1) for i in range(6)]
+        db = _make_db(_response(rich), _response([]), _response(rich_probe))
+        assert len(search_sources(db, text="cancer", vector=[0.1])) == 6
+
+        sparse = [_hit("s0:c0"), _hit("s1:c0")]
+        sparse_probe = [
+            _probe_hit("s0:c0", MIN_COSINE + 0.1),
+            _probe_hit("s1:c0", MIN_COSINE - 0.1),
+        ]
+        db = _make_db(_response(sparse), _response([]), _response(sparse_probe))
+        assert len(search_sources(db, text="cancer", vector=[0.1])) == 1
+
+    def test_result_count_is_capped_at_k_results(self):
+        dense = [_hit(f"s{i}:c0") for i in range(MAX_RESULTS + 5)]
+        probe = [_probe_hit(f"s{i}:c0", MIN_COSINE + 0.1) for i in range(MAX_RESULTS + 5)]
+        db = _make_db(_response(dense), _response([]), _response(probe))
+        result = search_sources(db, text="cancer", vector=[0.1], k_results=3)
+
+        assert len(result) == 3
+
+    def test_nothing_clears_floor_falls_back_to_top_one(self):
+        """Never starve the LLM: keep the single best-ranked source so it can
+        still answer (or correctly decline) rather than seeing nothing."""
+        dense = [_hit("a:c0"), _hit("b:c0")]
+        probe = [
+            _probe_hit("a:c0", MIN_COSINE - 0.1),
+            _probe_hit("b:c0", MIN_COSINE - 0.2),
+        ]
+        db = _make_db(_response(dense), _response([]), _response(probe))
+        result = search_sources(db, text="cancer", vector=[0.1])
+
+        assert [h["_source"]["source_id"] for h in result] == ["a"]
+
+    def test_relevance_cosine_is_attached_to_each_hit(self):
+        dense = [_hit("a:c0")]
+        db = _make_db(_response(dense), _response([]),
+                      _response([_probe_hit("a:c0", 0.75)]))
+        result = search_sources(db, text="cancer", vector=[0.1])
+
+        assert result[0]["_relevance_cosine"] == pytest.approx(0.75)
+
+    def test_best_chunk_cosine_wins_when_source_probed_twice(self):
+        """A source's floor decision uses its highest-scoring chunk, so one weak
+        chunk can't sink a source another chunk clears."""
+        dense = [_hit("a:c0")]
+        probe = [
+            _probe_hit("a:c0", MIN_COSINE - 0.2),
+            _probe_hit("a:c1", MIN_COSINE + 0.2),   # same source, better chunk
+        ]
+        db = _make_db(_response(dense), _response([]), _response(probe))
+        result = search_sources(db, text="cancer", vector=[0.1])
+
+        assert [h["_source"]["source_id"] for h in result] == ["a"]
+
+    def test_no_probe_means_no_gating(self):
+        """A lexical-only query (no vector, e.g. a URL-title search) has no
+        cosine to read, so every fused source is kept."""
+        lexical = [_hit("a:c0"), _hit("b:c0"), _hit("c:c0")]
+        db = _make_db(_response(lexical))
+        result = search_sources(db, text="cancer", vector=None)
+
+        assert len(result) == 3
+        assert all(h["_relevance_cosine"] is None for h in result)
 
 
 class TestSearchMetrics:
