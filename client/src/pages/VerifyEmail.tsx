@@ -5,19 +5,17 @@ import { Box, CircularProgress, Typography, Button, Stack } from '@mui/material'
 export default function VerifyEmail() {
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
-  const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading')
-  const [message, setMessage] = useState('')
+  const token = searchParams.get('token')
+  const [status, setStatus] = useState<'loading' | 'success' | 'error'>(
+    token ? 'loading' : 'error',
+  )
+  const [message, setMessage] = useState(
+    token ? '' : 'No verification token found in the link.',
+  )
   const BASE_URL = import.meta.env.VITE_BASE_URL || ''
 
   useEffect(() => {
-    if (status !== 'loading') return
-
-    const token = searchParams.get('token')
-    if (!token) {
-      setStatus('error')
-      setMessage('No verification token found in the link.')
-      return
-    }
+    if (!token) return
 
     fetch(`${BASE_URL}/auth/verify-email/?token=${encodeURIComponent(token)}`)
       .then(async (res) => {
@@ -38,7 +36,7 @@ export default function VerifyEmail() {
         setStatus('error')
         setMessage('Network error. Please try again.')
       })
-  }, [searchParams])
+  }, [token, BASE_URL, navigate])
 
   return (
     <Box

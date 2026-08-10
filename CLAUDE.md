@@ -193,7 +193,7 @@ Frontend first calls `POST /conversations/create/` (lightweight DB-only, returns
 12. WebSocket emits staged events throughout (see below)
 
 ### WebSocket Stage Events
-`loading_conversation` → `saving_user_message` → `fallback_triggered` → `analyzing_recent_messages` → `extracting_search_terms` → `searching_pubmed` / `searching_crossref` / `searching_wikipedia` / `searching_clinicaltrials` → `found_sources` → `embedding_and_indexing_sources` → `sources_indexed` → `retrieving_context` → `building_prompt` → `generating_answer` → `saving_assistant_message` → `done`
+`loading_conversation` → `saving_user_message` → `fallback_triggered` → `analyzing_recent_messages` → `extracting_search_terms` → `searching_the_internet` (PubMed/CrossRef/Wikipedia/ClinicalTrials run concurrently, so one event covers all four; per-source counts arrive in `found_sources`) → `found_sources` → `embedding_and_indexing_sources` → `sources_indexed` → `retrieving_context` → `building_prompt` → `generating_answer` → `saving_assistant_message` → `done`
 
 ### OpenSearch Indices
 - `v1.5_en_nomic-embed-text_index` — sources (768-dim KNN `cosinesimil` via `hnsw`/`lucene` + BM25 on `content_for_embedding`, `title`)

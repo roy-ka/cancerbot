@@ -31,7 +31,7 @@ const PASSWORD_PATTERNS = {
   lowercase: /[a-z]/,
   uppercase: /[A-Z]/,
   digit: /[0-9]/,
-  special: /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/,
+  special: /[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/,
 }
 
 function PasswordRequirements({ password }: { password: string }) {

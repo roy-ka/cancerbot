@@ -7,21 +7,15 @@ import { ThemeProvider } from './context/ThemeContext'
 import { darkTheme } from './theme'
 import { SchemaProvider } from './schema-monitor'
 
-function Root() {
-  return (
-    <MuiThemeProvider theme={darkTheme}>
-      <CssBaseline />
-      <SchemaProvider>
-        <App />
-      </SchemaProvider>
-    </MuiThemeProvider>
-  )
-}
-
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ThemeProvider>
-      <Root />
+      <MuiThemeProvider theme={darkTheme}>
+        <CssBaseline />
+        <SchemaProvider>
+          <App />
+        </SchemaProvider>
+      </MuiThemeProvider>
     </ThemeProvider>
   </React.StrictMode>,
 )

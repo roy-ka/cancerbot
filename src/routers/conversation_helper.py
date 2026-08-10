@@ -1222,10 +1222,10 @@ async def search_and_embed(
     clinicaltrials_sources: list[dict] = []
     if terms:
         async with httpx.AsyncClient(timeout=httpx.Timeout(8.0)) as client:
-            await emit("searching_pubmed", {"limit": 4})
-            await emit("searching_crossref", {"limit": 4})
-            await emit("searching_wikipedia", {"limit": 3})
-            await emit("searching_clinicaltrials", {"limit": 3})
+            # PubMed/CrossRef/Wikipedia/ClinicalTrials run concurrently below, so
+            # a single event reflects the actual state better than four that flip
+            # past in a few ms. Per-source counts still arrive in found_sources.
+            await emit("searching_the_internet", {"sources": ["pubmed", "crossref", "wikipedia", "clinicaltrials"]})
             pubmed_sources, crossref_sources, wikipedia_sources, clinicaltrials_sources = await asyncio.gather(
                 asyncio.create_task(_search_pubmed_sources(client, terms, max_results=4, entity_groups=entity_groups)),
                 asyncio.create_task(_search_crossref_sources(client, terms, max_results=4, entity_groups=entity_groups)),

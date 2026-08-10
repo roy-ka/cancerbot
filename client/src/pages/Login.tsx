@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect } from 'react'
+import { useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import LoginDetails from '../components/LoginDetails'
 import AuthPanel from '../components/AuthPanel'
@@ -8,11 +8,8 @@ import { cancerbotDark } from '../assets'
 export default function Login() {
   const bgRef = useRef<HTMLDivElement | null>(null)
   const [searchParams] = useSearchParams()
-  const [toast, setToast] = useState(false)
+  const [toast, setToast] = useState(() => searchParams.get('verified') === '1')
 
-  useEffect(() => {
-    if (searchParams.get('verified') === '1') setToast(true)
-  }, [])
   const onMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     const el = bgRef.current
     if (!el) return
