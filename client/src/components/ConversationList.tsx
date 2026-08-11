@@ -23,6 +23,7 @@ import cancerbotIcon from '../assets/cancerbot_dark.svg'
 import type { Conversation } from '../types'
 import ConversationItem from './ConversationItem'
 import BugReportDialog from './BugReportDialog'
+import FindTrialsDialog from './FindTrialsDialog'
 
 const newConversation: Conversation = {
   id: 'new',
@@ -182,6 +183,7 @@ export default function ConversationList({
                 <InfoOutlinedIcon fontSize="small" />
               </IconButton>
             </Tooltip>
+            <FindTrialsDialog />
             <BugReportDialog compact />
           </Box>
 

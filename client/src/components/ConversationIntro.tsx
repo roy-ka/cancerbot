@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { Box, Chip, Stack, Tooltip, Typography } from '@mui/material'
 import { RAG_EXPLAINER, pickTips } from '../utils/introContent'
+import FindTrialsDialog from './FindTrialsDialog'
 
 /**
  * Intro shown in place of an empty conversation, styled as an assistant
@@ -123,6 +124,21 @@ export default function ConversationIntro({
             />
           ))}
         </Stack>
+
+        <Typography
+          variant="caption"
+          sx={{
+            display: 'block',
+            mt: 2.5,
+            mb: 1,
+            textTransform: 'uppercase',
+            letterSpacing: 1,
+            color: 'rgba(255,255,255,0.45)',
+          }}
+        >
+          Looking to take part?
+        </Typography>
+        <FindTrialsDialog variant="chip" />
       </Box>
     </Box>
   )
