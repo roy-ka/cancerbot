@@ -445,8 +445,17 @@ class ResendVerificationRequest(BaseModel):
 @router.post("/resend-verification/")
 async def resend_verification(req: ResendVerificationRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     user = get_user_by_email(db=db, email=req.email)
+    resp: dict = {"ok": True}
     if user and not user.email_verified:
         token = create_verification_token(db=db, user_id=user.id)
         frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
         background_tasks.add_task(send_verification_email, to=user.email, name=user.display_name, token=token, frontend_url=frontend_url)
-    return {"ok": True}
+        if not is_prod():
+            # Same non-prod escape hatch /register/ and /request-delete/ already
+            # have. Without it this was the only token-issuing endpoint with no
+            # way to obtain the token in dev: only its SHA-256 hash is stored,
+            # so a token not captured here is gone for good.
+            resp["verification_token"] = token
+    # The response shape must not otherwise reveal whether the email exists or
+    # is already verified, so `ok` stays unconditional.
+    return resp

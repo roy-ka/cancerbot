@@ -3,12 +3,30 @@ import logging
 import os
 import re
 import threading
+from urllib.parse import urlparse
 
 from src.utils.utils import is_prod
 
 logger = logging.getLogger(__name__)
 
 _TOKEN_QUERY_RE = re.compile(r"(token=)[^&\s]+", re.IGNORECASE)
+
+# Hosts whose links are worthless to anyone who isn't already on the machine.
+_LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0"})
+
+
+def _is_local_link(url: str) -> bool:
+    """Whether a link points at this machine.
+
+    A token in a `http://localhost:5173/...` link can only be used by someone
+    who can already reach that host — and anyone reading the log can. A token in
+    a link to a real hostname is a live credential for a shared deployment.
+    """
+    try:
+        host = (urlparse(url or "").hostname or "").lower()
+    except ValueError:
+        return False
+    return host in _LOCAL_HOSTS
 
 
 def _redact_token(url: str) -> str:
@@ -18,19 +36,25 @@ def _redact_token(url: str) -> str:
     where the root-logger Axiom handler would otherwise ship a live, usable
     reset/verification/deletion token to a third-party log store. Redacting
     keeps the flow visible (path + recipient) without emitting the secret.
+
+    Local links are exempt: masking them protected nothing (the reader is
+    already on the host) while making dev flows unusable, since the token is
+    stored only as a SHA-256 hash and cannot be recovered afterwards.
     """
+    if _is_local_link(url):
+        return url or ""
     return _TOKEN_QUERY_RE.sub(r"\1***", url or "")
 
 
 def _redact_payload(template_data: dict) -> dict:
-    """Copy of a template payload with any `token=` value masked.
+    """Copy of a template payload with non-local `token=` values masked.
 
     The dev-mode log below prints the whole payload, and payloads carry the
     verification / reset / deletion links — so without this, turning on
     dev-mode logging would re-introduce exactly the leak `_redact_token` exists
     to prevent (non-prod includes staging, where the Axiom handler ships logs
-    to a third party). Developers get the usable token from the endpoint's
-    non-prod response body instead, not from the log.
+    to a third party). Links to localhost pass through intact, which is what
+    makes the dev flow usable at all.
     """
     return {
         k: _redact_token(v) if isinstance(v, str) else v

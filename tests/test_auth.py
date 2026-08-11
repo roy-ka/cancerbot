@@ -95,6 +95,57 @@ class TestRegister:
         assert response.status_code == 400
 
 
+class TestResendVerification:
+    """/resend-verification/ was the only token-issuing endpoint with no non-prod
+    escape hatch: only the token's SHA-256 hash is stored, so a token that isn't
+    returned here cannot be recovered afterwards."""
+
+    def _unverified(self, db_session):
+        from src.db.repositories.users import create_user
+        user = create_user(
+            db_session,
+            first_name="Un", last_name="Verified",
+            email="unverified@example.com",
+            password_hash=SecurityUtils.hash_password("TestPass123!"),
+        )
+        user.email_verified = False
+        db_session.commit()
+        return user
+
+    def test_returns_token_in_non_prod(self, anon_client, db_session):
+        self._unverified(db_session)
+
+        response = anon_client.post(
+            "/auth/resend-verification/", json={"email": "unverified@example.com"}
+        )
+
+        assert response.status_code == 200
+        assert response.json()["verification_token"]
+
+    def test_never_returns_token_in_prod(self, anon_client, db_session, monkeypatch):
+        self._unverified(db_session)
+        monkeypatch.setattr("src.routers.auth.is_prod", lambda: True)
+
+        response = anon_client.post(
+            "/auth/resend-verification/", json={"email": "unverified@example.com"}
+        )
+
+        assert response.status_code == 200
+        assert "verification_token" not in response.json()
+
+    def test_response_does_not_reveal_whether_the_email_exists(self, anon_client, test_user):
+        """An unknown address and an already-verified one must look identical."""
+        unknown = anon_client.post(
+            "/auth/resend-verification/", json={"email": "nobody@example.com"}
+        )
+        verified = anon_client.post(
+            "/auth/resend-verification/", json={"email": test_user.email}
+        )
+
+        assert unknown.status_code == verified.status_code == 200
+        assert unknown.json() == verified.json() == {"ok": True}
+
+
 class TestLogin:
     def test_login_success_returns_token_and_sets_cookie(self, anon_client, test_user):
         response = anon_client.post(

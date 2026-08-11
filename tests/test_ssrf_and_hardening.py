@@ -14,6 +14,7 @@ Covers:
 - X-Forwarded-For no longer defeating per-IP rate limits
 - is_prod() gating of reset/verification link logging
 """
+import asyncio
 import ipaddress
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -436,3 +437,61 @@ class TestRedactToken:
     def test_handles_empty(self):
         from src.utils.email import _redact_token
         assert _redact_token("") == ""
+
+
+class TestLocalLinksAreNotRedacted:
+    """Masking a localhost link protected nothing — anyone reading the log is
+    already on the host — while making dev unusable, since only the token's
+    SHA-256 hash is stored and the value can't be recovered afterwards."""
+
+    @pytest.mark.parametrize("url", [
+        "http://localhost:5173/verify-email?token=DEVTOKEN",
+        "http://127.0.0.1:5173/verify-email?token=DEVTOKEN",
+        "http://localhost/verify-email?token=DEVTOKEN",
+    ])
+    def test_local_links_keep_their_token(self, url):
+        from src.utils.email import _redact_token
+        assert _redact_token(url) == url
+        assert "DEVTOKEN" in _redact_token(url)
+
+    @pytest.mark.parametrize("url", [
+        "https://cancer-bot.com/verify-email?token=LIVE",
+        "https://staging.cancer-bot.com/verify-email?token=LIVE",
+        # A host merely *containing* "localhost" is not local
+        "https://localhost.evil.com/verify-email?token=LIVE",
+    ])
+    def test_remote_links_are_still_masked(self, url):
+        from src.utils.email import _redact_token
+        assert "LIVE" not in _redact_token(url)
+        assert "token=***" in _redact_token(url)
+
+    def test_dev_payload_log_shows_a_local_link(self, monkeypatch, caplog):
+        import src.utils.email as email_module
+        monkeypatch.setattr(email_module, "is_prod", lambda: False)
+
+        with caplog.at_level("INFO"):
+            asyncio.run(email_module.send_verification_email(
+                to="az@a.com",
+                name="Dev",
+                token="CLICKABLE",
+                frontend_url="http://localhost:5173",
+            ))
+
+        # Both the dedicated link log and the dev-mode payload log carry it
+        assert "CLICKABLE" in caplog.text
+        assert "http://localhost:5173/verify-email?token=CLICKABLE" in caplog.text
+
+    def test_dev_payload_log_still_masks_a_remote_link(self, monkeypatch, caplog):
+        import src.utils.email as email_module
+        monkeypatch.setattr(email_module, "is_prod", lambda: False)
+
+        with caplog.at_level("INFO"):
+            asyncio.run(email_module.send_verification_email(
+                to="az@a.com",
+                name="Dev",
+                token="STAGINGSECRET",
+                frontend_url="https://staging.cancer-bot.com",
+            ))
+
+        assert "STAGINGSECRET" not in caplog.text
+        assert "token=***" in caplog.text

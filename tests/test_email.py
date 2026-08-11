@@ -51,10 +51,10 @@ class TestDevModeDoesNotSend:
         assert "new@example.com" in caplog.text
         assert "Ada" in caplog.text  # the payload itself is visible
 
-    def test_dev_log_still_redacts_the_token(self, monkeypatch, caplog):
-        """The payload carries the live link, and 'non-prod' includes staging,
-        where the Axiom handler ships logs to a third party. Devs get the usable
-        token from the endpoint's non-prod response body, not from the log."""
+    def test_dev_log_redacts_a_non_local_token(self, monkeypatch, caplog):
+        """'Non-prod' includes staging, where the Axiom handler ships logs to a
+        third party — so a link to a real hostname stays masked even in dev mode.
+        Localhost links are exempt (see TestLocalLinksAreNotRedacted)."""
         import src.utils.email as email_module
         monkeypatch.setattr(email_module, "is_prod", lambda: False)
 
@@ -64,7 +64,7 @@ class TestDevModeDoesNotSend:
                     to="new@example.com",
                     name="Ada",
                     token="SUPERSECRET",
-                    frontend_url="http://localhost:5173",
+                    frontend_url="https://staging.cancer-bot.com",
                 )
             )
 
