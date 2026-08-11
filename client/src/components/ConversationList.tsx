@@ -17,6 +17,7 @@ import {
 import PersonOutlineIcon from '@mui/icons-material/PersonOutline'
 import LogoutIcon from '@mui/icons-material/Logout'
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined'
+import HelpOutlineIcon from '@mui/icons-material/HelpOutline'
 import PersonRemoveOutlinedIcon from '@mui/icons-material/PersonRemoveOutlined'
 import { useState } from 'react'
 import cancerbotIcon from '../assets/cancerbot_dark.svg'
@@ -49,6 +50,7 @@ export default function ConversationList({
   onCloseSidebar,
   isNinja,
   onOpenNinja,
+  onOpenGuide,
 }: {
   conversations?: Conversation[]
   selectedConversationId?: string
@@ -59,6 +61,7 @@ export default function ConversationList({
   onCloseSidebar?: () => void
   isNinja?: boolean
   onOpenNinja?: () => void
+  onOpenGuide?: () => void
 }) {
   const [aboutOpen, setAboutOpen] = useState(false)
   const [logoutOpen, setLogoutOpen] = useState(false)
@@ -184,6 +187,19 @@ export default function ConversationList({
               </IconButton>
             </Tooltip>
             <FindTrialsDialog />
+            {onOpenGuide && (
+              <Tooltip title="Icon guide">
+                <IconButton
+                  size="small"
+                  aria-label="Icon guide"
+                  data-testid="icon-guide-trigger"
+                  onClick={onOpenGuide}
+                  sx={{ color: 'rgba(255,255,255,0.6)' }}
+                >
+                  <HelpOutlineIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+            )}
             <BugReportDialog compact />
           </Box>
 

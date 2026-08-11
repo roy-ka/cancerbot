@@ -5,6 +5,7 @@ import ConversationList from '../components/ConversationList'
 import MessageList from '../components/MessageList'
 import type { Conversation, Message } from '../types'
 import InputField from '../components/InputField'
+import IconGuideDialog from '../components/IconGuideDialog'
 import { extractUrls } from '../utils/urls'
 export default function Chat() {
   const BASE_URL = import.meta.env.VITE_BASE_URL || ''
@@ -22,6 +23,12 @@ export default function Chat() {
   const [streamingContent, setStreamingContent] = useState<string | null>(null)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [isNinja, setIsNinja] = useState(false)
+  // Icon tutorial. Shown while the user has no conversations yet; `loaded`
+  // gates it on the conversations fetch having actually returned, so an
+  // existing user doesn't see it flash during the initial request.
+  const [conversationsLoaded, setConversationsLoaded] = useState(false)
+  const [guideManuallyOpen, setGuideManuallyOpen] = useState(false)
+  const [guideDismissed, setGuideDismissed] = useState(false)
 
   useEffect(() => {
     fetch(`${BASE_URL}/auth/check/`, { credentials: 'include' })
@@ -70,11 +77,13 @@ export default function Chat() {
       })
       .then((convs: Conversation[]) => {
         setConversations(convs)
+        setConversationsLoaded(true)
         if (Array.isArray(convs) && convs.length > 0) {
           setSelectedConversationId(convs[0].id)
         }
       })
       .catch((e) => {
+        setConversationsLoaded(true)
         console.error('conversations failed:', e)
         if (
           e instanceof Error &&
@@ -324,6 +333,17 @@ export default function Chat() {
     }
   }
 
+  // Derived, not stored: computing this avoids setting state from an effect
+  // just to mirror data we already have.
+  const guideOpen =
+    guideManuallyOpen ||
+    (conversationsLoaded && conversations.length === 0 && !guideDismissed)
+
+  const closeGuide = () => {
+    setGuideManuallyOpen(false)
+    setGuideDismissed(true)
+  }
+
   return (
     <Box className={`chat-root ${sidebarOpen ? 'sidebar-open' : ''}`}>
       <Snackbar
@@ -361,6 +381,7 @@ export default function Chat() {
             onCloseSidebar={() => setSidebarOpen(false)}
             isNinja={isNinja}
             onOpenNinja={() => navigate('/ninja')}
+            onOpenGuide={() => setGuideManuallyOpen(true)}
           />
         </Box>
         <Box className="chat-messages">
@@ -384,6 +405,7 @@ export default function Chat() {
           onChange={setInputValue}
         />
       </Box>
+      <IconGuideDialog open={guideOpen} onClose={closeGuide} />
     </Box>
   )
 }
