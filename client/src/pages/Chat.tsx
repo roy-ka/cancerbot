@@ -372,6 +372,7 @@ export default function Chat() {
               isLoadingOlder={isLoadingOlder}
               currentStage={currentStage}
               streamingContent={streamingContent}
+              onExampleClick={setInputValue}
             />
           </Box>
         </Box>

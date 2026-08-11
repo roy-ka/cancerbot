@@ -1,6 +1,7 @@
 import { Alert, Box, CircularProgress, Snackbar } from '@mui/material'
 import type { Message } from '../types'
 import MessageItem from './MessageItem'
+import ConversationIntro from './ConversationIntro'
 import { useCallback, useRef, useState } from 'react'
 
 const getStageMessage = (stage: string): string => {
@@ -32,6 +33,7 @@ export default function MessageList({
   isLoadingOlder = false,
   currentStage = null,
   streamingContent = null,
+  onExampleClick,
 }: {
   messages: Message[]
   onLoadOlder?: () => Promise<boolean> | boolean
@@ -39,6 +41,7 @@ export default function MessageList({
   isLoadingOlder?: boolean
   currentStage?: string | null
   streamingContent?: string | null
+  onExampleClick?: (text: string) => void
 }) {
   const [noOlderOpen, setNoOlderOpen] = useState(false)
   const lastTriggerRef = useRef<number>(0)
@@ -109,15 +112,7 @@ export default function MessageList({
       )}
 
       {messages.length === 0 && (
-        <Box
-          sx={{
-            mt: 4,
-            textAlign: 'center',
-            color: 'rgba(255,255,255,0.6)',
-          }}
-        >
-          No messages yet. Start the conversation!
-        </Box>
+        <ConversationIntro onExampleClick={onExampleClick} />
       )}
       {messages.map((message) => (
         <MessageItem message={message} key={message.id || 'new'} />
