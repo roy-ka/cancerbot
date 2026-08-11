@@ -11,7 +11,7 @@
  * only and does not screen eligibility.
  *
  * Privacy: the URL is built and opened entirely client-side. The condition and
- * location the user types are never sent to the CancerBot backend and never
+ * countries the user picks are never sent to the CancerBot backend and never
  * stored — they go only to ClinicalTrials.gov, as a normal outbound link.
  */
 
@@ -22,23 +22,43 @@ export const RECRUITING_FILTER = 'status:rec'
 
 export type TrialSearchInput = {
   condition?: string
-  /** Coarse location — a city and/or country. Never GPS coordinates. */
-  location?: string
+  /**
+   * Coarse locations — country names, which must match CT.gov's own spelling
+   * (see TRIAL_COUNTRIES). Country granularity only; never GPS coordinates.
+   */
+  countries?: readonly string[]
+}
+
+/**
+ * Build the location clause for one or more countries.
+ *
+ * CT.gov's plain `country=` parameter takes a single value only — verified
+ * against the live site, a repeated `country=` makes the search page bail out to
+ * the homepage, and a comma-separated value is read as one literal country name
+ * and matches nothing. Multiple countries are therefore expressed with CT.gov's
+ * expert AREA[] syntax in `term`, which does OR them correctly.
+ *
+ * Every value is quoted: names containing spaces or parentheses — 'Turkey
+ * (Türkiye)' — otherwise break the query's own grammar.
+ */
+function _countryTerm(countries: readonly string[]): string {
+  const quoted = countries.map((c) => `"${c}"`)
+  return `AREA[LocationCountry](${quoted.join(' OR ')})`
 }
 
 /**
  * Build a ClinicalTrials.gov recruiting-search URL for the given condition and
- * coarse location. Empty/whitespace fields are omitted rather than sent blank.
+ * countries. Empty/whitespace values are omitted rather than sent blank.
  *
  * `aggFilters` is appended unencoded so the URL matches the human-readable form
  * CT.gov itself produces (a colon is legal in a query string).
  */
-export function buildTrialSearchUrl({ condition, location }: TrialSearchInput): string {
+export function buildTrialSearchUrl({ condition, countries }: TrialSearchInput): string {
   const params = new URLSearchParams()
   const cond = (condition ?? '').trim()
-  const loc = (location ?? '').trim()
+  const picked = (countries ?? []).map((c) => c.trim()).filter(Boolean)
   if (cond) params.set('cond', cond)
-  if (loc) params.set('locStr', loc)
+  if (picked.length > 0) params.set('term', _countryTerm(picked))
 
   const query = params.toString()
   const filter = `aggFilters=${RECRUITING_FILTER}`
@@ -46,6 +66,9 @@ export function buildTrialSearchUrl({ condition, location }: TrialSearchInput): 
 }
 
 /** Whether the user has given enough to make the search meaningful. */
-export function canSearchTrials({ condition, location }: TrialSearchInput): boolean {
-  return Boolean((condition ?? '').trim() || (location ?? '').trim())
+export function canSearchTrials({ condition, countries }: TrialSearchInput): boolean {
+  return Boolean(
+    (condition ?? '').trim() ||
+      (countries ?? []).some((c) => c.trim()),
+  )
 }

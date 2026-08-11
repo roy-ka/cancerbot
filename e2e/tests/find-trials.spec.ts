@@ -24,13 +24,20 @@ test.describe('Find clinical trials to join', () => {
     await expect(page.getByTestId('find-trials-submit')).toBeDisabled()
   })
 
-  test('opens a recruiting-filtered ClinicalTrials.gov search for the entered condition and location', async ({
+  /** Pick a country from the multi-select by typing and confirming the option. */
+  async function pickCountry(page: import('@playwright/test').Page, name: string) {
+    await page.getByTestId('find-trials-countries').fill(name)
+    await page.getByRole('option', { name, exact: true }).click()
+  }
+
+  test('opens a recruiting-filtered ClinicalTrials.gov search for the condition and countries', async ({
     page,
   }) => {
     await page.getByTestId('find-trials-trigger').first().click()
 
     await page.getByTestId('find-trials-condition').fill('glioblastoma')
-    await page.getByTestId('find-trials-location').fill('Tel Aviv, Israel')
+    await pickCountry(page, 'Israel')
+    await pickCountry(page, 'Germany')
 
     const submit = page.getByTestId('find-trials-submit')
     await expect(submit).toBeEnabled()
@@ -42,10 +49,26 @@ test.describe('Find clinical trials to join', () => {
 
     expect(url.origin + url.pathname).toBe('https://clinicaltrials.gov/search')
     expect(url.searchParams.get('cond')).toBe('glioblastoma')
-    expect(url.searchParams.get('locStr')).toBe('Tel Aviv, Israel')
+    // Multiple countries must go through the AREA[] form — a repeated or
+    // comma-joined `country=` param does not work on CT.gov
+    expect(url.searchParams.get('term')).toBe(
+      'AREA[LocationCountry]("Israel" OR "Germany")',
+    )
+    expect(url.searchParams.has('country')).toBe(false)
     // Recruiting filter — this is the participation search, not the
     // COMPLETED-only evidence search used to ground answers
     expect(url.searchParams.get('aggFilters')).toBe('status:rec')
+  })
+
+  test('the country field is a searchable list, not free text', async ({ page }) => {
+    await page.getByTestId('find-trials-trigger').first().click()
+
+    await page.getByTestId('find-trials-countries').fill('Isra')
+    await expect(page.getByRole('option', { name: 'Israel', exact: true })).toBeVisible()
+
+    // A country CT.gov doesn't know offers nothing to select
+    await page.getByTestId('find-trials-countries').fill('Atlantis')
+    await expect(page.getByRole('option')).toHaveCount(0)
   })
 
   test('the new-conversation intro offers the same flow', async ({ page }) => {
@@ -67,6 +90,12 @@ test.describe('Find clinical trials to join', () => {
     await page.getByTestId('find-trials-trigger').first().click()
 
     await expect(page.getByTestId('find-trials-condition')).toHaveValue('')
-    await expect(page.getByTestId('find-trials-location')).toHaveValue('')
+    await expect(page.getByTestId('find-trials-countries')).toHaveValue('')
+    // No country is pre-selected either — MUI renders each selection as a tag
+    // chip inside the Autocomplete (scoped to the dialog, since chips are used
+    // elsewhere on the page too)
+    await expect(
+      page.getByRole('dialog').locator('.MuiAutocomplete-tag'),
+    ).toHaveCount(0)
   })
 })

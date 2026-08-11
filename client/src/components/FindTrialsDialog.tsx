@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import {
   Alert,
+  Autocomplete,
   Button,
   Chip,
   Dialog,
@@ -14,6 +15,7 @@ import {
 } from '@mui/material'
 import TravelExploreIcon from '@mui/icons-material/TravelExplore'
 import { buildTrialSearchUrl, canSearchTrials } from '../utils/trialSearch'
+import { TRIAL_COUNTRIES } from '../utils/trialCountries'
 
 /**
  * Opt-in "find trials I could join" flow. Collects a condition and a coarse
@@ -34,22 +36,22 @@ export default function FindTrialsDialog({
 }) {
   const [open, setOpen] = useState(false)
   const [condition, setCondition] = useState('')
-  const [location, setLocation] = useState('')
+  const [countries, setCountries] = useState<string[]>([])
 
   const handleClose = () => {
     setOpen(false)
     setCondition('')
-    setLocation('')
+    setCountries([])
   }
 
-  const ready = canSearchTrials({ condition, location })
+  const ready = canSearchTrials({ condition, countries })
 
   const handleSearch = () => {
     if (!ready) return
-    // Built and opened client-side — the condition/location never reach the
+    // Built and opened client-side — the condition/countries never reach the
     // CancerBot backend and are never stored.
     window.open(
-      buildTrialSearchUrl({ condition, location }),
+      buildTrialSearchUrl({ condition, countries }),
       '_blank',
       'noopener,noreferrer',
     )
@@ -126,18 +128,31 @@ export default function FindTrialsDialog({
             placeholder="e.g. glioblastoma, breast cancer"
             slotProps={{ htmlInput: { 'data-testid': 'find-trials-condition' } }}
           />
-          <TextField
-            label="Location"
-            fullWidth
-            value={location}
-            onChange={(e) => setLocation(e.target.value)}
-            placeholder="City and/or country, e.g. Tel Aviv, Israel"
-            slotProps={{ htmlInput: { 'data-testid': 'find-trials-location' } }}
+          <Autocomplete
+            multiple
+            options={TRIAL_COUNTRIES as unknown as string[]}
+            value={countries}
+            onChange={(_, value) => setCountries(value)}
+            disableCloseOnSelect
+            filterSelectedOptions
+            renderInput={(params) => (
+              <TextField
+                {...params}
+                label="Countries"
+                placeholder={countries.length ? '' : 'Add one or more countries'}
+                slotProps={{
+                  htmlInput: {
+                    ...params.inputProps,
+                    'data-testid': 'find-trials-countries',
+                  },
+                }}
+              />
+            )}
           />
 
           <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.5)' }}>
-            A city or country is enough — no precise location is used. What you
-            type here is sent only to ClinicalTrials.gov when you open the
+            Country level only — no city or precise location is used. Your
+            selection is sent only to ClinicalTrials.gov when you open the
             search; CancerBot does not store it.
           </Typography>
         </DialogContent>
