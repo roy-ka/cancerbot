@@ -22,7 +22,10 @@ async def _sweep_once(db) -> None:
             db.rollback()
             continue
         try:
-            await send_account_deleted_email(to=to, name=name)
+            # Best-effort: returns False rather than raising on a delivery
+            # failure. The except still guards anything unexpected above that.
+            if not await send_account_deleted_email(to=to, name=name):
+                logger.warning("[account-deletion] farewell email not sent user_id=%s", user_id)
         except Exception:
             logger.exception("[account-deletion] farewell email failed user_id=%s", user_id)
         logger.info("[account-deletion] deleted user_id=%s", user_id)

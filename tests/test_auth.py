@@ -19,6 +19,33 @@ class TestRegister:
         data = response.json()
         assert data["email"] == "newuser@example.com"
 
+    def test_register_succeeds_when_the_verification_email_fails(self, anon_client, monkeypatch):
+        """A SendGrid outage (or a stale API key returning 401) must not turn a
+        successful registration into an unhandled ASGI traceback. The email is a
+        BackgroundTask that runs after the 201 is already sent, so a propagating
+        exception can't reach the client — it only pollutes the logs.
+
+        TestClient runs background tasks inline, so this exercises the real path.
+        """
+        import src.utils.email as email_module
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("HTTP Error 401: Unauthorized")
+
+        monkeypatch.setattr(email_module, "_send_sendgrid", boom)
+
+        response = anon_client.post(
+            "/auth/register/",
+            json={
+                "first_name": "Mail", "last_name": "Down",
+                "email": "maildown@example.com",
+                "password": "SecurePass123!",
+            },
+        )
+
+        assert response.status_code == 201
+        assert response.json()["email"] == "maildown@example.com"
+
     def test_register_persists_first_and_last_name(self, anon_client, db_session):
         anon_client.post(
             "/auth/register/",

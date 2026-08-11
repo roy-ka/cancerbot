@@ -22,6 +22,22 @@ def _redact_token(url: str) -> str:
     return _TOKEN_QUERY_RE.sub(r"\1***", url or "")
 
 
+def _redact_payload(template_data: dict) -> dict:
+    """Copy of a template payload with any `token=` value masked.
+
+    The dev-mode log below prints the whole payload, and payloads carry the
+    verification / reset / deletion links — so without this, turning on
+    dev-mode logging would re-introduce exactly the leak `_redact_token` exists
+    to prevent (non-prod includes staging, where the Axiom handler ships logs
+    to a third party). Developers get the usable token from the endpoint's
+    non-prod response body instead, not from the log.
+    """
+    return {
+        k: _redact_token(v) if isinstance(v, str) else v
+        for k, v in (template_data or {}).items()
+    }
+
+
 EMAIL_TEMPLATES = {
     "verification": "d-6a6d6095e74549fbb91c18e741cef813",
     "password_reset": "d-89a37afdde454f699046dda66cfca385",
@@ -41,6 +57,20 @@ def _send_sendgrid(
     *,
     disable_subscription_tracking: bool = False,
 ) -> None:
+    # Outside production, never hand anything to SendGrid — just log what would
+    # have been sent. Dev/CI has no business delivering real mail, and a stale
+    # or absent SENDGRID_API_KEY otherwise turns every local signup into a 401
+    # traceback. NOTE: this keys off is_prod(), so a *staging* deploy also stops
+    # sending; give staging its own flag here if it ever needs real delivery.
+    if not is_prod():
+        logger.info(
+            "[email] dev mode — not sending. to=%s template=%s data=%s",
+            to,
+            template_id,
+            _redact_payload(template_data),
+        )
+        return
+
     try:
         from sendgrid import SendGridAPIClient
         from sendgrid.helpers.mail import Mail, TrackingSettings, SubscriptionTracking
@@ -67,8 +97,40 @@ def _send_sendgrid(
         sg.send(message)
         logger.info("[email] sent to=%s template=%s", to, template_id)
     except Exception as e:
-        logger.error("[email] SendGrid error: %s", e)
+        # Raises on purpose: this is the low-level call, and _deliver() is what
+        # decides that a delivery failure must not escape a background task.
+        logger.error("[email] SendGrid error to=%s template=%s: %s", to, template_id, e)
         raise
+
+
+async def _deliver(
+    to: str,
+    template_key: str,
+    template_data: dict,
+    *,
+    disable_subscription_tracking: bool = False,
+) -> bool:
+    """Send in a worker thread, best-effort. Returns whether it was delivered.
+
+    Never raises. Every caller of the public send_* helpers below registers them
+    as FastAPI BackgroundTasks, which run *after* the response has been sent — so
+    a propagating exception cannot be reported to the client and surfaces only as
+    an unhandled ASGI traceback, for a failure `_send_sendgrid` has already
+    logged. A bad API key or a provider outage must not make a successful
+    registration look like a crashed request.
+    """
+    try:
+        await asyncio.to_thread(
+            _send_sendgrid,
+            to,
+            EMAIL_TEMPLATES[template_key],
+            template_data,
+            disable_subscription_tracking=disable_subscription_tracking,
+        )
+        return True
+    except Exception as exc:
+        logger.error("[email] delivery failed to=%s template=%s: %s", to, template_key, exc)
+        return False
 
 
 def send_fallback_alert(model: str) -> None:
@@ -81,59 +143,50 @@ def send_fallback_alert(model: str) -> None:
     threading.Thread(target=_send, daemon=True).start()
 
 
-async def send_verification_email(to: str, name: str, token: str, frontend_url: str) -> None:
+async def send_verification_email(to: str, name: str, token: str, frontend_url: str) -> bool:
     verify_url = f"{frontend_url}/verify-email?token={token}"
     if not is_prod():
         logger.info("[email] verification link for %s: %s", to, _redact_token(verify_url))
-    await asyncio.to_thread(
-        _send_sendgrid,
-        to,
-        EMAIL_TEMPLATES["verification"],
-        {"name": name, "link": verify_url},
-    )
+    return await _deliver(to, "verification", {"name": name, "link": verify_url})
 
 
-async def send_account_deleted_email(to: str, name: str) -> None:
-    await asyncio.to_thread(
-        _send_sendgrid,
+async def send_account_deleted_email(to: str, name: str) -> bool:
+    return await _deliver(
         to,
-        EMAIL_TEMPLATES["account_deleted"],
+        "account_deleted",
         {"name": name},
         disable_subscription_tracking=True,
     )
 
 
-async def send_password_reset_email(to: str, name: str, link: str) -> None:
+async def send_password_reset_email(to: str, name: str, link: str) -> bool:
     if not is_prod():
         logger.info("[email] password reset link for %s: %s", to, _redact_token(link))
-    await asyncio.to_thread(
-        _send_sendgrid,
+    return await _deliver(
         to,
-        EMAIL_TEMPLATES["password_reset"],
+        "password_reset",
         {"name": name, "link": link},
         disable_subscription_tracking=True,
     )
 
 
-async def send_delete_account_request_email(to: str, name: str, link: str) -> None:
+async def send_delete_account_request_email(to: str, name: str, link: str) -> bool:
     """Step 1 — sent as soon as the user asks to delete their account."""
     if not is_prod():
         logger.info("[email] delete-account confirmation link for %s: %s", to, _redact_token(link))
-    await asyncio.to_thread(
-        _send_sendgrid,
+    return await _deliver(
         to,
-        EMAIL_TEMPLATES["delete_account_request"],
+        "delete_account_request",
         {"name": name, "link": link},
         disable_subscription_tracking=True,
     )
 
 
-async def send_delete_account_scheduled_email(to: str, name: str, deletion_date: str) -> None:
+async def send_delete_account_scheduled_email(to: str, name: str, deletion_date: str) -> bool:
     """Step 2 — sent once the password is confirmed and deletion is scheduled."""
-    await asyncio.to_thread(
-        _send_sendgrid,
+    return await _deliver(
         to,
-        EMAIL_TEMPLATES["delete_account_scheduled"],
+        "delete_account_scheduled",
         {"name": name, "date": deletion_date, "link": "https://www.cancer-bot.com"},
         disable_subscription_tracking=True,
     )
