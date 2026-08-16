@@ -585,7 +585,7 @@ async def _pubmed_esearch(client: httpx.AsyncClient, search_query: str, max_resu
 async def _search_pubmed_sources(
     client: httpx.AsyncClient,
     terms: list[str],
-    max_results: int = 4,
+    max_results: int = 10,
     entity_groups: list[dict] | None = None,
 ) -> list[dict]:
     if not terms:
@@ -777,7 +777,7 @@ async def _search_clinicaltrials_sources(
 async def _search_crossref_sources(
     client: httpx.AsyncClient,
     terms: list[str],
-    max_results: int = 4,
+    max_results: int = 10,
     entity_groups: list[dict] | None = None,
 ) -> list[dict]:
     if not terms:
@@ -1227,8 +1227,8 @@ async def search_and_embed(
             # past in a few ms. Per-source counts still arrive in found_sources.
             await emit("searching_the_internet", {"sources": ["pubmed", "crossref", "wikipedia", "clinicaltrials"]})
             pubmed_sources, crossref_sources, wikipedia_sources, clinicaltrials_sources = await asyncio.gather(
-                asyncio.create_task(_search_pubmed_sources(client, terms, max_results=4, entity_groups=entity_groups)),
-                asyncio.create_task(_search_crossref_sources(client, terms, max_results=4, entity_groups=entity_groups)),
+                asyncio.create_task(_search_pubmed_sources(client, terms, max_results=10, entity_groups=entity_groups)),
+                asyncio.create_task(_search_crossref_sources(client, terms, max_results=10, entity_groups=entity_groups)),
                 _search_wikipedia_sources(terms, max_results=3, entity_groups=entity_groups),
                 asyncio.create_task(_search_clinicaltrials_sources(client, terms, max_results=3, entity_groups=entity_groups)),
             )

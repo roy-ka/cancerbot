@@ -24,20 +24,19 @@ test.describe('Find clinical trials to join', () => {
     await expect(page.getByTestId('find-trials-submit')).toBeDisabled()
   })
 
-  /** Pick a country from the multi-select by typing and confirming the option. */
+  /** Pick a country from the single-select by typing and confirming the option. */
   async function pickCountry(page: import('@playwright/test').Page, name: string) {
-    await page.getByTestId('find-trials-countries').fill(name)
+    await page.getByTestId('find-trials-country').fill(name)
     await page.getByRole('option', { name, exact: true }).click()
   }
 
-  test('opens a recruiting-filtered ClinicalTrials.gov search for the condition and countries', async ({
+  test('opens a recruiting-filtered ClinicalTrials.gov search for the condition and country', async ({
     page,
   }) => {
     await page.getByTestId('find-trials-trigger').first().click()
 
     await page.getByTestId('find-trials-condition').fill('glioblastoma')
     await pickCountry(page, 'Israel')
-    await pickCountry(page, 'Germany')
 
     const submit = page.getByTestId('find-trials-submit')
     await expect(submit).toBeEnabled()
@@ -49,25 +48,146 @@ test.describe('Find clinical trials to join', () => {
 
     expect(url.origin + url.pathname).toBe('https://clinicaltrials.gov/search')
     expect(url.searchParams.get('cond')).toBe('glioblastoma')
-    // Multiple countries must go through the AREA[] form — a repeated or
-    // comma-joined `country=` param does not work on CT.gov
-    expect(url.searchParams.get('term')).toBe(
-      'AREA[LocationCountry]("Israel" OR "Germany")',
-    )
+    expect(url.searchParams.get('term')).toBe('AREA[LocationCountry]("Israel")')
     expect(url.searchParams.has('country')).toBe(false)
     // Recruiting filter — this is the participation search, not the
     // COMPLETED-only evidence search used to ground answers
     expect(url.searchParams.get('aggFilters')).toBe('status:rec')
   })
 
+  test('picking a country closes the option list, so it never covers the Search button', async ({
+    page,
+  }) => {
+    /* Regression: with a multi-select, the option panel stayed open
+       (disableCloseOnSelect) after a pick and could sit on top of the dialog's
+       own action buttons, silently swallowing a click on Search. A single
+       choice closes the popup as soon as it is made, which sidesteps that
+       entirely. */
+    await page.getByTestId('find-trials-trigger').first().click()
+    await pickCountry(page, 'Israel')
+
+    await expect(page.getByRole('listbox')).toHaveCount(0)
+    await expect(page.getByTestId('find-trials-submit')).toBeEnabled()
+  })
+
+  test('the city is checked against ClinicalTrials.gov once entered', async ({ page }) => {
+    // The CT.gov API is stubbed so the assertion doesn't depend on a third-party
+    // service or on live trial counts.
+    await page.route(/clinicaltrials\.gov\/api\/v2\/studies/, (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ totalCount: 340, studies: [] }),
+      }),
+    )
+
+    await page.getByTestId('find-trials-trigger').first().click()
+    await page.getByTestId('find-trials-city').fill('Tel Aviv')
+    // The check fires on commit, not per keystroke — a partial city legitimately
+    // matches nothing on CT.gov, so mid-typing it would cry 'misspelt'.
+    await page.getByTestId('find-trials-city').blur()
+
+    await expect(page.getByTestId('find-trials-city-count')).toContainText(
+      '340 recruiting studies found',
+      { timeout: 10_000 },
+    )
+  })
+
+  test('an unknown city reports no studies rather than failing silently', async ({ page }) => {
+    await page.route(/clinicaltrials\.gov\/api\/v2\/studies/, (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ totalCount: 0, studies: [] }),
+      }),
+    )
+
+    await page.getByTestId('find-trials-trigger').first().click()
+    await page.getByTestId('find-trials-city').fill('Atlantis')
+    await page.getByTestId('find-trials-city').blur()
+
+    await expect(page.getByTestId('find-trials-city-count')).toContainText(
+      /lists no recruiting studies there/i,
+      { timeout: 10_000 },
+    )
+  })
+
+  test('a partially typed city is never called misspelt', async ({ page }) => {
+    /* Regression: CT.gov's location search matches whole terms only, so every
+       prefix on the way to a real city ('Tel A' → 'Tel Aviv') returns zero.
+       Checking per keystroke therefore accused correct input of being wrong. */
+    let requests = 0
+    await page.route(/clinicaltrials\.gov\/api\/v2\/studies/, (route) => {
+      requests += 1
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ totalCount: 0, studies: [] }),
+      })
+    })
+
+    await page.getByTestId('find-trials-trigger').first().click()
+    await page.getByTestId('find-trials-city').pressSequentially('Tel A', { delay: 120 })
+
+    // Still typing: no verdict, and nothing asked of CT.gov yet
+    await expect(page.getByTestId('find-trials-city-count')).toContainText(
+      /once you finish typing/i,
+    )
+    await expect(page.getByTestId('find-trials-city-count')).not.toContainText(
+      /no recruiting studies/i,
+    )
+    expect(requests).toBe(0)
+  })
+
+  test('a failed check is reported as unknown, not as zero', async ({ page }) => {
+    await page.route(/clinicaltrials\.gov\/api\/v2\/studies/, (route) => route.abort())
+
+    await page.getByTestId('find-trials-trigger').first().click()
+    await page.getByTestId('find-trials-city').fill('Boston')
+    await page.getByTestId('find-trials-city').blur()
+
+    await expect(page.getByTestId('find-trials-city-count')).toContainText(
+      /Couldn't reach ClinicalTrials\.gov/i,
+      { timeout: 10_000 },
+    )
+  })
+
+  test('the city narrows the search link alongside the country', async ({ page }) => {
+    await page.route(/clinicaltrials\.gov\/api\/v2\/studies/, (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ totalCount: 340, studies: [] }),
+      }),
+    )
+
+    await page.getByTestId('find-trials-trigger').first().click()
+    await page.getByTestId('find-trials-condition').fill('glioblastoma')
+    await pickCountry(page, 'Israel')
+    await page.getByTestId('find-trials-city').fill('Tel Aviv')
+
+    const [popup] = await Promise.all([
+      page.waitForEvent('popup'),
+      page.getByTestId('find-trials-submit').click(),
+    ])
+    const url = new URL(popup.url())
+    await popup.close()
+
+    expect(url.searchParams.get('term')).toBe(
+      'AREA[LocationCity]"Tel Aviv" AND AREA[LocationCountry]("Israel")',
+    )
+    expect(url.searchParams.get('cond')).toBe('glioblastoma')
+    expect(url.searchParams.get('aggFilters')).toBe('status:rec')
+  })
+
   test('the country field is a searchable list, not free text', async ({ page }) => {
     await page.getByTestId('find-trials-trigger').first().click()
 
-    await page.getByTestId('find-trials-countries').fill('Isra')
+    await page.getByTestId('find-trials-country').fill('Isra')
     await expect(page.getByRole('option', { name: 'Israel', exact: true })).toBeVisible()
 
     // A country CT.gov doesn't know offers nothing to select
-    await page.getByTestId('find-trials-countries').fill('Atlantis')
+    await page.getByTestId('find-trials-country').fill('Atlantis')
     await expect(page.getByRole('option')).toHaveCount(0)
   })
 
@@ -90,12 +210,7 @@ test.describe('Find clinical trials to join', () => {
     await page.getByTestId('find-trials-trigger').first().click()
 
     await expect(page.getByTestId('find-trials-condition')).toHaveValue('')
-    await expect(page.getByTestId('find-trials-countries')).toHaveValue('')
-    // No country is pre-selected either — MUI renders each selection as a tag
-    // chip inside the Autocomplete (scoped to the dialog, since chips are used
-    // elsewhere on the page too)
-    await expect(
-      page.getByRole('dialog').locator('.MuiAutocomplete-tag'),
-    ).toHaveCount(0)
+    await expect(page.getByTestId('find-trials-country')).toHaveValue('')
+    await expect(page.getByTestId('find-trials-city')).toHaveValue('')
   })
 })
