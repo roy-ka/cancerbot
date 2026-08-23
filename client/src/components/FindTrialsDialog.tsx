@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import {
   Alert,
   Autocomplete,
+  Box,
   Button,
   Chip,
   CircularProgress,
@@ -20,6 +21,7 @@ import {
   canSearchTrials,
   countRecruitingStudies,
   filterCountries,
+  suggestCityCorrections,
 } from '../utils/trialSearch'
 import { TRIAL_COUNTRIES } from '../utils/trialCountries'
 
@@ -63,6 +65,8 @@ export default function FindTrialsDialog({
   // Stored with the query it belongs to, so a result is never shown against
   // input it wasn't computed for.
   const [result, setResult] = useState<{ key: string; state: CountState } | null>(null)
+  // "Did you mean" suggestions, also keyed to the query they were computed for.
+  const [suggestions, setSuggestions] = useState<{ key: string; cities: string[] } | null>(null)
 
   const handleClose = () => {
     setOpen(false)
@@ -71,6 +75,7 @@ export default function FindTrialsDialog({
     setCity('')
     setCommittedCity('')
     setResult(null)
+    setSuggestions(null)
   }
 
   const countries = country ? [country] : []
@@ -123,8 +128,32 @@ export default function FindTrialsDialog({
         ? result.state
         : { status: 'loading' }
 
+  const isZeroResult = count.status === 'done' && count.count === 0
+
+  // When the exact check comes back empty, ask CT.gov for the closest city
+  // names it actually has in that country — a "did you mean", not a full
+  // picklist (see suggestCityCorrections for why a full list was rejected).
+  // Needs a country: the sample this draws suggestions from is scoped to one.
+  useEffect(() => {
+    if (!isZeroResult || !country) return
+    const controller = new AbortController()
+    suggestCityCorrections(country, committedCity, controller.signal).then((cities) => {
+      if (controller.signal.aborted) return
+      setSuggestions({ key: queryKey, cities })
+    })
+    return () => controller.abort()
+  }, [isZeroResult, country, committedCity, queryKey])
+
+  const citySuggestions = suggestions?.key === queryKey ? suggestions.cities : []
+
   /** Treat the city as final, so it can be checked. */
   const commitCity = () => setCommittedCity(trimmedCity)
+
+  /** Adopt a suggested spelling and re-check it immediately. */
+  const pickSuggestion = (name: string) => {
+    setCity(name)
+    setCommittedCity(name)
+  }
 
   const handleSearch = () => {
     if (!ready) return
@@ -293,6 +322,38 @@ export default function FindTrialsDialog({
             }
             slotProps={{ htmlInput: { 'data-testid': 'find-trials-city' } }}
           />
+
+          {isZeroResult && citySuggestions.length > 0 && (
+            <Box
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                flexWrap: 'wrap',
+                gap: 1,
+                mt: -1,
+              }}
+            >
+              <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.5)' }}>
+                Did you mean:
+              </Typography>
+              {citySuggestions.map((name) => (
+                <Chip
+                  key={name}
+                  label={name}
+                  size="small"
+                  data-testid="find-trials-city-suggestion"
+                  onClick={() => pickSuggestion(name)}
+                  variant="outlined"
+                  sx={{
+                    cursor: 'pointer',
+                    color: 'rgba(255,255,255,0.85)',
+                    borderColor: 'rgba(255,255,255,0.25)',
+                    '&:hover': { borderColor: 'primary.main' },
+                  }}
+                />
+              ))}
+            </Box>
+          )}
 
           <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.5)' }}>
             No precise location is used — a country, optionally narrowed to a

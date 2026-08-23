@@ -296,7 +296,7 @@ ANSWER (every sentence must have a [source#] citation):
 
     if not cls.groq_model:
       raise ValueError(
-        "GROQ_MODEL_NAME is not set. Set it to a Groq-hosted model (e.g., llama-3.3-70b-versatile)."
+        "GROQ_MODEL_NAME is not set. Set it to a Groq-hosted model (e.g., openai/gpt-oss-120b)."
       )
 
     max_tokens = int(os.getenv('GROQ_MAX_TOKENS', '1024'))

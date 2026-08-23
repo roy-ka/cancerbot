@@ -112,6 +112,63 @@ test.describe('Find clinical trials to join', () => {
     )
   })
 
+  test('offers a "did you mean" suggestion for a near-miss city, and picking it re-checks', async ({
+    page,
+  }) => {
+    /* CT.gov has no city typeahead to build a real dropdown from (see
+       trialSearch.ts), so a near-miss instead gets a "did you mean" sourced
+       from a bounded sample of that country's actual recruiting studies. Two
+       distinct requests are stubbed here: the exact count check (pageSize=1)
+       and the suggestion sample (pageSize=CITY_SUGGESTION_SAMPLE_SIZE). */
+    await page.route(/clinicaltrials\.gov\/api\/v2\/studies/, (route) => {
+      const params = new URL(route.request().url()).searchParams
+      if (params.get('pageSize') === '100') {
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            studies: [
+              {
+                protocolSection: {
+                  contactsLocationsModule: {
+                    locations: [{ city: 'Tel Aviv', country: 'Israel' }],
+                  },
+                },
+              },
+            ],
+          }),
+        })
+      }
+      const isCorrectSpelling =
+        params.get('query.term') === 'AREA[LocationCity]"Tel Aviv" AND AREA[LocationCountry]("Israel")'
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ totalCount: isCorrectSpelling ? 42 : 0, studies: [] }),
+      })
+    })
+
+    await page.getByTestId('find-trials-trigger').first().click()
+    await pickCountry(page, 'Israel')
+    await page.getByTestId('find-trials-city').fill('Tel Avivv')
+    await page.getByTestId('find-trials-city').blur()
+
+    const helper = page.getByTestId('find-trials-city-count')
+    await expect(helper).toContainText(/lists no recruiting studies there/i, {
+      timeout: 10_000,
+    })
+
+    const suggestion = page.getByTestId('find-trials-city-suggestion')
+    await expect(suggestion).toHaveText('Tel Aviv', { timeout: 10_000 })
+
+    await suggestion.click()
+
+    await expect(page.getByTestId('find-trials-city')).toHaveValue('Tel Aviv')
+    await expect(helper).toContainText('42 recruiting studies found', {
+      timeout: 10_000,
+    })
+  })
+
   test('a partially typed city is never called misspelt', async ({ page }) => {
     /* Regression: CT.gov's location search matches whole terms only, so every
        prefix on the way to a real city ('Tel A' → 'Tel Aviv') returns zero.

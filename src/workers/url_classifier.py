@@ -43,7 +43,7 @@ def _classify(content_text: str) -> tuple[bool, str]:
 
     prompt = CLASSIFICATION_PROMPT.format(text=content_text[:3000])
     completion = OllamaConnector.groq.chat.completions.create(
-        model=OllamaConnector.groq_model or "llama-3.3-70b-versatile",
+        model=OllamaConnector.groq_model or "openai/gpt-oss-120b",
         messages=[{"role": "user", "content": prompt}],
         max_tokens=10,
     )

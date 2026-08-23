@@ -311,7 +311,7 @@ OLLAMA_EVIDENCE_CHARS=900              # max chars per evidence chunk
 
 # Groq (text generation)
 GROQ_API_KEY=...
-GROQ_MODEL_NAME=llama-3.3-70b-versatile  # required — do NOT wrap in quotes
+GROQ_MODEL_NAME=openai/gpt-oss-120b    # required — do NOT wrap in quotes
 GROQ_MAX_TOKENS=1024                   # max tokens to generate
 
 # PostgreSQL

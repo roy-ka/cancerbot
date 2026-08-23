@@ -182,6 +182,111 @@ export function filterCountries(
   return [...startsWithName, ...startsWithWord]
 }
 
+/** How many recruiting studies to sample per country when suggesting a city
+ *  correction. A bounded, on-demand sample rather than an exhaustive list:
+ *  pulling every recruiting study for a country to build a full city list was
+ *  tested and rejected (see suggestCityCorrections below) — 100 studies costs
+ *  ~370KB and was found to surface a good spread of that country's cities,
+ *  and this only fires once, after an exact check has already come back with
+ *  zero results. */
+export const CITY_SUGGESTION_SAMPLE_SIZE = 100
+
+/** Cap on how many "did you mean" suggestions to show. */
+export const MAX_CITY_SUGGESTIONS = 3
+
+/**
+ * Build the API URL for a bounded sample of a country's recruiting studies,
+ * requesting only the fields needed to extract city names.
+ */
+export function buildCitySampleUrl(country: string): string {
+  const params = new URLSearchParams()
+  const term = _locationTerm({ countries: [country] })
+  if (term) params.set('query.term', term)
+  params.set('filter.overallStatus', 'RECRUITING')
+  params.set('pageSize', String(CITY_SUGGESTION_SAMPLE_SIZE))
+  params.set('fields', 'LocationCity,LocationCountry')
+  return `${CT_API_STUDIES}?${params.toString()}`
+}
+
+/** Iterative Levenshtein (edit) distance — small strings, no dependency needed. */
+function _editDistance(a: string, b: string): number {
+  if (a.length === 0) return b.length
+  if (b.length === 0) return a.length
+  const dp = new Array(b.length + 1)
+  for (let j = 0; j <= b.length; j++) dp[j] = j
+  for (let i = 1; i <= a.length; i++) {
+    let prevDiag = dp[0]
+    dp[0] = i
+    for (let j = 1; j <= b.length; j++) {
+      const tmp = dp[j]
+      dp[j] = a[i - 1] === b[j - 1] ? prevDiag : 1 + Math.min(prevDiag, dp[j], dp[j - 1])
+      prevDiag = tmp
+    }
+  }
+  return dp[b.length]
+}
+
+/**
+ * Rank candidate city names by closeness to the query, keeping only names
+ * plausibly a typo of it — a distance threshold scaled to the query's own
+ * length, so "Atlantis" doesn't surface an unrelated real city as a "did you
+ * mean". Ties broken alphabetically for stable output.
+ */
+function _closestCities(candidates: readonly string[], query: string): string[] {
+  const folded = _fold(query)
+  const threshold = Math.max(2, Math.ceil(folded.length * 0.4))
+  return candidates
+    .map((name) => ({ name, distance: _editDistance(folded, _fold(name)) }))
+    .filter(({ distance }) => distance > 0 && distance <= threshold)
+    .sort((a, b) => a.distance - b.distance || a.name.localeCompare(b.name))
+    .map(({ name }) => name)
+    .slice(0, MAX_CITY_SUGGESTIONS)
+}
+
+/**
+ * When an exact city+country check finds nothing, suggest the closest city
+ * names CT.gov actually has data for in that country — a "did you mean"
+ * rather than a full picklist.
+ *
+ * A dropdown of every city in a country was tried and rejected: CT.gov's city
+ * field is free text typed by each trial's own sponsor, not a controlled
+ * vocabulary, so "cities in Israel" comes back as 'Beer Yaakov', 'Beer
+ * Ya'akov', 'Beer Ya Akov', 'Beer Yaacov', 'Beer-Sheeva' — eight-odd spellings
+ * of the same two places. A full list would show that mess to the user; this
+ * function's edit-distance filter mostly collapses it back down to one or two
+ * close suggestions instead.
+ *
+ * Returns [] on a fetch failure or if country is empty — silent, since this is
+ * a bonus on top of the exact check, not something to alarm the user with a
+ * second failure message for.
+ */
+export async function suggestCityCorrections(
+  country: string,
+  cityQuery: string,
+  signal?: AbortSignal,
+): Promise<string[]> {
+  const targetCountry = country.trim()
+  const query = cityQuery.trim()
+  if (!targetCountry || !query) return []
+
+  try {
+    const res = await fetch(buildCitySampleUrl(targetCountry), { signal })
+    if (!res.ok) return []
+    const data = await res.json()
+    const cities = new Set<string>()
+    for (const study of data?.studies ?? []) {
+      const locations =
+        study?.protocolSection?.contactsLocationsModule?.locations ?? []
+      for (const loc of locations) {
+        if (loc?.country === targetCountry && loc?.city) cities.add(loc.city)
+      }
+    }
+    return _closestCities([...cities], query)
+  } catch {
+    return []
+  }
+}
+
 /** Whether the user has given enough to make the search meaningful. */
 export function canSearchTrials({ condition, countries, city }: TrialSearchInput): boolean {
   return Boolean(

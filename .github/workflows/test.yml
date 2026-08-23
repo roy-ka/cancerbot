@@ -30,7 +30,7 @@ jobs:
     env:
       JWT_SECRET: ci-test-jwt-secret-not-for-production
       EMBED_MODEL_NAME: nomic-embed-text
-      GROQ_MODEL_NAME: llama-3.3-70b-versatile
+      GROQ_MODEL_NAME: openai/gpt-oss-120b
       ENV: test
       SENDGRID_API_KEY: ""
       AXIOM_TOKEN: ""

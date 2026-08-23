@@ -2,7 +2,7 @@ import os
 
 os.environ.setdefault("JWT_SECRET", "test-secret-key-not-for-production")
 os.environ.setdefault("EMBED_MODEL_NAME", "nomic-embed-text")
-os.environ.setdefault("GROQ_MODEL_NAME", "llama-3.3-70b-versatile")
+os.environ.setdefault("GROQ_MODEL_NAME", "openai/gpt-oss-120b")
 os.environ["ENV"] = "test"
 os.environ["AXIOM_TOKEN"] = ""      # disable Axiom logging during tests
 os.environ["AXIOM_DATASET"] = ""

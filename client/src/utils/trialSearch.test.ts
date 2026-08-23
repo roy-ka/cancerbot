@@ -1,13 +1,17 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import {
+  buildCitySampleUrl,
   buildTrialCountUrl,
   buildTrialSearchUrl,
   canSearchTrials,
-  filterCountries,
+  CITY_SUGGESTION_SAMPLE_SIZE,
   countRecruitingStudies,
   CT_API_STUDIES,
   CT_SEARCH_BASE,
+  filterCountries,
+  MAX_CITY_SUGGESTIONS,
   RECRUITING_FILTER,
+  suggestCityCorrections,
 } from './trialSearch'
 import { TRIAL_COUNTRIES } from './trialCountries'
 
@@ -210,6 +214,135 @@ describe('countRecruitingStudies', () => {
     await countRecruitingStudies({ city: 'Boston' }, controller.signal)
 
     expect(fetchMock.mock.calls[0][1]).toEqual({ signal: controller.signal })
+  })
+})
+
+describe('buildCitySampleUrl', () => {
+  it('scopes the sample to one country, filtered to recruiting studies', () => {
+    const url = buildCitySampleUrl('Israel')
+    expect(url.startsWith(`${CT_API_STUDIES}?`)).toBe(true)
+    const p = new URL(url).searchParams
+    expect(p.get('query.term')).toBe('AREA[LocationCountry]("Israel")')
+    expect(p.get('filter.overallStatus')).toBe('RECRUITING')
+  })
+
+  it('requests only the fields needed to extract cities', () => {
+    const p = new URL(buildCitySampleUrl('Israel')).searchParams
+    expect(p.get('fields')).toBe('LocationCity,LocationCountry')
+  })
+
+  it('bounds the sample size, rather than paging through every study', () => {
+    const p = new URL(buildCitySampleUrl('Israel')).searchParams
+    expect(p.get('pageSize')).toBe(String(CITY_SUGGESTION_SAMPLE_SIZE))
+  })
+})
+
+describe('suggestCityCorrections', () => {
+  const studiesResponse = (locations: { city?: string; country?: string }[]) =>
+    ({
+      ok: true,
+      json: async () => ({
+        studies: [
+          {
+            protocolSection: {
+              contactsLocationsModule: { locations },
+            },
+          },
+        ],
+      }),
+    }) as Response
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('suggests a close spelling from the sampled cities', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        studiesResponse([
+          { city: 'Tel Aviv', country: 'Israel' },
+          { city: 'Haifa', country: 'Israel' },
+        ]),
+      ),
+    )
+
+    // one-letter slip: 'Tel Avivv' -> 'Tel Aviv'
+    await expect(suggestCityCorrections('Israel', 'Tel Avivv')).resolves.toEqual([
+      'Tel Aviv',
+    ])
+  })
+
+  it('only offers cities belonging to the selected country', async () => {
+    // A multi-site study can list locations in other countries too; those
+    // must not leak into a suggestion for the country the user picked.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        studiesResponse([
+          { city: 'Tel Aviv', country: 'Israel' },
+          { city: 'Tel Avivi', country: 'Elsewhereland' },
+        ]),
+      ),
+    )
+
+    await expect(suggestCityCorrections('Israel', 'Tel Avivv')).resolves.toEqual([
+      'Tel Aviv',
+    ])
+  })
+
+  it('offers nothing for input with no plausibly-close city', async () => {
+    // A typo threshold, not a "closest of whatever exists" match — otherwise
+    // "Atlantis" would get offered an unrelated real city as a "correction".
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(studiesResponse([{ city: 'Tokyo', country: 'Japan' }])),
+    )
+    await expect(suggestCityCorrections('Japan', 'Atlantis')).resolves.toEqual([])
+  })
+
+  it('caps the number of suggestions', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        studiesResponse([
+          { city: 'Bosten', country: 'X' },
+          { city: 'Bostan', country: 'X' },
+          { city: 'Bosston', country: 'X' },
+          { city: 'Bostno', country: 'X' },
+          { city: 'Bosotn', country: 'X' },
+        ]),
+      ),
+    )
+
+    const out = await suggestCityCorrections('X', 'Boston')
+    expect(out.length).toBeLessThanOrEqual(MAX_CITY_SUGGESTIONS)
+  })
+
+  it('never suggests the exact spelling already typed', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(studiesResponse([{ city: 'Boston', country: 'X' }])),
+    )
+    await expect(suggestCityCorrections('X', 'Boston')).resolves.toEqual([])
+  })
+
+  it('returns nothing without a country, since the sample must be scoped', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(suggestCityCorrections('', 'Boston')).resolves.toEqual([])
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('fails silently on a network error', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')))
+    await expect(suggestCityCorrections('Israel', 'Tel Avivv')).resolves.toEqual([])
+  })
+
+  it('fails silently on a non-ok response', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false } as Response))
+    await expect(suggestCityCorrections('Israel', 'Tel Avivv')).resolves.toEqual([])
   })
 })
 
