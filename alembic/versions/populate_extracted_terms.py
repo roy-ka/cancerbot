@@ -51,7 +51,6 @@ def upgrade() -> None:
             if processed % 10 == 0:
                 print(f"[Migration] Processed {processed} messages...")
     
-    connection.commit()
     print(f"[Migration] Successfully populated {processed} messages\n")
 
 def downgrade() -> None:

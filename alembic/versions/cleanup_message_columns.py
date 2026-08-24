@@ -33,7 +33,6 @@ def upgrade() -> None:
             except Exception as e:
                 print(f"Error processing message {msg_id}: {e}")
     
-    connection.commit()
     print("[Migration] Cleaned up '?' from extracted_terms")
     
     # Drop intent column
