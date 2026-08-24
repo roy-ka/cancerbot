@@ -51,7 +51,6 @@ export default function MessageSourceItem({
         cursor: 'pointer',
         fontWeight: 600,
         verticalAlign: 'baseline',
-        userSelect: 'none',
         color: 'secondary.main',
         borderColor: 'secondary.main',
         bgcolor: 'transparent',
@@ -68,7 +67,6 @@ export default function MessageSourceItem({
         cursor: 'pointer',
         fontWeight: 600,
         color: 'primary.main',
-        userSelect: 'none',
       }}
     >
       {name}
@@ -156,8 +154,9 @@ export default function MessageSourceItem({
                     target="_blank"
                     rel="noopener noreferrer"
                     underline="hover"
+                    sx={{ wordBreak: 'break-all' }}
                   >
-                    {name}
+                    {url}
                   </Link>
                 </Box>
               </Box>

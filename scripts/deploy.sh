@@ -105,6 +105,27 @@ if [ "$DISK_AVAILABLE" -lt 100 ]; then
 fi
 echo "✓ Disk space check passed (${DISK_AVAILABLE}GB available)"
 
+# Check vm.max_map_count (OpenSearch bootstrap check requires >= 262144;
+# most fresh hosts default to 65530, which makes opensearch-node1/2 exit
+# immediately on startup rather than just start slowly).
+REQUIRED_MAX_MAP_COUNT=262144
+CURRENT_MAX_MAP_COUNT="$(cat /proc/sys/vm/max_map_count)"
+if [ "$CURRENT_MAX_MAP_COUNT" -lt "$REQUIRED_MAX_MAP_COUNT" ]; then
+  echo "⚠ vm.max_map_count is ${CURRENT_MAX_MAP_COUNT} (OpenSearch needs >= ${REQUIRED_MAX_MAP_COUNT}). Fixing..."
+  sudo sysctl -w vm.max_map_count=$REQUIRED_MAX_MAP_COUNT
+  if ! grep -q "^vm.max_map_count" /etc/sysctl.conf 2>/dev/null; then
+    echo "vm.max_map_count=${REQUIRED_MAX_MAP_COUNT}" | sudo tee -a /etc/sysctl.conf > /dev/null
+  fi
+  CURRENT_MAX_MAP_COUNT="$(cat /proc/sys/vm/max_map_count)"
+  if [ "$CURRENT_MAX_MAP_COUNT" -lt "$REQUIRED_MAX_MAP_COUNT" ]; then
+    echo "✗ Error: vm.max_map_count still ${CURRENT_MAX_MAP_COUNT} after attempted fix"
+    exit 1
+  fi
+  echo "✓ vm.max_map_count set to ${CURRENT_MAX_MAP_COUNT}"
+else
+  echo "✓ vm.max_map_count check passed (${CURRENT_MAX_MAP_COUNT})"
+fi
+
 # Confirmation prompt
 if [ "$FORCE" = false ]; then
   echo ""
@@ -516,6 +537,29 @@ else
     echo "✗ Alembic migrations failed"
     exit 1
   fi
+fi
+
+# Wait for OpenSearch to be healthy before running seeds. A cold 2-node
+# cluster on a fresh host can take minutes to form (see the healthcheck
+# start_period/retries on opensearch-node1 in docker-compose.yml) — far
+# longer than the Postgres wait above, so seeds raced ahead of it and hit
+# "Connection refused" on every fresh deploy. Non-fatal like the seeds
+# themselves: they already tolerate OpenSearch being unavailable.
+echo ""
+echo "Waiting for OpenSearch to be ready (up to 5 minutes)..."
+OPENSEARCH_READY=false
+for i in $(seq 1 60); do
+  if [ "$(docker inspect --format='{{.State.Health.Status}}' opensearch-node1 2>/dev/null)" = "healthy" ]; then
+    OPENSEARCH_READY=true
+    echo "✓ OpenSearch is ready (attempt $i/60)"
+    break
+  fi
+  echo "  Attempt $i/60 - OpenSearch not ready, waiting..."
+  sleep 5
+done
+
+if [ "$OPENSEARCH_READY" = false ]; then
+  echo "⚠ Warning: OpenSearch not healthy after 5 minutes — seeds will likely fail (non-critical)"
 fi
 
 # Run one-off seeds against the live infrastructure (OpenSearch, Postgres)
