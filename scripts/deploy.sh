@@ -145,6 +145,14 @@ echo "Capturing current images for rollback..."
 BACKEND_IMAGE=$(docker ps --filter "name=cancerbot-backend" --format "{{.Image}}" 2>/dev/null | head -1 || echo "")
 BACKEND_IMAGE_TAG="cancerbot-backend:rollback_$TIMESTAMP"
 
+# No backend was running before this deploy started, so there's no previous
+# code whose schema-compatibility a rollback needs to protect.
+if [ -z "$BACKEND_IMAGE" ]; then
+  FIRST_DEPLOY=true
+else
+  FIRST_DEPLOY=false
+fi
+
 if [ -n "$BACKEND_IMAGE" ]; then
   if docker tag "$BACKEND_IMAGE" "$BACKEND_IMAGE_TAG" 2>/dev/null; then
     echo "✓ Saved backend image: $BACKEND_IMAGE_TAG"
@@ -213,12 +221,18 @@ rollback() {
       echo "✗ Failed to restore database - manual intervention required"
       echo "Backup file: $BACKUP_FILE"
     fi
-  elif [ "$MIGRATIONS_APPLIED" = true ]; then
-    # No backup but migrations already ran — attempt a schema downgrade so the
-    # old backend image doesn't start against a forward-migrated schema.
+  elif [ "$MIGRATIONS_APPLIED" = true ] && [ "$FIRST_DEPLOY" = false ]; then
+    # No backup but migrations already ran, and there was a previously-running
+    # backend — attempt a schema downgrade so that old image doesn't start
+    # against a forward-migrated schema it doesn't understand.
     echo "⚠ No backup available — attempting alembic downgrade to match previous image..."
     _alembic alembic downgrade -1 2>/dev/null || \
       echo "  ⚠ Downgrade failed — old backend may be incompatible with current schema"
+  elif [ "$MIGRATIONS_APPLIED" = true ] && [ "$FIRST_DEPLOY" = true ]; then
+    # First-ever deploy: no previous backend to protect compatibility for, so
+    # downgrading would only strand the schema behind head for no reason —
+    # leave it at wherever the migrations reached and just report the failure.
+    echo "⚠ No backup available, but this was a first deploy (no previous backend was running) — leaving the schema as migrated rather than downgrading"
   else
     echo "⚠ No backup file available - database not restored"
   fi
