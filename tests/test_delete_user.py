@@ -168,6 +168,20 @@ class TestCancelDelete:
         user = db_session.query(models.User).filter(models.User.id == test_user.id).first()
         assert user.deletion_scheduled_at is None
 
+    def test_success_sends_cancellation_email(self, anon_client, test_user, db_session):
+        test_user.deletion_scheduled_at = datetime.now(timezone.utc) + timedelta(days=7)
+        db_session.commit()
+
+        cancel_token = SecurityUtils.create_jwt_token({
+            "sub": str(test_user.id),
+            "purpose": "cancel_delete",
+            "exp": datetime.now(timezone.utc) + timedelta(minutes=15),
+        })
+        with patch("src.routers.auth.send_delete_account_cancelled_email", new=AsyncMock()) as mock_send:
+            response = anon_client.post("/auth/cancel-delete/", json={"cancel_token": cancel_token})
+        assert response.status_code == 200
+        mock_send.assert_called_once_with(to=test_user.email, name=test_user.display_name)
+
     def test_wrong_purpose_token_rejected(self, anon_client, test_user):
         bad_token = SecurityUtils.create_jwt_token({
             "sub": str(test_user.id),

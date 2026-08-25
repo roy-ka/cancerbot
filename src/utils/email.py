@@ -6,6 +6,8 @@ import threading
 from urllib.parse import urlparse
 
 from src.utils.utils import is_prod
+from src.utils.email_brevo import _send_brevo
+from src.utils.email_templates import render as _render_template
 
 logger = logging.getLogger(__name__)
 
@@ -139,18 +141,18 @@ async def _deliver(
     Never raises. Every caller of the public send_* helpers below registers them
     as FastAPI BackgroundTasks, which run *after* the response has been sent — so
     a propagating exception cannot be reported to the client and surfaces only as
-    an unhandled ASGI traceback, for a failure `_send_sendgrid` has already
+    an unhandled ASGI traceback, for a failure `_send_brevo` has already
     logged. A bad API key or a provider outage must not make a successful
     registration look like a crashed request.
+
+    `disable_subscription_tracking` is accepted for call-site compatibility with
+    the dormant SendGrid path but unused here: Brevo's transactional /smtp/email
+    endpoint doesn't auto-inject an unsubscribe link the way SendGrid's dynamic
+    templates could, so there's nothing to disable.
     """
     try:
-        await asyncio.to_thread(
-            _send_sendgrid,
-            to,
-            EMAIL_TEMPLATES[template_key],
-            template_data,
-            disable_subscription_tracking=disable_subscription_tracking,
-        )
+        subject, html = _render_template(template_key, **template_data)
+        await asyncio.to_thread(_send_brevo, to, subject, html)
         return True
     except Exception as exc:
         logger.error("[email] delivery failed to=%s template=%s: %s", to, template_key, exc)
@@ -161,7 +163,8 @@ def send_fallback_alert(model: str) -> None:
     """Fire-and-forget fallback alert — safe to call from sync worker threads."""
     def _send():
         try:
-            _send_sendgrid(_FALLBACK_ALERT_TO, EMAIL_TEMPLATES["fallback_alert"], {"model": model})
+            subject, html = _render_template("fallback_alert", model=model)
+            _send_brevo(_FALLBACK_ALERT_TO, subject, html)
         except Exception as exc:
             logger.error("[email] fallback alert failed: %s", exc)
     threading.Thread(target=_send, daemon=True).start()
@@ -178,7 +181,7 @@ async def send_account_deleted_email(to: str, name: str) -> bool:
     return await _deliver(
         to,
         "account_deleted",
-        {"name": name},
+        {"name": name, "link": "https://cancer-bot.com/signup"},
         disable_subscription_tracking=True,
     )
 
@@ -212,5 +215,16 @@ async def send_delete_account_scheduled_email(to: str, name: str, deletion_date:
         to,
         "delete_account_scheduled",
         {"name": name, "date": deletion_date, "link": "https://www.cancer-bot.com"},
+        disable_subscription_tracking=True,
+    )
+
+
+async def send_delete_account_cancelled_email(to: str, name: str) -> bool:
+    """Sent when a scheduled deletion is cancelled (user logs in during the
+    7-day grace period and confirms via the cancel-deletion dialog)."""
+    return await _deliver(
+        to,
+        "delete_account_cancelled",
+        {"name": name, "link": "https://cancer-bot.com/app"},
         disable_subscription_tracking=True,
     )

@@ -45,6 +45,7 @@ from src.utils.email import (
     send_verification_email,
     send_delete_account_request_email,
     send_delete_account_scheduled_email,
+    send_delete_account_cancelled_email,
 )
 
 PASSWORD_REGEX_PATTERNS = {
@@ -405,7 +406,7 @@ class CancelDeleteRequest(BaseModel):
 
 
 @router.post("/cancel-delete/")
-async def cancel_delete_account(req: CancelDeleteRequest, db: Session = Depends(get_db)):
+async def cancel_delete_account(req: CancelDeleteRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     try:
         payload = SecurityUtils.decode_jwt_token(req.cancel_token)
     except HTTPException:
@@ -413,7 +414,13 @@ async def cancel_delete_account(req: CancelDeleteRequest, db: Session = Depends(
     if payload.get("purpose") != "cancel_delete":
         raise HTTPException(status_code=400, detail="Invalid cancellation token.")
 
-    cancel_deletion(db=db, user_id=UUID(payload.get("sub")))
+    user_id = UUID(payload.get("sub"))
+    cancel_deletion(db=db, user_id=user_id)
+
+    user = get_user_by_id(db=db, user_id=user_id)
+    if user:
+        background_tasks.add_task(send_delete_account_cancelled_email, to=user.email, name=user.display_name)
+
     return {"ok": True}
 
 

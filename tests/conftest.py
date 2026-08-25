@@ -6,7 +6,8 @@ os.environ.setdefault("GROQ_MODEL_NAME", "openai/gpt-oss-120b")
 os.environ["ENV"] = "test"
 os.environ["AXIOM_TOKEN"] = ""      # disable Axiom logging during tests
 os.environ["AXIOM_DATASET"] = ""
-os.environ["SENDGRID_API_KEY"] = "" # prevent real emails during tests
+os.environ["SENDGRID_API_KEY"] = "" # prevent real emails during tests (dormant provider)
+os.environ["BREVO_API_KEY"] = ""    # prevent real emails during tests (active provider)
 os.environ.setdefault("OPENSEARCH_CA_CERT", "")
 os.environ.setdefault("NINJA_EMAIL", "ninja-test@example.com")
 os.environ.setdefault("NINJA_PASSWORD", "test-ninja-password")

@@ -33,6 +33,7 @@ jobs:
       GROQ_MODEL_NAME: openai/gpt-oss-120b
       ENV: test
       SENDGRID_API_KEY: ""
+      BREVO_API_KEY: ""
       AXIOM_TOKEN: ""
       AXIOM_DATASET: ""
       OPENSEARCH_CA_CERT: ""
