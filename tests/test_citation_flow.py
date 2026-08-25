@@ -241,6 +241,39 @@ class TestPostProcess:
         )
         assert ":c" not in result
 
+    def test_replaces_fullwidth_bracket_alias(self):
+        # The prompt instructs ASCII brackets ([source1]), but a model can emit
+        # full-width/CJK brackets instead despite that — observed with
+        # openai/gpt-oss-120b. Left unhandled, the raw 【source2】 token reaches
+        # the user untouched since it never matches an ASCII replace.
+        result = OllamaConnector._post_process(
+            "HER2 drives signaling【source2】.",
+            {"source2": "pmid:999"},
+        )
+        assert "[pmid:999]" in result
+        assert "【source2】" not in result
+        assert "source2" not in result
+
+    def test_fullwidth_and_ascii_aliases_in_same_answer(self):
+        result = OllamaConnector._post_process(
+            "Point A [source1]. Point B【source2】.",
+            {"source1": "pmid:1", "source2": "doi:10.1/x"},
+        )
+        assert "[pmid:1]" in result
+        assert "[doi:10.1/x]" in result
+        assert "【" not in result and "】" not in result
+
+    def test_unrecognized_bracket_token_left_untouched(self):
+        # Only known aliases are substituted — arbitrary bracketed text (e.g. the
+        # model citing something outside alias_to_id) must pass through as-is
+        # rather than being dropped or mangled.
+        result = OllamaConnector._post_process(
+            "See [Table 1] for details【Figure 2】.",
+            {"source1": "pmid:1"},
+        )
+        assert "[Table 1]" in result
+        assert "【Figure 2】" in result
+
 
 # ---------------------------------------------------------------------------
 # TestRetrievalStripsChunkSuffix

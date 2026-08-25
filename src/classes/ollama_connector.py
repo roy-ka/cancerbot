@@ -303,12 +303,23 @@ ANSWER (every sentence must have a [source#] citation):
 
     return full_prompt, alias_to_id, max_tokens
 
+  # Citation tokens as the LLM actually emits them. The prompt instructs ASCII
+  # brackets ([source1]), but models occasionally emit full-width/CJK brackets
+  # (【source1】) instead despite that instruction — observed with
+  # openai/gpt-oss-120b. A literal ASCII-only replace silently no-ops on those,
+  # leaving the raw token in the answer shown to the user, so both styles are
+  # matched and normalized to the ASCII form the frontend's citation parser
+  # expects.
+  _CITATION_TOKEN_RE = re.compile(r'[\[【]([^\[\]【】]+)[\]】]')
+
   @classmethod
   def _post_process(cls, raw_answer: str, alias_to_id: dict[str, str]) -> str:
     """Replace short aliases with stable source IDs and strip empty brackets."""
-    answer = raw_answer
-    for alias, original_id in alias_to_id.items():
-      answer = answer.replace(f"[{alias}]", f"[{original_id}]")
+    def _sub(match: re.Match) -> str:
+      alias = match.group(1)
+      return f"[{alias_to_id[alias]}]" if alias in alias_to_id else match.group(0)
+
+    answer = cls._CITATION_TOKEN_RE.sub(_sub, raw_answer)
     answer = re.sub(r'\s*\[\]', '', answer)
     return answer
 
