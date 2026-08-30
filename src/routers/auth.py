@@ -48,6 +48,15 @@ from src.utils.email import (
     send_delete_account_cancelled_email,
 )
 
+def _get_frontend_url() -> str:
+    """Single source of truth for the frontend origin used in email links.
+
+    Falls back to the production domain, not localhost — a missing
+    FRONTEND_URL in production must not silently produce localhost links.
+    """
+    return os.getenv("FRONTEND_URL", "https://cancer-bot.com")
+
+
 PASSWORD_REGEX_PATTERNS = {
     'lowercase': r'[a-z]',
     'uppercase': r'[A-Z]',
@@ -139,7 +148,7 @@ async def register_user(req: CreateUserRequest, request: Request, background_tas
         password_hash=password_hash,
     )
     token = create_verification_token(db=db, user_id=user.id)
-    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
+    frontend_url = _get_frontend_url()
     background_tasks.add_task(send_verification_email, to=user.email, name=user.display_name, token=token, frontend_url=frontend_url)
     resp: dict = {"message": "Please check your email to verify your account.", "email": user.email}
     if not is_prod():
@@ -269,7 +278,7 @@ async def forgot_password(req: ForgotPasswordRequest, background_tasks: Backgrou
     user = get_user_by_email(db=db, email=req.email)
     if user:
         token = create_reset_token(db=db, user_id=user.id)
-        frontend_url = os.getenv("FRONTEND_URL", "https://cancer-bot.com")
+        frontend_url = _get_frontend_url()
         reset_link = f"{frontend_url}/reset-password?token={token}"
         background_tasks.add_task(
             send_password_reset_email,
@@ -339,7 +348,7 @@ async def request_delete_account(
     record_attempt(db, delete_key, MAX_REQUEST_DELETE_ATTEMPTS)
 
     token = create_deletion_request_token(db=db, user_id=current_user.id)
-    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
+    frontend_url = _get_frontend_url()
     link = f"{frontend_url}/confirm-delete?token={token}"
     background_tasks.add_task(
         send_delete_account_request_email,
@@ -455,7 +464,7 @@ async def resend_verification(req: ResendVerificationRequest, background_tasks: 
     resp: dict = {"ok": True}
     if user and not user.email_verified:
         token = create_verification_token(db=db, user_id=user.id)
-        frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
+        frontend_url = _get_frontend_url()
         background_tasks.add_task(send_verification_email, to=user.email, name=user.display_name, token=token, frontend_url=frontend_url)
         if not is_prod():
             # Same non-prod escape hatch /register/ and /request-delete/ already

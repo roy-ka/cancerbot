@@ -5,6 +5,47 @@ from unittest.mock import patch, AsyncMock
 from src.auth.security import SecurityUtils
 
 
+class TestFrontendUrlFallback:
+    """FRONTEND_URL missing in production must not silently produce a
+    localhost link in verification/deletion emails — it previously did
+    because three call sites hardcoded their own `http://localhost:5173`
+    fallback instead of sharing one production-safe default.
+    """
+
+    def test_helper_falls_back_to_production_domain(self, monkeypatch):
+        from src.routers.auth import _get_frontend_url
+        monkeypatch.delenv("FRONTEND_URL", raising=False)
+        assert _get_frontend_url() == "https://cancer-bot.com"
+
+    def test_helper_respects_explicit_env_var(self, monkeypatch):
+        from src.routers.auth import _get_frontend_url
+        monkeypatch.setenv("FRONTEND_URL", "https://staging.cancer-bot.com")
+        assert _get_frontend_url() == "https://staging.cancer-bot.com"
+
+    def test_register_verification_email_uses_production_link_when_unset(self, anon_client, monkeypatch):
+        import src.utils.email as email_module
+        monkeypatch.delenv("FRONTEND_URL", raising=False)
+        captured = {}
+
+        async def fake_send(to, name, token, frontend_url):
+            captured["frontend_url"] = frontend_url
+            return True
+
+        monkeypatch.setattr(email_module, "send_verification_email", fake_send)
+        monkeypatch.setattr("src.routers.auth.send_verification_email", fake_send)
+
+        anon_client.post(
+            "/auth/register/",
+            json={
+                "first_name": "No", "last_name": "Env",
+                "email": "noenv@example.com",
+                "password": "SecurePass123!",
+            },
+        )
+
+        assert captured["frontend_url"] == "https://cancer-bot.com"
+
+
 class TestRegister:
     def test_register_success_returns_201(self, anon_client):
         response = anon_client.post(
