@@ -53,11 +53,32 @@ test.describe('unauthenticated', () => {
     await page.fill('input[name="last_name"]', 'Hopper')
     await page.fill('input[name="email"]', email)
     await page.fill('input[name="password"]', 'SecurePass123!')
+    await page.fill('input[name="confirm_password"]', 'SecurePass123!')
     await page.locator('input[type="checkbox"]').check()
     await page.click('button[type="submit"]')
 
     // Successful registration shows the "check your email" screen
     await expect(page.getByText(/check your email/i)).toBeVisible({ timeout: 15_000 })
+    await ctx.close()
+  })
+
+  test('registration blocks submit when passwords do not match', async ({ browser }: { browser: Browser }) => {
+    const ctx = await browser.newContext()
+    const page = await ctx.newPage()
+    await page.goto('/login')
+
+    await page.getByRole('button', { name: /^register$/i }).click()
+
+    const email = `e2e-reg-mismatch-${Date.now()}@example.com`
+    await page.fill('input[name="first_name"]', 'Grace')
+    await page.fill('input[name="last_name"]', 'Hopper')
+    await page.fill('input[name="email"]', email)
+    await page.fill('input[name="password"]', 'SecurePass123!')
+    await page.fill('input[name="confirm_password"]', 'DifferentPass123!')
+    await page.locator('input[type="checkbox"]').check()
+
+    await expect(page.getByText(/passwords do not match/i)).toBeVisible()
+    await expect(page.locator('button[type="submit"]')).toBeDisabled()
     await ctx.close()
   })
 })

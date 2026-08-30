@@ -97,8 +97,10 @@ export default function RegistrationForm({
 }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
   const [emailError, setEmailError] = useState(false)
   const [passwordError, setPasswordError] = useState(false)
+  const [confirmPasswordError, setConfirmPasswordError] = useState(false)
   const [firstName, setFirstName] = useState('')
   const [lastName, setLastName] = useState('')
   const [termsAccepted, setTermsAccepted] = useState(false)
@@ -132,7 +134,7 @@ export default function RegistrationForm({
 
   const onSubmit = (e: React.SubmitEvent<HTMLFormElement>) => {
     e.preventDefault()
-    if (emailError || passwordError || !termsAccepted) {
+    if (emailError || passwordError || confirmPasswordError || password !== confirmPassword || !termsAccepted) {
       return
     }
     setError('')
@@ -152,6 +154,15 @@ export default function RegistrationForm({
     const password = e.target.value
     setPassword(password)
     setPasswordError(!verifyPassword(password))
+    if (confirmPassword) {
+      setConfirmPasswordError(password !== confirmPassword)
+    }
+  }
+
+  const changeConfirmPassword = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const confirmPassword = e.target.value
+    setConfirmPassword(confirmPassword)
+    setConfirmPasswordError(confirmPassword !== '' && confirmPassword !== password)
   }
   const changeFirstName = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFirstName(e.target.value)
@@ -219,6 +230,20 @@ export default function RegistrationForm({
 
           {password && <PasswordRequirements password={password} />}
 
+          <TextField
+            fullWidth
+            required
+            id="confirm_password"
+            name="confirm_password"
+            label="Confirm password"
+            type="password"
+            autoComplete="new-password"
+            variant="outlined"
+            onChange={changeConfirmPassword}
+            error={confirmPasswordError}
+            helperText={confirmPasswordError ? 'Passwords do not match' : ' '}
+          />
+
           <Box>
             <FormControlLabel
               control={
@@ -248,7 +273,7 @@ export default function RegistrationForm({
             type="submit"
             variant="contained"
             fullWidth
-            disabled={!termsAccepted}
+            disabled={!termsAccepted || !password || password !== confirmPassword}
           >
             Submit
           </Button>
