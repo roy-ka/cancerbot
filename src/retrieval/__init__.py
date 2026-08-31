@@ -1,5 +1,4 @@
 from .search import search_sources
-from ..classes.ollama_connector import OllamaConnector
 from .db_connector import dbConnector
 
 import logging
@@ -42,6 +41,12 @@ def run_retrieval(
   picked to fix keyword-matching behaviour, and a sentence is closer to what
   the embedding model was trained on. Falls back to `query` when absent.
   """
+  # Local import: keeps this module (and anything that merely imports the
+  # src.retrieval package, e.g. scripts/backup_opensearch.py importing just
+  # db_connector) free of OllamaConnector's heavier dependency chain
+  # (groq, ollama) unless retrieval is actually performed.
+  from ..classes.ollama_connector import OllamaConnector
+
   dense_text = (question or '').strip() or query
   logger.info("[retrieval] terms='%s' dense='%s' disease_areas=%s",
               query[:120], dense_text[:120], disease_areas)
