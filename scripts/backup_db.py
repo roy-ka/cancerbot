@@ -28,9 +28,26 @@ def get_postgres_url():
     # Parse postgresql+asyncpg://user:pass@host:port/db
     import urllib.parse
     parsed = urllib.parse.urlparse(url.replace("+asyncpg", ""))
+    try:
+        port = parsed.port or 5432
+    except ValueError as e:
+        # Don't leak the password: report structure only (lengths + delimiter
+        # counts/positions), enough to tell whether netloc got truncated early
+        # (e.g. by an unencoded '/' or '@' inside the password) without ever
+        # printing the password itself.
+        # e's own message embeds the unparseable substring verbatim (from
+        # urllib.parse's port property) — deliberately not included below.
+        netloc = parsed.netloc
+        raise ValueError(
+            f"POSTGRES_URL port could not be parsed as an integer | "
+            f"url_len={len(url)} netloc_len={len(netloc)} "
+            f"at_count={netloc.count('@')} slash_count={netloc.count('/')} "
+            f"colon_positions={[i for i, c in enumerate(netloc) if c == ':']} "
+            f"at_positions={[i for i, c in enumerate(netloc) if c == '@']}"
+        ) from None
     return {
         "host": parsed.hostname,
-        "port": parsed.port or 5432,
+        "port": port,
         "user": parsed.username,
         "password": parsed.password,
         "db": parsed.path.lstrip("/"),

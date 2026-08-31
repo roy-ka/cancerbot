@@ -30,3 +30,22 @@ class TestGetPostgresUrl:
             assert False, "expected ValueError"
         except ValueError as e:
             assert "POSTGRES_URL not set" in str(e)
+
+    def test_unparseable_port_reports_structure_without_leaking_password(self, monkeypatch):
+        # A malformed URL (password containing an unencoded '/', which is not
+        # safely embeddable per RFC 3986) truncates netloc before the real
+        # host:port — reproduces the "Port could not be cast" failure with a
+        # made-up secret, to confirm the diagnostic never echoes it back.
+        monkeypatch.setenv(
+            "POSTGRES_URL",
+            "postgresql+asyncpg://cancerbot:TotallyFakeSecret/xyz@localhost:5432/cancerbot",
+        )
+        try:
+            get_postgres_url()
+            assert False, "expected ValueError"
+        except ValueError as e:
+            msg = str(e)
+            assert "TotallyFakeSecret" not in msg
+            assert "url_len=" in msg
+            assert "netloc_len=" in msg
+            assert "at_count=" in msg
