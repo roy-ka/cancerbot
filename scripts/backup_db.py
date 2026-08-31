@@ -14,6 +14,9 @@ import sys
 from pathlib import Path
 from datetime import datetime
 import argparse
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 def get_postgres_url():
