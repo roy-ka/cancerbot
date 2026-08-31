@@ -1,5 +1,5 @@
 #!/bin/bash
-# Daily backup script for CancerBot database
+# Daily backup script for CancerBot database + OpenSearch indices
 # Schedule in crontab with: 0 2 * * * /path/to/cancerbot/scripts/daily_backup.sh
 # (runs at 2am every day)
 
@@ -23,12 +23,14 @@ echo "Starting backup at $(date '+%Y-%m-%d %H:%M:%S')"
 
 # Backup to local disk, keep 7 days
 cd "$PROJECT_DIR"
-python scripts/backup_db.py --dir "$BACKUP_DIR" --prune 7
+python3 scripts/backup_db.py --dir "$BACKUP_DIR" --prune 7
 
 # Optionally upload to S3 (requires BACKUP_S3_BUCKET env var)
 if [ -n "$BACKUP_S3_BUCKET" ]; then
   echo "Uploading to S3..."
-  python scripts/backup_db.py --dir "$BACKUP_DIR" --s3
+  python3 scripts/backup_db.py --dir "$BACKUP_DIR" --s3
 fi
+
+python3 scripts/backup_opensearch.py --dir "$BACKUP_DIR/opensearch" --prune 7
 
 echo "Backup complete at $(date '+%Y-%m-%d %H:%M:%S')"
