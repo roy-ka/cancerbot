@@ -1,5 +1,7 @@
 import pytest
 
+from src.jobs.account_deletion import account_deletion_sweep
+from src.jobs.auth_cleanup import auth_cleanup_sweep
 from src.worker import WorkerSettings, get_redis_settings, shutdown, startup
 
 
@@ -21,10 +23,26 @@ class TestGetRedisSettings:
 
 
 class TestWorkerSettings:
-    def test_has_no_jobs_registered_yet(self):
-        """Phase 1 is infrastructure only — jobs land in later phases."""
+    def test_no_ad_hoc_jobs_registered_yet(self):
+        """Phase 2 only adds cron jobs — enqueue-on-demand jobs (email,
+        url_classifier) land in later phases."""
         assert WorkerSettings.functions == []
-        assert WorkerSettings.cron_jobs == []
+
+    def test_sweep_cron_jobs_registered(self):
+        cron_coroutines = {job.coroutine for job in WorkerSettings.cron_jobs}
+        assert cron_coroutines == {account_deletion_sweep, auth_cleanup_sweep}
+
+    def test_account_deletion_sweep_runs_hourly_at_startup(self):
+        job = next(j for j in WorkerSettings.cron_jobs if j.coroutine is account_deletion_sweep)
+        assert job.hour is None  # every hour
+        assert job.minute == 0
+        assert job.run_at_startup is True
+
+    def test_auth_cleanup_sweep_runs_every_six_hours_at_startup(self):
+        job = next(j for j in WorkerSettings.cron_jobs if j.coroutine is auth_cleanup_sweep)
+        assert job.hour == {0, 6, 12, 18}
+        assert job.minute == 0
+        assert job.run_at_startup is True
 
     def test_lifecycle_hooks_are_set(self):
         assert WorkerSettings.on_startup is startup

@@ -4,7 +4,7 @@ from unittest.mock import patch, AsyncMock
 import pytest
 
 from src.db import models
-from src.jobs.account_deletion import _sweep_once
+from src.jobs.account_deletion import _sweep_once, account_deletion_sweep
 from src.auth.security import SecurityUtils
 
 
@@ -73,3 +73,31 @@ class TestAccountDeletionSweep:
         db_session.expire_all()
         assert db_session.query(models.User).filter(models.User.id == failing_id).first() is not None
         assert db_session.query(models.User).filter(models.User.id == other_id).first() is None
+
+
+class TestAccountDeletionSweepArqWrapper:
+    """account_deletion_sweep(ctx) is the arq cron job registered in
+    src/worker.py — it must open its own session (arq jobs don't get one
+    injected) and close it, unlike _sweep_once which is tested directly
+    above against the fixture's session."""
+
+    @pytest.mark.asyncio
+    async def test_opens_own_session_and_deletes_due_users(self, TestingSessionLocal, db_session, test_user):
+        test_user.deletion_scheduled_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+        db_session.commit()
+        user_id = test_user.id
+
+        with patch("src.jobs.account_deletion.SessionLocal", TestingSessionLocal), \
+             patch("src.jobs.account_deletion.send_account_deleted_email", new=AsyncMock()):
+            await account_deletion_sweep({})
+
+        db_session.expire_all()
+        assert db_session.query(models.User).filter(models.User.id == user_id).first() is None
+
+    @pytest.mark.asyncio
+    async def test_sweep_iteration_failure_does_not_raise(self, TestingSessionLocal):
+        """arq would otherwise retry/alert on a raised exception from a cron
+        job — a DB hiccup should just be logged, same as the old loop."""
+        with patch("src.jobs.account_deletion.SessionLocal", TestingSessionLocal), \
+             patch("src.jobs.account_deletion._sweep_once", side_effect=RuntimeError("boom")):
+            await account_deletion_sweep({})  # must not raise

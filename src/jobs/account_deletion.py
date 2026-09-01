@@ -1,4 +1,3 @@
-import asyncio
 import logging
 
 from src.db.session import SessionLocal
@@ -7,8 +6,6 @@ from src.db.repositories.users import delete_user
 from src.utils.email import send_account_deleted_email
 
 logger = logging.getLogger(__name__)
-
-_SWEEP_INTERVAL_SECONDS = 3600
 
 
 async def _sweep_once(db) -> None:
@@ -31,14 +28,18 @@ async def _sweep_once(db) -> None:
         logger.info("[account-deletion] deleted user_id=%s", user_id)
 
 
-async def run_account_deletion_sweep() -> None:
-    """Background loop — deletes accounts whose grace period has elapsed."""
-    while True:
-        db = SessionLocal()
-        try:
-            await _sweep_once(db)
-        except Exception:
-            logger.exception("[account-deletion] sweep iteration failed")
-        finally:
-            db.close()
-        await asyncio.sleep(_SWEEP_INTERVAL_SECONDS)
+async def account_deletion_sweep(ctx) -> None:
+    """arq cron job — deletes accounts whose grace period has elapsed.
+
+    Scheduled hourly in src/worker.py's WorkerSettings.cron_jobs (replaces
+    the previous hand-rolled `while True: ... await asyncio.sleep(3600)`
+    loop that ran inside the backend web process itself).
+    """
+    db = SessionLocal()
+    try:
+        await _sweep_once(db)
+    except Exception:
+        logger.exception("[account-deletion] sweep iteration failed")
+        db.rollback()
+    finally:
+        db.close()

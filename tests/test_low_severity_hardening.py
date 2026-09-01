@@ -382,6 +382,33 @@ class TestAuthCleanup:
 
         assert sweep_once(db_session) == (1, 1)
 
+    @pytest.mark.asyncio
+    async def test_arq_wrapper_opens_own_session_and_prunes(self, TestingSessionLocal, db_session):
+        """auth_cleanup_sweep(ctx) is the arq cron job registered in
+        src/worker.py — it must open its own session (arq jobs don't get
+        one injected), unlike sweep_once which is tested directly above
+        against the fixture's session."""
+        from src.db.models import LoginAttempt
+        from src.jobs.auth_cleanup import auth_cleanup_sweep
+
+        old = datetime.now(timezone.utc) - timedelta(days=30)
+        db_session.add(LoginAttempt(email="b@example.com", failed_attempts=1, last_attempt_at=old))
+        db_session.commit()
+
+        with patch("src.jobs.auth_cleanup.SessionLocal", TestingSessionLocal):
+            await auth_cleanup_sweep({})
+
+        db_session.expire_all()
+        assert db_session.query(LoginAttempt).filter_by(email="b@example.com").first() is None
+
+    @pytest.mark.asyncio
+    async def test_arq_wrapper_iteration_failure_does_not_raise(self, TestingSessionLocal):
+        from src.jobs.auth_cleanup import auth_cleanup_sweep
+
+        with patch("src.jobs.auth_cleanup.SessionLocal", TestingSessionLocal), \
+             patch("src.jobs.auth_cleanup.sweep_once", side_effect=RuntimeError("boom")):
+            await auth_cleanup_sweep({})  # must not raise
+
 
 # ---------------------------------------------------------------------------
 # Bug report field bounds

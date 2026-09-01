@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -106,18 +105,12 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"Failed to ensure ninja user: {e}")
 
-    background_tasks = []
-    if os.getenv("ENV", "").lower() != "test":
-        from src.jobs.account_deletion import run_account_deletion_sweep
-        from src.jobs.auth_cleanup import run_auth_cleanup_sweep
-        background_tasks.append(asyncio.create_task(run_account_deletion_sweep()))
-        background_tasks.append(asyncio.create_task(run_auth_cleanup_sweep()))
+    # Account-deletion and auth-cleanup sweeps run as arq cron jobs in the
+    # separate `worker` container (see src/worker.py) rather than as
+    # in-process asyncio background tasks here.
 
     yield
 
-    # Shutdown: Cleanup if needed
-    for task in background_tasks:
-        task.cancel()
     logger.info("Application shutting down")
 
 app = FastAPI(lifespan=lifespan)

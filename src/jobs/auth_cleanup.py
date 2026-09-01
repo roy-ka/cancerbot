@@ -1,4 +1,4 @@
-"""Background loop that prunes stale auth throttling rows.
+"""arq cron job that prunes stale auth throttling rows.
 
 `login_attempts` and `rate_limit_entries` are both keyed by attacker-supplied
 values — any email submitted to /auth/login/ gets a row, and any client IP
@@ -8,7 +8,6 @@ natural upper bound. This sweep drops rows that are old enough to be
 meaningless while never touching one that is still enforcing a lock or block.
 """
 
-import asyncio
 import logging
 
 from src.db.session import SessionLocal
@@ -16,8 +15,6 @@ from src.db.repositories.login_attempts import delete_stale_attempts
 from src.db.repositories.rate_limit import delete_stale_entries
 
 logger = logging.getLogger(__name__)
-
-_SWEEP_INTERVAL_SECONDS = 6 * 3600
 
 
 def sweep_once(db) -> tuple[int, int]:
@@ -33,15 +30,19 @@ def sweep_once(db) -> tuple[int, int]:
     return attempts, limits
 
 
-async def run_auth_cleanup_sweep() -> None:
-    """Background loop — prunes stale login-attempt and rate-limit rows."""
-    while True:
-        db = SessionLocal()
-        try:
-            sweep_once(db)
-        except Exception:
-            logger.exception("[auth-cleanup] sweep iteration failed")
-            db.rollback()
-        finally:
-            db.close()
-        await asyncio.sleep(_SWEEP_INTERVAL_SECONDS)
+async def auth_cleanup_sweep(ctx) -> None:
+    """arq cron job — prunes stale login-attempt and rate-limit rows.
+
+    Scheduled every 6 hours in src/worker.py's WorkerSettings.cron_jobs
+    (replaces the previous hand-rolled `while True: ... await
+    asyncio.sleep(6 * 3600)` loop that ran inside the backend web process
+    itself).
+    """
+    db = SessionLocal()
+    try:
+        sweep_once(db)
+    except Exception:
+        logger.exception("[auth-cleanup] sweep iteration failed")
+        db.rollback()
+    finally:
+        db.close()
