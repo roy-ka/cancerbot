@@ -19,6 +19,11 @@ from datetime import datetime
 import argparse
 from dotenv import load_dotenv
 
+# Run directly (`python3 scripts/backup_db.py`), sys.path[0] is this file's
+# own directory, not the project root — `from scripts.backup_drive import
+# ...` below needs the root importable regardless of how this is invoked.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 load_dotenv()
 
 
