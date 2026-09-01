@@ -5,3 +5,8 @@
 # weight — same reasoning as requirements-test.txt being separate.
 google-api-python-client
 google-auth
+# google-auth-oauthlib is only needed to run
+# scripts/generate_google_drive_token.py once, locally, to produce the
+# token file GOOGLE_OAUTH_TOKEN_FILE points at — not needed on the server
+# for the recurring upload itself (that only refreshes an existing token).
+google-auth-oauthlib

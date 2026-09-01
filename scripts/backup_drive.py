@@ -1,31 +1,44 @@
-"""Upload backup files to Google Drive via a service account.
+"""Upload backup files to Google Drive under your own account via OAuth.
 
-Auth uses a service account (not OAuth) since backups run unattended from
-cron — no browser, no refreshable user token to keep alive. The service
-account's JSON key is referenced by path via GOOGLE_SERVICE_ACCOUNT_FILE,
-never committed. Uploads target a folder (GOOGLE_DRIVE_BACKUP_FOLDER_ID)
-that must be pre-shared with the service account's email as Editor.
+A bare service account has no Drive storage quota of its own on a personal
+(non-Workspace) Google account — uploads fail with storageQuotaExceeded
+even into a folder shared from your Drive. OAuth as your own account is
+the workaround: uploads count against your normal Drive quota. The
+one-time interactive browser consent happens locally via
+scripts/generate_google_drive_token.py (run once on a machine with a
+browser, not on the server); the resulting token file is then referenced
+by GOOGLE_OAUTH_TOKEN_FILE and auto-refreshed here on every run, with the
+refreshed token persisted back to the same file so cron never needs a
+browser.
 
-The google-api-python-client/google-auth imports are deliberately inside
-the function, not at module level, so importing this module (and anything
-that imports backup_db.py/backup_opensearch.py, which import this
-unconditionally) doesn't require those packages installed unless a caller
-actually invokes upload_to_drive() — see requirements-backup.txt.
+The google-auth imports are deliberately inside the function, not at
+module level — see requirements-backup.txt.
 """
 
 from pathlib import Path
 
+SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 
-def upload_to_drive(local_path: Path, folder_id: str, service_account_file: str) -> str:
+
+def _load_credentials(token_file: str):
+    """Load OAuth credentials from token_file, refreshing (and persisting
+    the refreshed token) if the access token has expired."""
+    from google.auth.transport.requests import Request
+    from google.oauth2.credentials import Credentials
+
+    creds = Credentials.from_authorized_user_file(token_file, SCOPES)
+    if creds.expired and creds.refresh_token:
+        creds.refresh(Request())
+        Path(token_file).write_text(creds.to_json())
+    return creds
+
+
+def upload_to_drive(local_path: Path, folder_id: str, token_file: str) -> str:
     """Upload one file to a Drive folder. Returns the created file's Drive file ID."""
-    from google.oauth2 import service_account
     from googleapiclient.discovery import build
     from googleapiclient.http import MediaFileUpload
 
-    creds = service_account.Credentials.from_service_account_file(
-        service_account_file,
-        scopes=["https://www.googleapis.com/auth/drive.file"],
-    )
+    creds = _load_credentials(token_file)
     service = build("drive", "v3", credentials=creds)
 
     media = MediaFileUpload(str(local_path), resumable=True)

@@ -11,7 +11,7 @@ every document to a gzip NDJSON file.
 Usage:
   python scripts/backup_opensearch.py              # Backup to local backups/opensearch/
   python scripts/backup_opensearch.py --drive      # Also upload to Google Drive (requires
-                                                     #   GOOGLE_SERVICE_ACCOUNT_FILE +
+                                                     #   GOOGLE_OAUTH_TOKEN_FILE +
                                                      #   GOOGLE_DRIVE_BACKUP_FOLDER_ID)
   python scripts/backup_opensearch.py --prune 7    # Keep only the last 7 backup runs
 """
@@ -86,17 +86,17 @@ def backup_opensearch(output_dir: Path) -> dict:
 
 
 def backup_to_drive(results: dict):
-    """Upload every file from this run's results to Google Drive via a service account."""
-    service_account_file = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
+    """Upload every file from this run's results to Google Drive under your own account (OAuth)."""
+    token_file = os.getenv("GOOGLE_OAUTH_TOKEN_FILE")
     folder_id = os.getenv("GOOGLE_DRIVE_BACKUP_FOLDER_ID")
-    if not service_account_file or not folder_id:
-        print("Error: GOOGLE_SERVICE_ACCOUNT_FILE and/or GOOGLE_DRIVE_BACKUP_FOLDER_ID not set")
+    if not token_file or not folder_id:
+        print("Error: GOOGLE_OAUTH_TOKEN_FILE and/or GOOGLE_DRIVE_BACKUP_FOLDER_ID not set")
         sys.exit(1)
 
     from scripts.backup_drive import upload_to_drive
     for result in results.values():
         for path in (result["mapping_path"], result["docs_path"]):
-            file_id = upload_to_drive(path, folder_id, service_account_file)
+            file_id = upload_to_drive(path, folder_id, token_file)
             print(f"✓ Uploaded {path.name} to Google Drive (file id: {file_id})")
 
 

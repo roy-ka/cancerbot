@@ -6,7 +6,7 @@ Usage:
   python scripts/backup_db.py              # Backup to local backups/
   python scripts/backup_db.py --s3         # Backup to S3 (requires AWS credentials)
   python scripts/backup_db.py --drive      # Upload to Google Drive (requires
-                                            #   GOOGLE_SERVICE_ACCOUNT_FILE +
+                                            #   GOOGLE_OAUTH_TOKEN_FILE +
                                             #   GOOGLE_DRIVE_BACKUP_FOLDER_ID)
   python scripts/backup_db.py --prune 7    # Keep only last 7 backups
 """
@@ -103,15 +103,15 @@ def backup_to_s3(local_path: Path, s3_bucket: str, s3_key: str):
 
 
 def backup_to_drive(local_path: Path):
-    """Upload backup to Google Drive via a service account."""
-    service_account_file = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
+    """Upload backup to Google Drive under your own account (OAuth)."""
+    token_file = os.getenv("GOOGLE_OAUTH_TOKEN_FILE")
     folder_id = os.getenv("GOOGLE_DRIVE_BACKUP_FOLDER_ID")
-    if not service_account_file or not folder_id:
-        print("Error: GOOGLE_SERVICE_ACCOUNT_FILE and/or GOOGLE_DRIVE_BACKUP_FOLDER_ID not set")
+    if not token_file or not folder_id:
+        print("Error: GOOGLE_OAUTH_TOKEN_FILE and/or GOOGLE_DRIVE_BACKUP_FOLDER_ID not set")
         sys.exit(1)
 
     from scripts.backup_drive import upload_to_drive
-    file_id = upload_to_drive(local_path, folder_id, service_account_file)
+    file_id = upload_to_drive(local_path, folder_id, token_file)
     print(f"✓ Uploaded to Google Drive (file id: {file_id})")
 
 

@@ -22,14 +22,14 @@ fi
 # BACKUP_S3_BUCKET is the one value bash itself needs, so extract it the
 # same safe way instead of sourcing the whole file.
 cd "$PROJECT_DIR"
-read -r BACKUP_S3_BUCKET GOOGLE_SERVICE_ACCOUNT_FILE <<< "$(python3 -c "
+read -r BACKUP_S3_BUCKET GOOGLE_OAUTH_TOKEN_FILE <<< "$(python3 -c "
 from dotenv import load_dotenv
 import os
 load_dotenv()
-print(os.getenv('BACKUP_S3_BUCKET', '_'), os.getenv('GOOGLE_SERVICE_ACCOUNT_FILE', '_'))
+print(os.getenv('BACKUP_S3_BUCKET', '_'), os.getenv('GOOGLE_OAUTH_TOKEN_FILE', '_'))
 ")"
 [ "$BACKUP_S3_BUCKET" = "_" ] && BACKUP_S3_BUCKET=""
-[ "$GOOGLE_SERVICE_ACCOUNT_FILE" = "_" ] && GOOGLE_SERVICE_ACCOUNT_FILE=""
+[ "$GOOGLE_OAUTH_TOKEN_FILE" = "_" ] && GOOGLE_OAUTH_TOKEN_FILE=""
 
 echo "Starting backup at $(date '+%Y-%m-%d %H:%M:%S')"
 
@@ -42,14 +42,14 @@ if [ -n "$BACKUP_S3_BUCKET" ]; then
   python3 scripts/backup_db.py --dir "$BACKUP_DIR" --s3
 fi
 
-# Optionally upload to Google Drive (requires GOOGLE_SERVICE_ACCOUNT_FILE +
+# Optionally upload to Google Drive (requires GOOGLE_OAUTH_TOKEN_FILE +
 # GOOGLE_DRIVE_BACKUP_FOLDER_ID)
-if [ -n "$GOOGLE_SERVICE_ACCOUNT_FILE" ]; then
+if [ -n "$GOOGLE_OAUTH_TOKEN_FILE" ]; then
   echo "Uploading to Google Drive..."
   python3 scripts/backup_db.py --dir "$BACKUP_DIR" --drive
 fi
 
-if [ -n "$GOOGLE_SERVICE_ACCOUNT_FILE" ]; then
+if [ -n "$GOOGLE_OAUTH_TOKEN_FILE" ]; then
   python3 scripts/backup_opensearch.py --dir "$BACKUP_DIR/opensearch" --prune 7 --drive
 else
   python3 scripts/backup_opensearch.py --dir "$BACKUP_DIR/opensearch" --prune 7

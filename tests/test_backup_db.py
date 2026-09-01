@@ -56,7 +56,7 @@ class TestGetPostgresUrl:
 
 class TestBackupToDrive:
     def test_exits_when_not_configured(self, monkeypatch, capsys):
-        monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_FILE", raising=False)
+        monkeypatch.delenv("GOOGLE_OAUTH_TOKEN_FILE", raising=False)
         monkeypatch.delenv("GOOGLE_DRIVE_BACKUP_FOLDER_ID", raising=False)
 
         try:
@@ -67,7 +67,7 @@ class TestBackupToDrive:
         assert "not set" in capsys.readouterr().out
 
     def test_uploads_with_configured_env(self, monkeypatch):
-        monkeypatch.setenv("GOOGLE_SERVICE_ACCOUNT_FILE", "/fake/sa.json")
+        monkeypatch.setenv("GOOGLE_OAUTH_TOKEN_FILE", "/fake/sa.json")
         monkeypatch.setenv("GOOGLE_DRIVE_BACKUP_FOLDER_ID", "folder-abc")
 
         mock_upload = Mock(return_value="file-id-123")
