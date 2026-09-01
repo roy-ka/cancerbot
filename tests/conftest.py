@@ -11,6 +11,8 @@ os.environ["BREVO_API_KEY"] = ""    # prevent real emails during tests (active p
 os.environ.setdefault("OPENSEARCH_CA_CERT", "")
 os.environ.setdefault("NINJA_EMAIL", "ninja-test@example.com")
 os.environ.setdefault("NINJA_PASSWORD", "test-ninja-password")
+os.environ.setdefault("REDIS_PASSWORD", "test-redis-password")
+os.environ.setdefault("REDIS_URL", "redis://:test-redis-password@localhost:6379/0")
 
 import pytest
 from sqlalchemy import create_engine

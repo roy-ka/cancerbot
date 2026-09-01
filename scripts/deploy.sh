@@ -434,7 +434,7 @@ if command -v trivy &>/dev/null; then
   _trivy_cleanup() { rm -f "${TRIVY_TAR:-}"; }
   trap '_trivy_cleanup' EXIT INT TERM
 
-  for IMAGE in cancerbot-backend cancerbot-url-classifier; do
+  for IMAGE in cancerbot-backend cancerbot-url-classifier cancerbot-worker; do
     if docker image inspect "$IMAGE" &>/dev/null; then
       echo "  Scanning $IMAGE..."
       # Write tar to PROJECT_DIR (not /tmp) so snap-confined Trivy can read it —

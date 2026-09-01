@@ -19,6 +19,7 @@ lxml
 defusedxml
 tldextract
 axiom-py
+arq
 
 # NOTE: spacy / scispacy / en_core_sci_sm / pyspellchecker are deliberately NOT
 # here. All NLP runs in the separate nlp-service container (see

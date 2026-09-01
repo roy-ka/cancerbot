@@ -39,6 +39,8 @@ jobs:
       OPENSEARCH_CA_CERT: ""
       NINJA_EMAIL: ninja-test@example.com
       NINJA_PASSWORD: test-ninja-password
+      REDIS_PASSWORD: test-redis-password
+      REDIS_URL: redis://:test-redis-password@localhost:6379/0
       PYTHONPATH: ${{ github.workspace }}
 
     steps:
