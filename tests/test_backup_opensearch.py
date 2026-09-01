@@ -1,8 +1,9 @@
 import gzip
 import json
-from unittest.mock import MagicMock, patch
+from pathlib import Path
+from unittest.mock import MagicMock, Mock, patch
 
-from scripts.backup_opensearch import backup_index, backup_opensearch, prune_backups
+from scripts.backup_opensearch import backup_index, backup_opensearch, backup_to_drive, prune_backups
 from src.retrieval.db_connector import dbConnector
 
 
@@ -107,3 +108,32 @@ class TestPruneBackups:
         prune_backups(tmp_path, keep_count=7)
 
         assert len(list(tmp_path.glob("*"))) == 1
+
+
+class TestBackupToDrive:
+    def test_exits_when_not_configured(self, monkeypatch, capsys):
+        monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_FILE", raising=False)
+        monkeypatch.delenv("GOOGLE_DRIVE_BACKUP_FOLDER_ID", raising=False)
+
+        try:
+            backup_to_drive({})
+            assert False, "expected SystemExit"
+        except SystemExit as e:
+            assert e.code == 1
+        assert "not set" in capsys.readouterr().out
+
+    def test_uploads_every_file_from_every_index_result(self, monkeypatch):
+        monkeypatch.setenv("GOOGLE_SERVICE_ACCOUNT_FILE", "/fake/sa.json")
+        monkeypatch.setenv("GOOGLE_DRIVE_BACKUP_FOLDER_ID", "folder-abc")
+
+        results = {
+            "sources_v1": {"docs": 3, "mapping_path": Path("m1.json"), "docs_path": Path("d1.jsonl.gz")},
+            "claims_v1": {"docs": 1, "mapping_path": Path("m2.json"), "docs_path": Path("d2.jsonl.gz")},
+        }
+        mock_upload = Mock(return_value="file-id")
+        with patch("scripts.backup_drive.upload_to_drive", mock_upload):
+            backup_to_drive(results)
+
+        assert mock_upload.call_count == 4
+        uploaded_paths = {call.args[0] for call in mock_upload.call_args_list}
+        assert uploaded_paths == {Path("m1.json"), Path("d1.jsonl.gz"), Path("m2.json"), Path("d2.jsonl.gz")}

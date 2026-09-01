@@ -56,6 +56,9 @@ jobs:
       - name: Install test dependencies
         run: pip install -r requirements-test.txt
 
+      - name: Install backup script dependencies
+        run: pip install -r requirements-backup.txt
+
       - name: Run tests
         run: pytest --tb=short -v
 

@@ -10,12 +10,16 @@ every document to a gzip NDJSON file.
 
 Usage:
   python scripts/backup_opensearch.py              # Backup to local backups/opensearch/
+  python scripts/backup_opensearch.py --drive      # Also upload to Google Drive (requires
+                                                     #   GOOGLE_SERVICE_ACCOUNT_FILE +
+                                                     #   GOOGLE_DRIVE_BACKUP_FOLDER_ID)
   python scripts/backup_opensearch.py --prune 7    # Keep only the last 7 backup runs
 """
 
 import argparse
 import gzip
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -81,6 +85,21 @@ def backup_opensearch(output_dir: Path) -> dict:
     return results
 
 
+def backup_to_drive(results: dict):
+    """Upload every file from this run's results to Google Drive via a service account."""
+    service_account_file = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
+    folder_id = os.getenv("GOOGLE_DRIVE_BACKUP_FOLDER_ID")
+    if not service_account_file or not folder_id:
+        print("Error: GOOGLE_SERVICE_ACCOUNT_FILE and/or GOOGLE_DRIVE_BACKUP_FOLDER_ID not set")
+        sys.exit(1)
+
+    from scripts.backup_drive import upload_to_drive
+    for result in results.values():
+        for path in (result["mapping_path"], result["docs_path"]):
+            file_id = upload_to_drive(path, folder_id, service_account_file)
+            print(f"✓ Uploaded {path.name} to Google Drive (file id: {file_id})")
+
+
 _TIMESTAMP_RE = re.compile(r"_(\d{8}_\d{6})\.")
 
 
@@ -114,6 +133,7 @@ def prune_backups(backup_dir: Path, keep_count: int):
 def main():
     parser = argparse.ArgumentParser(description="Backup OpenSearch indices")
     parser.add_argument("--dir", default="backups/opensearch", help="Local backup directory")
+    parser.add_argument("--drive", action="store_true", help="Upload to Google Drive")
     parser.add_argument("--prune", type=int, metavar="N", help="Keep only the last N backup runs")
 
     args = parser.parse_args()
@@ -124,6 +144,9 @@ def main():
         if not results:
             print("✗ No indices backed up (none exist)")
             sys.exit(1)
+
+        if args.drive:
+            backup_to_drive(results)
 
         if args.prune:
             prune_backups(output_dir, args.prune)

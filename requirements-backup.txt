@@ -1,0 +1,7 @@
+# Dependencies for scripts/backup_*.py's optional Google Drive upload only.
+# Kept out of requirements.txt on purpose: these scripts run standalone on
+# the host (see daily_backup.sh), never imported by the backend app, so
+# installing google-api-python-client into the Docker image would be dead
+# weight — same reasoning as requirements-test.txt being separate.
+google-api-python-client
+google-auth

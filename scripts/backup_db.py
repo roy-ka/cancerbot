@@ -5,6 +5,9 @@ Backup PostgreSQL database to local file or S3.
 Usage:
   python scripts/backup_db.py              # Backup to local backups/
   python scripts/backup_db.py --s3         # Backup to S3 (requires AWS credentials)
+  python scripts/backup_db.py --drive      # Upload to Google Drive (requires
+                                            #   GOOGLE_SERVICE_ACCOUNT_FILE +
+                                            #   GOOGLE_DRIVE_BACKUP_FOLDER_ID)
   python scripts/backup_db.py --prune 7    # Keep only last 7 backups
 """
 
@@ -94,6 +97,19 @@ def backup_to_s3(local_path: Path, s3_bucket: str, s3_key: str):
     print(f"✓ Uploaded to s3://{s3_bucket}/{s3_key}")
 
 
+def backup_to_drive(local_path: Path):
+    """Upload backup to Google Drive via a service account."""
+    service_account_file = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
+    folder_id = os.getenv("GOOGLE_DRIVE_BACKUP_FOLDER_ID")
+    if not service_account_file or not folder_id:
+        print("Error: GOOGLE_SERVICE_ACCOUNT_FILE and/or GOOGLE_DRIVE_BACKUP_FOLDER_ID not set")
+        sys.exit(1)
+
+    from scripts.backup_drive import upload_to_drive
+    file_id = upload_to_drive(local_path, folder_id, service_account_file)
+    print(f"✓ Uploaded to Google Drive (file id: {file_id})")
+
+
 def prune_backups(backup_dir: Path, keep_count: int):
     """Delete old backups, keeping the most recent N."""
     backups = sorted(backup_dir.glob("*.dump"), key=lambda p: p.stat().st_mtime)
@@ -113,6 +129,7 @@ def prune_backups(backup_dir: Path, keep_count: int):
 def main():
     parser = argparse.ArgumentParser(description="Backup PostgreSQL database")
     parser.add_argument("--s3", action="store_true", help="Upload to S3")
+    parser.add_argument("--drive", action="store_true", help="Upload to Google Drive")
     parser.add_argument("--prune", type=int, metavar="N", help="Keep only last N backups")
     parser.add_argument("--dir", default="backups", help="Local backup directory")
 
@@ -131,6 +148,9 @@ def main():
                 sys.exit(1)
             s3_key = f"backups/{backup_path.name}"
             backup_to_s3(backup_path, s3_bucket, s3_key)
+
+        if args.drive:
+            backup_to_drive(backup_path)
 
         if args.prune:
             prune_backups(Path(args.dir), args.prune)

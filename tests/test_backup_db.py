@@ -1,4 +1,7 @@
-from scripts.backup_db import get_postgres_url
+from pathlib import Path
+from unittest.mock import Mock, patch
+
+from scripts.backup_db import backup_to_drive, get_postgres_url
 
 
 class TestGetPostgresUrl:
@@ -49,3 +52,26 @@ class TestGetPostgresUrl:
             assert "url_len=" in msg
             assert "netloc_len=" in msg
             assert "at_count=" in msg
+
+
+class TestBackupToDrive:
+    def test_exits_when_not_configured(self, monkeypatch, capsys):
+        monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_FILE", raising=False)
+        monkeypatch.delenv("GOOGLE_DRIVE_BACKUP_FOLDER_ID", raising=False)
+
+        try:
+            backup_to_drive(Path("dummy.dump"))
+            assert False, "expected SystemExit"
+        except SystemExit as e:
+            assert e.code == 1
+        assert "not set" in capsys.readouterr().out
+
+    def test_uploads_with_configured_env(self, monkeypatch):
+        monkeypatch.setenv("GOOGLE_SERVICE_ACCOUNT_FILE", "/fake/sa.json")
+        monkeypatch.setenv("GOOGLE_DRIVE_BACKUP_FOLDER_ID", "folder-abc")
+
+        mock_upload = Mock(return_value="file-id-123")
+        with patch("scripts.backup_drive.upload_to_drive", mock_upload):
+            backup_to_drive(Path("dummy.dump"))
+
+        mock_upload.assert_called_once_with(Path("dummy.dump"), "folder-abc", "/fake/sa.json")

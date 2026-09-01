@@ -22,12 +22,14 @@ fi
 # BACKUP_S3_BUCKET is the one value bash itself needs, so extract it the
 # same safe way instead of sourcing the whole file.
 cd "$PROJECT_DIR"
-BACKUP_S3_BUCKET="$(python3 -c "
+read -r BACKUP_S3_BUCKET GOOGLE_SERVICE_ACCOUNT_FILE <<< "$(python3 -c "
 from dotenv import load_dotenv
 import os
 load_dotenv()
-print(os.getenv('BACKUP_S3_BUCKET', ''))
+print(os.getenv('BACKUP_S3_BUCKET', '_'), os.getenv('GOOGLE_SERVICE_ACCOUNT_FILE', '_'))
 ")"
+[ "$BACKUP_S3_BUCKET" = "_" ] && BACKUP_S3_BUCKET=""
+[ "$GOOGLE_SERVICE_ACCOUNT_FILE" = "_" ] && GOOGLE_SERVICE_ACCOUNT_FILE=""
 
 echo "Starting backup at $(date '+%Y-%m-%d %H:%M:%S')"
 
@@ -40,6 +42,17 @@ if [ -n "$BACKUP_S3_BUCKET" ]; then
   python3 scripts/backup_db.py --dir "$BACKUP_DIR" --s3
 fi
 
-python3 scripts/backup_opensearch.py --dir "$BACKUP_DIR/opensearch" --prune 7
+# Optionally upload to Google Drive (requires GOOGLE_SERVICE_ACCOUNT_FILE +
+# GOOGLE_DRIVE_BACKUP_FOLDER_ID)
+if [ -n "$GOOGLE_SERVICE_ACCOUNT_FILE" ]; then
+  echo "Uploading to Google Drive..."
+  python3 scripts/backup_db.py --dir "$BACKUP_DIR" --drive
+fi
+
+if [ -n "$GOOGLE_SERVICE_ACCOUNT_FILE" ]; then
+  python3 scripts/backup_opensearch.py --dir "$BACKUP_DIR/opensearch" --prune 7 --drive
+else
+  python3 scripts/backup_opensearch.py --dir "$BACKUP_DIR/opensearch" --prune 7
+fi
 
 echo "Backup complete at $(date '+%Y-%m-%d %H:%M:%S')"
