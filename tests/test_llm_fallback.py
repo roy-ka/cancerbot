@@ -6,6 +6,10 @@ from src.classes.ollama_connector import OllamaConnector, NO_DATA_RESPONSE
 
 CONTEXT = [{"id": "src-001", "content_for_embedding": "Cancer cells exhibit the Warburg effect."}]
 
+# mock_enqueue (autouse) comes from conftest.py — it patches
+# src.classes.ollama_connector.enqueue globally so the Groq-failure path's
+# fallback-alert enqueue never hits a real Redis in tests.
+
 
 def _make_gemini_response(content):
     response = MagicMock()
@@ -112,6 +116,15 @@ class TestGroqGeminiFallback:
         text_chunks = [c for c in chunks if isinstance(c, str)]
         assert "Gemini fallback answer" in "".join(text_chunks)
         mock_gemini.models.generate_content.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_groq_failure_enqueues_fallback_alert(self, mock_enqueue):
+        factory, _ = _async_groq_mock(raises=_rate_limit_exc())
+        mock_gemini = _gemini_mock(content="Gemini fallback answer.")
+        with patch("groq.AsyncGroq", factory), \
+             patch.object(OllamaConnector, "gemini", mock_gemini):
+            await _collect(OllamaConnector.stream_text(CONTEXT, "What is cancer?", []))
+        mock_enqueue.assert_awaited_once_with("send_fallback_alert_job", model=OllamaConnector.groq_model)
 
     @pytest.mark.asyncio
     async def test_groq_server_error_falls_back_to_gemini(self):

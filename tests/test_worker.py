@@ -2,6 +2,14 @@ import pytest
 
 from src.jobs.account_deletion import account_deletion_sweep
 from src.jobs.auth_cleanup import auth_cleanup_sweep
+from src.jobs.email_jobs import (
+    send_verification_email_job,
+    send_password_reset_email_job,
+    send_delete_account_request_email_job,
+    send_delete_account_scheduled_email_job,
+    send_delete_account_cancelled_email_job,
+    send_fallback_alert_job,
+)
 from src.worker import WorkerSettings, get_redis_settings, shutdown, startup
 
 
@@ -23,10 +31,16 @@ class TestGetRedisSettings:
 
 
 class TestWorkerSettings:
-    def test_no_ad_hoc_jobs_registered_yet(self):
-        """Phase 2 only adds cron jobs — enqueue-on-demand jobs (email,
-        url_classifier) land in later phases."""
-        assert WorkerSettings.functions == []
+    def test_email_jobs_registered(self):
+        """url_classifier is the only enqueue-on-demand job left for a later phase."""
+        assert set(WorkerSettings.functions) == {
+            send_verification_email_job,
+            send_password_reset_email_job,
+            send_delete_account_request_email_job,
+            send_delete_account_scheduled_email_job,
+            send_delete_account_cancelled_email_job,
+            send_fallback_alert_job,
+        }
 
     def test_sweep_cron_jobs_registered(self):
         cron_coroutines = {job.coroutine for job in WorkerSettings.cron_jobs}

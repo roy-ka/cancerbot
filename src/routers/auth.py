@@ -2,7 +2,7 @@ import os
 import secrets
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request, Response, HTTPException, status
+from fastapi import APIRouter, Depends, Query, Request, Response, HTTPException, status
 from sqlalchemy.orm import Session
 from src.deps.db import get_db
 from src.auth.security import SecurityUtils
@@ -40,13 +40,7 @@ from src.db.repositories.rate_limit import (
     MAX_FORGOT_PASSWORD_ATTEMPTS,
     MAX_REQUEST_DELETE_ATTEMPTS,
 )
-from src.utils.email import (
-    send_password_reset_email,
-    send_verification_email,
-    send_delete_account_request_email,
-    send_delete_account_scheduled_email,
-    send_delete_account_cancelled_email,
-)
+from src.queue import enqueue
 
 def _get_frontend_url() -> str:
     """Single source of truth for the frontend origin used in email links.
@@ -126,7 +120,7 @@ def _client_ip(request: Request) -> str:
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 @router.post("/register/", status_code=201)
-async def register_user(req: CreateUserRequest, request: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+async def register_user(req: CreateUserRequest, request: Request, db: Session = Depends(get_db)):
     ip = _client_ip(request)
     if is_rate_limited(db, f"register:{ip}"):
         raise HTTPException(status_code=429, detail="Too many registration attempts. Please try again later.")
@@ -149,7 +143,7 @@ async def register_user(req: CreateUserRequest, request: Request, background_tas
     )
     token = create_verification_token(db=db, user_id=user.id)
     frontend_url = _get_frontend_url()
-    background_tasks.add_task(send_verification_email, to=user.email, name=user.display_name, token=token, frontend_url=frontend_url)
+    await enqueue("send_verification_email_job", to=user.email, name=user.display_name, token=token, frontend_url=frontend_url)
     resp: dict = {"message": "Please check your email to verify your account.", "email": user.email}
     if not is_prod():
         resp["verification_token"] = token
@@ -270,7 +264,7 @@ class ResetPasswordRequest(BaseModel):
 
 
 @router.post("/forgot-password/")
-async def forgot_password(req: ForgotPasswordRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+async def forgot_password(req: ForgotPasswordRequest, db: Session = Depends(get_db)):
     if is_rate_limited(db, f"forgot-password:{req.email}"):
         raise HTTPException(status_code=429, detail="Too many password reset requests. Please try again later.")
     record_attempt(db, f"forgot-password:{req.email}", MAX_FORGOT_PASSWORD_ATTEMPTS)
@@ -280,8 +274,8 @@ async def forgot_password(req: ForgotPasswordRequest, background_tasks: Backgrou
         token = create_reset_token(db=db, user_id=user.id)
         frontend_url = _get_frontend_url()
         reset_link = f"{frontend_url}/reset-password?token={token}"
-        background_tasks.add_task(
-            send_password_reset_email,
+        await enqueue(
+            "send_password_reset_email_job",
             to=user.email,
             name=user.display_name,
             link=reset_link,
@@ -336,7 +330,6 @@ async def change_password(
 
 @router.post("/request-delete/")
 async def request_delete_account(
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
@@ -350,8 +343,8 @@ async def request_delete_account(
     token = create_deletion_request_token(db=db, user_id=current_user.id)
     frontend_url = _get_frontend_url()
     link = f"{frontend_url}/confirm-delete?token={token}"
-    background_tasks.add_task(
-        send_delete_account_request_email,
+    await enqueue(
+        "send_delete_account_request_email_job",
         to=current_user.email,
         name=current_user.display_name,
         link=link,
@@ -371,7 +364,6 @@ class ConfirmDeleteRequest(BaseModel):
 async def confirm_delete_account(
     req: ConfirmDeleteRequest,
     response: Response,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
     record, error = verify_deletion_token(db=db, token=req.token)
@@ -400,8 +392,8 @@ async def confirm_delete_account(
 
     consume_deletion_token(db=db, record=record)
     deletion_date = schedule_deletion(db=db, user=user)
-    background_tasks.add_task(
-        send_delete_account_scheduled_email,
+    await enqueue(
+        "send_delete_account_scheduled_email_job",
         to=user.email,
         name=user.display_name,
         deletion_date=deletion_date.strftime("%B %d, %Y"),
@@ -415,7 +407,7 @@ class CancelDeleteRequest(BaseModel):
 
 
 @router.post("/cancel-delete/")
-async def cancel_delete_account(req: CancelDeleteRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+async def cancel_delete_account(req: CancelDeleteRequest, db: Session = Depends(get_db)):
     try:
         payload = SecurityUtils.decode_jwt_token(req.cancel_token)
     except HTTPException:
@@ -428,7 +420,7 @@ async def cancel_delete_account(req: CancelDeleteRequest, background_tasks: Back
 
     user = get_user_by_id(db=db, user_id=user_id)
     if user:
-        background_tasks.add_task(send_delete_account_cancelled_email, to=user.email, name=user.display_name)
+        await enqueue("send_delete_account_cancelled_email_job", to=user.email, name=user.display_name)
 
     return {"ok": True}
 
@@ -459,13 +451,13 @@ class ResendVerificationRequest(BaseModel):
 
 
 @router.post("/resend-verification/")
-async def resend_verification(req: ResendVerificationRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+async def resend_verification(req: ResendVerificationRequest, db: Session = Depends(get_db)):
     user = get_user_by_email(db=db, email=req.email)
     resp: dict = {"ok": True}
     if user and not user.email_verified:
         token = create_verification_token(db=db, user_id=user.id)
         frontend_url = _get_frontend_url()
-        background_tasks.add_task(send_verification_email, to=user.email, name=user.display_name, token=token, frontend_url=frontend_url)
+        await enqueue("send_verification_email_job", to=user.email, name=user.display_name, token=token, frontend_url=frontend_url)
         if not is_prod():
             # Same non-prod escape hatch /register/ and /request-delete/ already
             # have. Without it this was the only token-issuing endpoint with no

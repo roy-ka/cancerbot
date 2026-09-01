@@ -171,6 +171,30 @@ def reset_llm_clients():
     OllamaConnector._async_groq = None
 
 
+@pytest.fixture(autouse=True)
+def mock_enqueue():
+    """Prevent tests from enqueueing against a real Redis.
+
+    Without this, every code path that fires a background job (auth.py's
+    email sends, ollama_connector.py's fallback alert) calls arq's
+    create_pool against REDIS_URL, and against no real Redis that isn't a
+    fast failure — it's slow enough under pytest's event loop to blow up
+    a whole file's runtime (measured: one file went from ~1s to 170s).
+    Mirrors forcing SENDGRID_API_KEY/BREVO_API_KEY empty above — no test
+    should depend on live external infrastructure by default.
+
+    Yields the ollama_connector-side mock (the one tests most often want to
+    assert against, e.g. the fallback-alert enqueue). auth.py's copy is
+    patched too but not returned here — tests asserting on auth.py's
+    enqueue calls open their own local `with patch("src.routers.auth.enqueue", ...)`,
+    which nests inside and overrides this one for that block.
+    """
+    from unittest.mock import AsyncMock, patch
+    with patch("src.routers.auth.enqueue", new=AsyncMock()), \
+         patch("src.classes.ollama_connector.enqueue", new=AsyncMock()) as ollama_mock:
+        yield ollama_mock
+
+
 @pytest.fixture()
 def mock_retrieval():
     return {

@@ -2,7 +2,6 @@ import asyncio
 import logging
 import os
 import re
-import threading
 from urllib.parse import urlparse
 
 from src.utils.utils import is_prod
@@ -159,15 +158,15 @@ async def _deliver(
         return False
 
 
-def send_fallback_alert(model: str) -> None:
-    """Fire-and-forget fallback alert — safe to call from sync worker threads."""
-    def _send():
-        try:
-            subject, html = _render_template("fallback_alert", model=model)
-            _send_brevo(_FALLBACK_ALERT_TO, subject, html)
-        except Exception as exc:
-            logger.error("[email] fallback alert failed: %s", exc)
-    threading.Thread(target=_send, daemon=True).start()
+async def send_fallback_alert(model: str) -> bool:
+    """Alert when Groq fails and generation falls back to Gemini.
+
+    Enqueued via src.jobs.email_jobs.send_fallback_alert_job (see
+    src/classes/ollama_connector.py's Groq-failure path) rather than
+    called inline — it previously spawned its own background thread here
+    to avoid blocking the streaming response; now the queue does that job.
+    """
+    return await _deliver(_FALLBACK_ALERT_TO, "fallback_alert", {"model": model})
 
 
 async def send_verification_email(to: str, name: str, token: str, frontend_url: str) -> bool:

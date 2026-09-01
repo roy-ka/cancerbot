@@ -9,7 +9,7 @@ import json
 import logging
 from typing import Any, AsyncIterator, Mapping, Sequence
 from src.db.models import Message
-from src.utils.email import send_fallback_alert
+from src.queue import enqueue
 
 logger = logging.getLogger(__name__)
 
@@ -368,7 +368,7 @@ ANSWER (every sentence must have a [source#] citation):
     except groq.GroqError as exc:
       groq_exc = exc
       logger.warning("[groq] stream error (%s: %s), falling back to Gemini", type(exc).__name__, exc)
-      send_fallback_alert(cls.groq_model)
+      await enqueue("send_fallback_alert_job", model=cls.groq_model)
 
     if streaming_started:
       # Already emitted partial tokens; can't restart cleanly — just close the stream

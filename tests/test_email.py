@@ -120,10 +120,12 @@ class TestPasswordResetEmail:
 
 
 class TestDeliveryFailureIsContained:
-    """A send failure must not escape into the ASGI layer. Every caller registers
-    these as FastAPI BackgroundTasks, which run after the response is already
-    sent — so a raised exception can't reach the client and only shows up as an
-    unhandled traceback for something already logged."""
+    """A send failure must never propagate as a raised exception. Callers
+    enqueue these as arq jobs (src/jobs/email_jobs.py) run in the separate
+    worker process, decoupled from the request that triggered them — a
+    raised exception here wouldn't reach any client either way, but the
+    contract (log and return False) matters regardless of where the call
+    happens, so it's asserted directly rather than relied on implicitly."""
 
     def test_sender_returns_false_instead_of_raising(self, as_prod, monkeypatch, caplog):
         monkeypatch.setenv("BREVO_API_KEY", "test-key")
@@ -156,6 +158,7 @@ class TestDeliveryFailureIsContained:
                 as_prod.send_delete_account_scheduled_email(
                     to="a@b.c", name="N", deletion_date="January 1, 2027"),
                 as_prod.send_delete_account_cancelled_email(to="a@b.c", name="N"),
+                as_prod.send_fallback_alert("gpt-4o"),
             ]
             for coro in calls:
                 assert asyncio.run(coro) is False
@@ -205,30 +208,19 @@ class TestEveryPublicSenderRendersSuccessfully:
                 as_prod.send_delete_account_scheduled_email(
                     to="a@b.c", name="N", deletion_date="January 1, 2027"),
                 as_prod.send_delete_account_cancelled_email(to="a@b.c", name="N"),
+                as_prod.send_fallback_alert("gpt-4o"),
             ]
             for coro in calls:
                 assert asyncio.run(coro) is True
 
             assert mock_post.call_count == len(calls)
 
-    def test_fallback_alert_renders_successfully(self, as_prod, monkeypatch):
+    def test_fallback_alert_renders_model_name(self, as_prod, monkeypatch):
         monkeypatch.setenv("BREVO_API_KEY", "test-key")
-
-        # send_fallback_alert spawns a background thread and returns immediately
-        # (it's called from sync code, per its own docstring) — run the target
-        # inline instead of racing a real thread for a deterministic test.
-        class _SyncThread:
-            def __init__(self, target, daemon=None):
-                self._target = target
-
-            def start(self):
-                self._target()
-
-        monkeypatch.setattr("src.utils.email.threading.Thread", _SyncThread)
 
         with patch("src.utils.email_brevo.requests.post") as mock_post:
             mock_post.return_value = _mock_post_response()
-            as_prod.send_fallback_alert("gpt-4o")
+            assert asyncio.run(as_prod.send_fallback_alert("gpt-4o")) is True
 
         mock_post.assert_called_once()
         assert "gpt-4o" in mock_post.call_args.kwargs["json"]["htmlContent"]

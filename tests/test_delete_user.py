@@ -17,7 +17,7 @@ def _confirm_delete(client, token: str, password: str):
 
 class TestRequestDelete:
     def test_success_sends_email_and_creates_token(self, client, test_user, db_session):
-        with patch("src.routers.auth.send_delete_account_request_email", new=AsyncMock()) as mock_send:
+        with patch("src.routers.auth.enqueue", new=AsyncMock()) as mock_send:
             response = _request_delete(client)
         assert response.status_code == 200
         assert response.json()["ok"] is True
@@ -32,7 +32,7 @@ class TestRequestDelete:
     def test_non_prod_response_includes_token_for_automation(self, client):
         """ENV != production exposes the raw token, mirroring register's verification_token —
         needed since there's no inbox to read the emailed link from in tests/CI."""
-        with patch("src.routers.auth.send_delete_account_request_email", new=AsyncMock()):
+        with patch("src.routers.auth.enqueue", new=AsyncMock()):
             response = _request_delete(client)
         assert response.json()["deletion_token"]
 
@@ -42,7 +42,7 @@ class TestRequestDelete:
 
     def test_rate_limited_after_max_attempts(self, client, test_user, db_session):
         from src.db.repositories.rate_limit import MAX_REQUEST_DELETE_ATTEMPTS
-        with patch("src.routers.auth.send_delete_account_request_email", new=AsyncMock()):
+        with patch("src.routers.auth.enqueue", new=AsyncMock()):
             for _ in range(MAX_REQUEST_DELETE_ATTEMPTS):
                 assert _request_delete(client).status_code == 200
             blocked = _request_delete(client)
@@ -53,7 +53,7 @@ class TestRequestDelete:
 class TestConfirmDelete:
     def test_success_schedules_deletion_and_clears_cookie(self, client, test_user, db_session):
         token = create_deletion_request_token(db_session, test_user.id)
-        with patch("src.routers.auth.send_delete_account_scheduled_email", new=AsyncMock()):
+        with patch("src.routers.auth.enqueue", new=AsyncMock()):
             response = _confirm_delete(client, token, "TestPass123!")
         assert response.status_code == 200
         data = response.json()
@@ -72,7 +72,7 @@ class TestConfirmDelete:
 
         # Token must not be burned by a failed password attempt — retry should still work
         db_session.expire_all()
-        with patch("src.routers.auth.send_delete_account_scheduled_email", new=AsyncMock()):
+        with patch("src.routers.auth.enqueue", new=AsyncMock()):
             retry = _confirm_delete(client, token, "TestPass123!")
         assert retry.status_code == 200
 
@@ -177,10 +177,12 @@ class TestCancelDelete:
             "purpose": "cancel_delete",
             "exp": datetime.now(timezone.utc) + timedelta(minutes=15),
         })
-        with patch("src.routers.auth.send_delete_account_cancelled_email", new=AsyncMock()) as mock_send:
+        with patch("src.routers.auth.enqueue", new=AsyncMock()) as mock_enqueue:
             response = anon_client.post("/auth/cancel-delete/", json={"cancel_token": cancel_token})
         assert response.status_code == 200
-        mock_send.assert_called_once_with(to=test_user.email, name=test_user.display_name)
+        mock_enqueue.assert_called_once_with(
+            "send_delete_account_cancelled_email_job", to=test_user.email, name=test_user.display_name
+        )
 
     def test_wrong_purpose_token_rejected(self, anon_client, test_user):
         bad_token = SecurityUtils.create_jwt_token({

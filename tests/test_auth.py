@@ -23,16 +23,14 @@ class TestFrontendUrlFallback:
         assert _get_frontend_url() == "https://staging.cancer-bot.com"
 
     def test_register_verification_email_uses_production_link_when_unset(self, anon_client, monkeypatch):
-        import src.utils.email as email_module
         monkeypatch.delenv("FRONTEND_URL", raising=False)
         captured = {}
 
-        async def fake_send(to, name, token, frontend_url):
-            captured["frontend_url"] = frontend_url
-            return True
+        async def fake_enqueue(job_name, **kwargs):
+            captured["job_name"] = job_name
+            captured["frontend_url"] = kwargs.get("frontend_url")
 
-        monkeypatch.setattr(email_module, "send_verification_email", fake_send)
-        monkeypatch.setattr("src.routers.auth.send_verification_email", fake_send)
+        monkeypatch.setattr("src.routers.auth.enqueue", fake_enqueue)
 
         anon_client.post(
             "/auth/register/",
@@ -43,6 +41,7 @@ class TestFrontendUrlFallback:
             },
         )
 
+        assert captured["job_name"] == "send_verification_email_job"
         assert captured["frontend_url"] == "https://cancer-bot.com"
 
 
@@ -279,11 +278,12 @@ class TestForgotPassword:
         assert response.status_code == 200
 
     def test_forgot_password_sends_email_for_known_user(self, anon_client, test_user):
-        with patch("src.routers.auth.send_password_reset_email", new=AsyncMock()) as mock_send:
+        with patch("src.routers.auth.enqueue", new=AsyncMock()) as mock_enqueue:
             response = anon_client.post("/auth/forgot-password/", json={"email": test_user.email})
             assert response.status_code == 200
-            mock_send.assert_called_once()
-            call_kwargs = mock_send.call_args[1]
+            mock_enqueue.assert_called_once()
+            job_name, call_kwargs = mock_enqueue.call_args[0][0], mock_enqueue.call_args[1]
+            assert job_name == "send_password_reset_email_job"
             assert call_kwargs["to"] == test_user.email
             assert "token=" in call_kwargs["link"]
             # Emails greet with the user's full name (display_name), not just first

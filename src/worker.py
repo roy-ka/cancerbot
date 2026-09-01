@@ -6,10 +6,13 @@ mirroring the existing `url-classifier` service pattern) via:
 
 Phase 2: the account-deletion and auth-cleanup sweeps are cron jobs here
 instead of the `while True: ... await asyncio.sleep(N)` loops that used to
-run inside the backend web process itself (src/main.py's lifespan). Later
-phases move email delivery and url_classifier onto this too — each as a job
-function added to `functions`/`cron_jobs` below, with `enqueue_job` calls
-replacing the current BackgroundTasks / polling-loop call sites.
+run inside the backend web process itself (src/main.py's lifespan).
+
+Phase 3: transactional email is enqueued on demand (src.queue.enqueue)
+from src/routers/auth.py and src/classes/ollama_connector.py instead of
+FastAPI BackgroundTasks — see src/jobs/email_jobs.py.
+
+Later phases move url_classifier onto this too.
 """
 
 import logging
@@ -20,6 +23,14 @@ from arq.cron import cron
 
 from src.jobs.account_deletion import account_deletion_sweep
 from src.jobs.auth_cleanup import auth_cleanup_sweep
+from src.jobs.email_jobs import (
+    send_verification_email_job,
+    send_password_reset_email_job,
+    send_delete_account_request_email_job,
+    send_delete_account_scheduled_email_job,
+    send_delete_account_cancelled_email_job,
+    send_fallback_alert_job,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +51,14 @@ async def shutdown(ctx):
 
 
 class WorkerSettings:
-    functions: list = []
+    functions = [
+        send_verification_email_job,
+        send_password_reset_email_job,
+        send_delete_account_request_email_job,
+        send_delete_account_scheduled_email_job,
+        send_delete_account_cancelled_email_job,
+        send_fallback_alert_job,
+    ]
     cron_jobs = [
         # Hourly on the hour — matches the old sweep's 3600s interval.
         # run_at_startup=True matches the old loop's behavior of sweeping
