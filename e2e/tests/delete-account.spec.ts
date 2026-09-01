@@ -77,4 +77,80 @@ test.describe('Account deletion', () => {
     // Cancelling automatically retries login — access is restored
     await expect(page).toHaveURL(/\/(terms|chat)?(\?.*)?$/, { timeout: 15_000 })
   })
+
+  test('deletion scheduled from another device explains the logout', async ({ page }) => {
+    const email = `delete-e2e-other-device-${Date.now()}@example.com`
+    const password = 'DeleteE2e123!'
+
+    const api = await playwrightRequest.newContext({ baseURL: E2E_API_URL })
+    const reg = await api.post('/auth/register/', {
+      data: { name: 'Delete E2E Other Device', email, password },
+    })
+    expect(reg.status()).toBe(201)
+    const { verification_token: verificationToken } = await reg.json()
+    const verify = await api.get(`/auth/verify-email/?token=${verificationToken}`)
+    expect(verify.ok()).toBeTruthy()
+
+    // This browser tab logs in and stays on an authenticated page — its
+    // session cookie is never touched by what follows, simulating a tab
+    // left open while deletion gets scheduled from elsewhere.
+    await page.goto('/login')
+    await page.fill('input[name="email"]', email)
+    await page.fill('input[name="password"]', password)
+    await page.click('button[type="submit"]')
+    await page.waitForLoadState('networkidle', { timeout: 15_000 })
+    await expect(page).toHaveURL(/terms/, { timeout: 10_000 })
+    await page.locator('input[type="checkbox"]').check()
+    await page.getByRole('button', { name: /accept and continue/i }).click()
+    await page.waitForLoadState('networkidle', { timeout: 10_000 })
+
+    // "Another device": its own login session, used only to request +
+    // confirm deletion — deletion_scheduled_at is per-user, not per-session.
+    const otherDevice = await playwrightRequest.newContext({ baseURL: E2E_API_URL })
+    const login = await otherDevice.post('/auth/login/', { data: { email, password } })
+    expect(login.ok()).toBeTruthy()
+    const requestDelete = await otherDevice.post('/auth/request-delete/')
+    expect(requestDelete.ok()).toBeTruthy()
+    const { deletion_token: deletionToken } = await requestDelete.json()
+    const confirmDelete = await otherDevice.post('/auth/confirm-delete/', {
+      data: { token: deletionToken, password },
+    })
+    expect(confirmDelete.ok()).toBeTruthy()
+    await otherDevice.dispose()
+    await api.dispose()
+
+    // Back on the original tab: its still-set cookie now gets rejected as
+    // pending-deletion, and the redirect must explain why, not just bounce.
+    await page.goto('/chat')
+    await expect(page).toHaveURL(/\/login\?reason=pending_deletion/, { timeout: 10_000 })
+    await expect(page.getByText(/scheduled for deletion/i)).toBeVisible()
+  })
+
+  test('confirm-delete page auto-redirects to login without a manual click', async ({ page }) => {
+    const email = `delete-e2e-autoredirect-${Date.now()}@example.com`
+    const password = 'DeleteE2e123!'
+
+    const api = await playwrightRequest.newContext({ baseURL: E2E_API_URL })
+    const reg = await api.post('/auth/register/', {
+      data: { name: 'Delete E2E Auto Redirect', email, password },
+    })
+    expect(reg.status()).toBe(201)
+    const { verification_token: verificationToken } = await reg.json()
+    const verify = await api.get(`/auth/verify-email/?token=${verificationToken}`)
+    expect(verify.ok()).toBeTruthy()
+    const login = await api.post('/auth/login/', { data: { email, password } })
+    expect(login.ok()).toBeTruthy()
+    const requestDelete = await api.post('/auth/request-delete/')
+    expect(requestDelete.ok()).toBeTruthy()
+    const { deletion_token: deletionToken } = await requestDelete.json()
+    await api.dispose()
+
+    await page.goto(`/confirm-delete?token=${deletionToken}`)
+    await page.getByLabel('Password').fill(password)
+    await page.getByRole('button', { name: /delete my account/i }).click()
+
+    await expect(page.getByText(/deletion scheduled/i)).toBeVisible({ timeout: 10_000 })
+    // No click on "Go to login now" — the page must redirect on its own.
+    await expect(page).toHaveURL(/login/, { timeout: 12_000 })
+  })
 })

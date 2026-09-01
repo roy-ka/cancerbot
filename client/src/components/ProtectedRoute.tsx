@@ -9,6 +9,7 @@ interface ProtectedRouteProps {
 export default function ProtectedRoute({ children }: ProtectedRouteProps) {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null)
   const [termsRedirect, setTermsRedirect] = useState<string | null>(null)
+  const [loginRedirectReason, setLoginRedirectReason] = useState<string | null>(null)
 
   useEffect(() => {
     const checkAuth = async () => {
@@ -25,6 +26,15 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
         clearTimeout(timeout)
 
         if (!res.ok) {
+          // A session rejected specifically because deletion was scheduled
+          // from another device otherwise bounces to /login with no
+          // explanation — surface it via a query param the login page reads.
+          if (res.status === 401) {
+            const body = await res.json().catch(() => null)
+            if (body?.detail === 'Account pending deletion') {
+              setLoginRedirectReason('pending_deletion')
+            }
+          }
           setIsAuthenticated(false)
           return
         }
@@ -50,7 +60,8 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
   }
 
   if (!isAuthenticated) {
-    return <Navigate to="/login" replace />
+    const loginPath = loginRedirectReason ? `/login?reason=${loginRedirectReason}` : '/login'
+    return <Navigate to={loginPath} replace />
   }
 
   if (termsRedirect) {

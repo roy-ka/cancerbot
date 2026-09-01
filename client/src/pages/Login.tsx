@@ -9,6 +9,9 @@ export default function Login() {
   const bgRef = useRef<HTMLDivElement | null>(null)
   const [searchParams] = useSearchParams()
   const [toast, setToast] = useState(() => searchParams.get('verified') === '1')
+  const [pendingDeletionToast, setPendingDeletionToast] = useState(
+    () => searchParams.get('reason') === 'pending_deletion'
+  )
 
   const onMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     const el = bgRef.current
@@ -42,6 +45,17 @@ export default function Login() {
       >
         <Alert severity="success" onClose={() => setToast(false)} sx={{ width: '100%' }}>
           Thank you for verifying your email! You can now log in.
+        </Alert>
+      </Snackbar>
+
+      <Snackbar
+        open={pendingDeletionToast}
+        autoHideDuration={8000}
+        onClose={() => setPendingDeletionToast(false)}
+        anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
+      >
+        <Alert severity="warning" onClose={() => setPendingDeletionToast(false)} sx={{ width: '100%' }}>
+          Your account is scheduled for deletion. Log in again to review or cancel it.
         </Alert>
       </Snackbar>
       <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%', maxWidth: 1280 }}>

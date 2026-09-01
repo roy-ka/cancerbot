@@ -1,6 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { Box, Button, Stack, TextField, Typography, Alert, CircularProgress } from '@mui/material'
+
+const AUTO_REDIRECT_MS = 8000
 
 export default function ConfirmDeleteAccount() {
   const [searchParams] = useSearchParams()
@@ -13,6 +15,12 @@ export default function ConfirmDeleteAccount() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [deletionDate, setDeletionDate] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!deletionDate) return
+    const timer = setTimeout(() => navigate('/login'), AUTO_REDIRECT_MS)
+    return () => clearTimeout(timer)
+  }, [deletionDate, navigate])
 
   if (!token) {
     return (
@@ -38,7 +46,10 @@ export default function ConfirmDeleteAccount() {
             {new Date(deletionDate).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })}.
             You can cancel any time before then just by logging in.
           </Typography>
-          <Button variant="contained" onClick={() => navigate('/login')}>Go to login</Button>
+          <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.5)' }}>
+            Redirecting to login shortly…
+          </Typography>
+          <Button variant="contained" onClick={() => navigate('/login')}>Go to login now</Button>
         </Stack>
       </Box>
     )
