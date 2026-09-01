@@ -13,14 +13,13 @@ Usage:
   python scripts/backup_opensearch.py --drive      # Also upload to Google Drive (requires
                                                      #   GOOGLE_OAUTH_TOKEN_FILE +
                                                      #   GOOGLE_DRIVE_BACKUP_FOLDER_ID)
-  python scripts/backup_opensearch.py --prune 7    # Keep only the last 7 backup runs
+  python scripts/backup_opensearch.py --prune 7    # Keep only the last 7 backup dates
 """
 
 import argparse
 import gzip
 import json
 import os
-import re
 import sys
 from pathlib import Path
 from datetime import datetime
@@ -30,7 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.retrieval.db_connector import dbConnector
 
 
-def backup_index(index_name: str, output_dir: Path, timestamp: str) -> dict:
+def backup_index(index_name: str, output_dir: Path, time_str: str) -> dict:
     """Dump one index's mapping+settings and documents to output_dir.
 
     Returns {"docs": int, "mapping_path": Path, "docs_path": Path}.
@@ -44,8 +43,8 @@ def backup_index(index_name: str, output_dir: Path, timestamp: str) -> dict:
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    mapping_path = output_dir / f"{index_name}_{timestamp}.mapping.json"
-    docs_path = output_dir / f"{index_name}_{timestamp}.jsonl.gz"
+    mapping_path = output_dir / f"{index_name}_{time_str}.mapping.json"
+    docs_path = output_dir / f"{index_name}_{time_str}.jsonl.gz"
 
     index_def = client.indices.get(index=index_name)[index_name]
     with open(mapping_path, "w") as f:
@@ -63,13 +62,19 @@ def backup_index(index_name: str, output_dir: Path, timestamp: str) -> dict:
     return {"docs": doc_count, "mapping_path": mapping_path, "docs_path": docs_path}
 
 
-def backup_opensearch(output_dir: Path) -> dict:
-    """Backup every known sources/claims index. Returns a per-index result dict."""
+def backup_opensearch(output_dir: Path, date_str: str | None = None) -> dict:
+    """Backup every known sources/claims index into output_dir/date_str/.
+
+    Returns a per-index result dict.
+    """
     dbConnector._initialize()
     if not dbConnector._model:
         raise RuntimeError("dbConnector has no active model (OpenSearch not configured)")
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    now = datetime.now()
+    date_str = date_str or now.strftime("%Y-%m-%d")
+    time_str = now.strftime("%H%M%S")
+    date_dir = output_dir / date_str
     index_names = [dbConnector._model["sources_index"], dbConnector._model["claims_index"]]
 
     results = {}
@@ -77,7 +82,7 @@ def backup_opensearch(output_dir: Path) -> dict:
         if not dbConnector.db_client.indices.exists(index=index_name):
             print(f"  Skipping {index_name}: does not exist")
             continue
-        result = backup_index(index_name, output_dir, timestamp)
+        result = backup_index(index_name, date_dir, time_str)
         size_mb = result["docs_path"].stat().st_size / (1024 * 1024)
         print(f"✓ {index_name}: {result['docs']} docs -> {result['docs_path'].name} ({size_mb:.1f} MB)")
         results[index_name] = result
@@ -85,8 +90,9 @@ def backup_opensearch(output_dir: Path) -> dict:
     return results
 
 
-def backup_to_drive(results: dict):
-    """Upload every file from this run's results to Google Drive under your own account (OAuth)."""
+def backup_to_drive(results: dict, date_str: str):
+    """Upload every file from this run's results to Google Drive under your own
+    account (OAuth), into a per-date subfolder of GOOGLE_DRIVE_BACKUP_FOLDER_ID."""
     token_file = os.getenv("GOOGLE_OAUTH_TOKEN_FILE")
     folder_id = os.getenv("GOOGLE_DRIVE_BACKUP_FOLDER_ID")
     if not token_file or not folder_id:
@@ -96,38 +102,31 @@ def backup_to_drive(results: dict):
     from scripts.backup_drive import upload_to_drive
     for result in results.values():
         for path in (result["mapping_path"], result["docs_path"]):
-            file_id = upload_to_drive(path, folder_id, token_file)
+            file_id = upload_to_drive(path, folder_id, token_file, subfolder=date_str)
             print(f"✓ Uploaded {path.name} to Google Drive (file id: {file_id})")
 
 
-_TIMESTAMP_RE = re.compile(r"_(\d{8}_\d{6})\.")
-
-
 def prune_backups(backup_dir: Path, keep_count: int):
-    """Delete files from old backup runs, keeping the most recent N runs.
+    """Delete old date subdirectories under backup_dir, keeping the most recent N.
 
-    One run writes multiple files (mapping.json + jsonl.gz per index), all
-    sharing the same timestamp — prune by run, not by file, or a run could
-    be left with its docs file but no mapping (or vice versa).
+    Backups live in per-date subdirectories (backup_dir/YYYY-MM-DD/*), so
+    pruning removes whole date directories, not individual files — a
+    partially-pruned date dir could otherwise look like an incomplete run.
     """
-    timestamps = sorted({
-        m.group(1)
-        for f in backup_dir.glob("*")
-        if (m := _TIMESTAMP_RE.search(f.name))
-    })
+    date_dirs = sorted(d for d in backup_dir.glob("*") if d.is_dir())
 
-    if len(timestamps) <= keep_count:
-        print(f"✓ {len(timestamps)} backup run(s) exist (keeping {keep_count})")
+    if len(date_dirs) <= keep_count:
+        print(f"✓ {len(date_dirs)} backup date(s) exist (keeping {keep_count})")
         return
 
-    to_delete = set(timestamps[:-keep_count])
-    deleted = 0
-    for f in backup_dir.glob("*"):
-        m = _TIMESTAMP_RE.search(f.name)
-        if m and m.group(1) in to_delete:
+    to_delete = date_dirs[:-keep_count]
+    for date_dir in to_delete:
+        for f in date_dir.iterdir():
             f.unlink()
-            deleted += 1
-    print(f"✓ Pruned {len(to_delete)} old backup run(s) ({deleted} files)")
+        date_dir.rmdir()
+        print(f"  Deleted old backup date: {date_dir.name}")
+
+    print(f"✓ Pruned to {keep_count} recent backup date(s)")
 
 
 def main():
@@ -138,15 +137,16 @@ def main():
 
     args = parser.parse_args()
     output_dir = Path(args.dir)
+    date_str = datetime.now().strftime("%Y-%m-%d")
 
     try:
-        results = backup_opensearch(output_dir)
+        results = backup_opensearch(output_dir, date_str)
         if not results:
             print("✗ No indices backed up (none exist)")
             sys.exit(1)
 
         if args.drive:
-            backup_to_drive(results)
+            backup_to_drive(results, date_str)
 
         if args.prune:
             prune_backups(output_dir, args.prune)

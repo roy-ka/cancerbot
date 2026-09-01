@@ -1,7 +1,7 @@
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from scripts.backup_db import backup_to_drive, get_postgres_url
+from scripts.backup_db import backup_to_drive, get_postgres_url, prune_backups
 
 
 class TestGetPostgresUrl:
@@ -60,7 +60,7 @@ class TestBackupToDrive:
         monkeypatch.delenv("GOOGLE_DRIVE_BACKUP_FOLDER_ID", raising=False)
 
         try:
-            backup_to_drive(Path("dummy.dump"))
+            backup_to_drive(Path("dummy.dump"), "2026-09-01")
             assert False, "expected SystemExit"
         except SystemExit as e:
             assert e.code == 1
@@ -72,6 +72,31 @@ class TestBackupToDrive:
 
         mock_upload = Mock(return_value="file-id-123")
         with patch("scripts.backup_drive.upload_to_drive", mock_upload):
-            backup_to_drive(Path("dummy.dump"))
+            backup_to_drive(Path("dummy.dump"), "2026-09-01")
 
-        mock_upload.assert_called_once_with(Path("dummy.dump"), "folder-abc", "/fake/sa.json")
+        mock_upload.assert_called_once_with(
+            Path("dummy.dump"), "folder-abc", "/fake/sa.json", subfolder="2026-09-01"
+        )
+
+
+class TestPruneBackups:
+    def test_keeps_only_the_last_n_dates(self, tmp_path):
+        for date in ["2026-08-30", "2026-08-31", "2026-09-01"]:
+            date_dir = tmp_path / date
+            date_dir.mkdir()
+            (date_dir / "cancerbot_120000.dump").write_bytes(b"data")
+
+        prune_backups(tmp_path, keep_count=1)
+
+        remaining = sorted(d.name for d in tmp_path.iterdir())
+        assert remaining == ["2026-09-01"]
+        assert (tmp_path / "2026-09-01" / "cancerbot_120000.dump").exists()
+
+    def test_noop_when_fewer_dates_than_keep_count(self, tmp_path):
+        date_dir = tmp_path / "2026-09-01"
+        date_dir.mkdir()
+        (date_dir / "cancerbot_120000.dump").write_bytes(b"data")
+
+        prune_backups(tmp_path, keep_count=7)
+
+        assert (tmp_path / "2026-09-01").exists()

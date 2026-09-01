@@ -57,6 +57,42 @@ class TestLoadCredentials:
         mock_creds.refresh.assert_not_called()
 
 
+class TestGetOrCreateSubfolder:
+    def test_returns_existing_folder_id_without_creating(self):
+        pytest.importorskip("googleapiclient", reason="requirements-backup.txt not installed")
+        from scripts.backup_drive import _get_or_create_subfolder
+
+        mock_service = MagicMock()
+        mock_service.files.return_value.list.return_value.execute.return_value = {
+            "files": [{"id": "existing-folder-id"}]
+        }
+
+        folder_id = _get_or_create_subfolder(mock_service, "2026-09-01", "parent-id")
+
+        assert folder_id == "existing-folder-id"
+        mock_service.files.return_value.create.assert_not_called()
+        query = mock_service.files.return_value.list.call_args.kwargs["q"]
+        assert "2026-09-01" in query and "parent-id" in query
+
+    def test_creates_folder_when_absent(self):
+        pytest.importorskip("googleapiclient", reason="requirements-backup.txt not installed")
+        from scripts.backup_drive import _get_or_create_subfolder
+
+        mock_service = MagicMock()
+        mock_service.files.return_value.list.return_value.execute.return_value = {"files": []}
+        mock_service.files.return_value.create.return_value.execute.return_value = {"id": "new-folder-id"}
+
+        folder_id = _get_or_create_subfolder(mock_service, "2026-09-01", "parent-id")
+
+        assert folder_id == "new-folder-id"
+        create_kwargs = mock_service.files.return_value.create.call_args.kwargs
+        assert create_kwargs["body"] == {
+            "name": "2026-09-01",
+            "mimeType": "application/vnd.google-apps.folder",
+            "parents": ["parent-id"],
+        }
+
+
 class TestUploadToDrive:
     def test_uploads_file_and_returns_id(self, tmp_path):
         pytest.importorskip("googleapiclient", reason="requirements-backup.txt not installed")
@@ -81,3 +117,24 @@ class TestUploadToDrive:
 
         create_kwargs = mock_service.files.return_value.create.call_args.kwargs
         assert create_kwargs["body"] == {"name": "backup.jsonl.gz", "parents": ["folder-abc"]}
+
+    def test_uploads_into_resolved_subfolder(self, tmp_path):
+        pytest.importorskip("googleapiclient", reason="requirements-backup.txt not installed")
+        from scripts.backup_drive import upload_to_drive
+
+        local_file = tmp_path / "backup.jsonl.gz"
+        local_file.write_bytes(b"fake data")
+
+        mock_creds = MagicMock()
+        mock_service = MagicMock()
+        mock_service.files.return_value.create.return_value.execute.return_value = {"id": "drive-file-123"}
+
+        with patch("scripts.backup_drive._load_credentials", return_value=mock_creds), \
+             patch("googleapiclient.discovery.build", return_value=mock_service), \
+             patch("googleapiclient.http.MediaFileUpload"), \
+             patch("scripts.backup_drive._get_or_create_subfolder", return_value="date-folder-id") as mock_gof:
+            upload_to_drive(local_file, "folder-abc", "/fake/token.json", subfolder="2026-09-01")
+
+        mock_gof.assert_called_once_with(mock_service, "2026-09-01", "folder-abc")
+        create_kwargs = mock_service.files.return_value.create.call_args.kwargs
+        assert create_kwargs["body"] == {"name": "backup.jsonl.gz", "parents": ["date-folder-id"]}

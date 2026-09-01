@@ -8,7 +8,7 @@ Usage:
   python scripts/backup_db.py --drive      # Upload to Google Drive (requires
                                             #   GOOGLE_OAUTH_TOKEN_FILE +
                                             #   GOOGLE_DRIVE_BACKUP_FOLDER_ID)
-  python scripts/backup_db.py --prune 7    # Keep only last 7 backups
+  python scripts/backup_db.py --prune 7    # Keep only last 7 backup dates
 """
 
 import subprocess
@@ -102,8 +102,9 @@ def backup_to_s3(local_path: Path, s3_bucket: str, s3_key: str):
     print(f"✓ Uploaded to s3://{s3_bucket}/{s3_key}")
 
 
-def backup_to_drive(local_path: Path):
-    """Upload backup to Google Drive under your own account (OAuth)."""
+def backup_to_drive(local_path: Path, date_str: str):
+    """Upload backup to Google Drive under your own account (OAuth), into a
+    per-date subfolder of GOOGLE_DRIVE_BACKUP_FOLDER_ID."""
     token_file = os.getenv("GOOGLE_OAUTH_TOKEN_FILE")
     folder_id = os.getenv("GOOGLE_DRIVE_BACKUP_FOLDER_ID")
     if not token_file or not folder_id:
@@ -111,24 +112,32 @@ def backup_to_drive(local_path: Path):
         sys.exit(1)
 
     from scripts.backup_drive import upload_to_drive
-    file_id = upload_to_drive(local_path, folder_id, token_file)
+    file_id = upload_to_drive(local_path, folder_id, token_file, subfolder=date_str)
     print(f"✓ Uploaded to Google Drive (file id: {file_id})")
 
 
 def prune_backups(backup_dir: Path, keep_count: int):
-    """Delete old backups, keeping the most recent N."""
-    backups = sorted(backup_dir.glob("*.dump"), key=lambda p: p.stat().st_mtime)
+    """Delete old date subdirectories under backup_dir, keeping the most recent N.
 
-    if len(backups) <= keep_count:
-        print(f"✓ {len(backups)} backups exist (keeping {keep_count})")
+    Backups live in per-date subdirectories (backup_dir/YYYY-MM-DD/*.dump),
+    so pruning removes whole date directories, not individual files —
+    otherwise a partially-pruned date dir could look like an incomplete
+    backup run.
+    """
+    date_dirs = sorted(d for d in backup_dir.glob("*") if d.is_dir())
+
+    if len(date_dirs) <= keep_count:
+        print(f"✓ {len(date_dirs)} backup date(s) exist (keeping {keep_count})")
         return
 
-    to_delete = backups[:-keep_count]
-    for backup in to_delete:
-        backup.unlink()
-        print(f"  Deleted old backup: {backup.name}")
+    to_delete = date_dirs[:-keep_count]
+    for date_dir in to_delete:
+        for f in date_dir.iterdir():
+            f.unlink()
+        date_dir.rmdir()
+        print(f"  Deleted old backup date: {date_dir.name}")
 
-    print(f"✓ Pruned to {keep_count} recent backups")
+    print(f"✓ Pruned to {keep_count} recent backup date(s)")
 
 
 def main():
@@ -140,8 +149,9 @@ def main():
 
     args = parser.parse_args()
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    backup_path = Path(args.dir) / f"cancerbot_{timestamp}.dump"
+    now = datetime.now()
+    date_str = now.strftime("%Y-%m-%d")
+    backup_path = Path(args.dir) / date_str / f"cancerbot_{now.strftime('%H%M%S')}.dump"
 
     try:
         backup_to_file(backup_path)
@@ -151,11 +161,11 @@ def main():
             if not s3_bucket:
                 print("Error: BACKUP_S3_BUCKET not set")
                 sys.exit(1)
-            s3_key = f"backups/{backup_path.name}"
+            s3_key = f"backups/{date_str}/{backup_path.name}"
             backup_to_s3(backup_path, s3_bucket, s3_key)
 
         if args.drive:
-            backup_to_drive(backup_path)
+            backup_to_drive(backup_path, date_str)
 
         if args.prune:
             prune_backups(Path(args.dir), args.prune)

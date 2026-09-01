@@ -70,11 +70,12 @@ class TestBackupOpensearch:
             return_value={"docs": 3, "mapping_path": tmp_path / "m.json", "docs_path": tmp_path / "d.jsonl.gz"},
         ) as mock_backup:
             (tmp_path / "d.jsonl.gz").write_bytes(b"")
-            results = backup_opensearch(tmp_path)
+            results = backup_opensearch(tmp_path, date_str="2026-09-01")
 
         assert list(results.keys()) == ["sources_v1"]
         mock_backup.assert_called_once()
         assert mock_backup.call_args[0][0] == "sources_v1"
+        assert mock_backup.call_args[0][1] == tmp_path / "2026-09-01"
 
     def test_raises_when_no_model_configured(self, tmp_path, monkeypatch):
         _reset()
@@ -89,25 +90,29 @@ class TestBackupOpensearch:
 
 
 class TestPruneBackups:
-    def test_keeps_only_the_last_n_runs(self, tmp_path):
-        for ts in ["20260101_000000", "20260102_000000", "20260103_000000"]:
-            (tmp_path / f"sources_v1_{ts}.mapping.json").write_text("{}")
-            (tmp_path / f"sources_v1_{ts}.jsonl.gz").write_bytes(b"")
-            (tmp_path / f"claims_v1_{ts}.mapping.json").write_text("{}")
-            (tmp_path / f"claims_v1_{ts}.jsonl.gz").write_bytes(b"")
+    def test_keeps_only_the_last_n_dates(self, tmp_path):
+        for date in ["2026-08-30", "2026-08-31", "2026-09-01"]:
+            date_dir = tmp_path / date
+            date_dir.mkdir()
+            (date_dir / "sources_v1_120000.mapping.json").write_text("{}")
+            (date_dir / "sources_v1_120000.jsonl.gz").write_bytes(b"")
+            (date_dir / "claims_v1_120000.mapping.json").write_text("{}")
+            (date_dir / "claims_v1_120000.jsonl.gz").write_bytes(b"")
 
         prune_backups(tmp_path, keep_count=1)
 
-        remaining = sorted(f.name for f in tmp_path.glob("*"))
-        assert all("20260103_000000" in f for f in remaining)
-        assert len(remaining) == 4
+        remaining = sorted(d.name for d in tmp_path.iterdir())
+        assert remaining == ["2026-09-01"]
+        assert len(list((tmp_path / "2026-09-01").iterdir())) == 4
 
-    def test_noop_when_fewer_runs_than_keep_count(self, tmp_path):
-        (tmp_path / "sources_v1_20260101_000000.mapping.json").write_text("{}")
+    def test_noop_when_fewer_dates_than_keep_count(self, tmp_path):
+        date_dir = tmp_path / "2026-09-01"
+        date_dir.mkdir()
+        (date_dir / "sources_v1_120000.mapping.json").write_text("{}")
 
         prune_backups(tmp_path, keep_count=7)
 
-        assert len(list(tmp_path.glob("*"))) == 1
+        assert (tmp_path / "2026-09-01").exists()
 
 
 class TestBackupToDrive:
@@ -116,7 +121,7 @@ class TestBackupToDrive:
         monkeypatch.delenv("GOOGLE_DRIVE_BACKUP_FOLDER_ID", raising=False)
 
         try:
-            backup_to_drive({})
+            backup_to_drive({}, "2026-09-01")
             assert False, "expected SystemExit"
         except SystemExit as e:
             assert e.code == 1
@@ -132,8 +137,10 @@ class TestBackupToDrive:
         }
         mock_upload = Mock(return_value="file-id")
         with patch("scripts.backup_drive.upload_to_drive", mock_upload):
-            backup_to_drive(results)
+            backup_to_drive(results, "2026-09-01")
 
         assert mock_upload.call_count == 4
         uploaded_paths = {call.args[0] for call in mock_upload.call_args_list}
         assert uploaded_paths == {Path("m1.json"), Path("d1.jsonl.gz"), Path("m2.json"), Path("d2.jsonl.gz")}
+        for call in mock_upload.call_args_list:
+            assert call.kwargs["subfolder"] == "2026-09-01"

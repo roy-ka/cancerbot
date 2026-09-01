@@ -33,15 +33,50 @@ def _load_credentials(token_file: str):
     return creds
 
 
-def upload_to_drive(local_path: Path, folder_id: str, token_file: str) -> str:
-    """Upload one file to a Drive folder. Returns the created file's Drive file ID."""
+def _get_or_create_subfolder(service, name: str, parent_id: str) -> str:
+    """Find a child folder of parent_id named `name`, creating it if absent.
+
+    The search only needs to see folders this app itself created (any
+    earlier run's date folder), not arbitrary contents of parent_id — that
+    stays within the drive.file scope even though parent_id itself was
+    created by the user, not this app.
+    """
+    query = (
+        f"name = '{name}' and '{parent_id}' in parents "
+        "and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+    )
+    results = service.files().list(q=query, fields="files(id)", pageSize=1).execute()
+    existing = results.get("files", [])
+    if existing:
+        return existing[0]["id"]
+
+    folder_metadata = {
+        "name": name,
+        "mimeType": "application/vnd.google-apps.folder",
+        "parents": [parent_id],
+    }
+    folder = service.files().create(body=folder_metadata, fields="id").execute()
+    return folder["id"]
+
+
+def upload_to_drive(local_path: Path, folder_id: str, token_file: str, subfolder: str | None = None) -> str:
+    """Upload one file to a Drive folder. Returns the created file's Drive file ID.
+
+    If `subfolder` is given (e.g. a date like "2026-09-01"), the file is
+    placed in a child folder of that name under folder_id, creating it on
+    first use and reusing it on later calls the same day.
+    """
     from googleapiclient.discovery import build
     from googleapiclient.http import MediaFileUpload
 
     creds = _load_credentials(token_file)
     service = build("drive", "v3", credentials=creds)
 
+    target_folder_id = folder_id
+    if subfolder:
+        target_folder_id = _get_or_create_subfolder(service, subfolder, folder_id)
+
     media = MediaFileUpload(str(local_path), resumable=True)
-    file_metadata = {"name": local_path.name, "parents": [folder_id]}
+    file_metadata = {"name": local_path.name, "parents": [target_folder_id]}
     result = service.files().create(body=file_metadata, media_body=media, fields="id").execute()
     return result["id"]
