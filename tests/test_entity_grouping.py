@@ -199,9 +199,10 @@ class TestCrossrefEntityGroupQuery:
 # ---------------------------------------------------------------------------
 
 class _FakeMessage:
-    def __init__(self, content, extracted_terms=None):
+    def __init__(self, content, extracted_terms=None, role="user"):
         self.content = content
         self.extracted_terms = extracted_terms
+        self.role = role
         self.id = "msg-id"
 
 
@@ -250,3 +251,83 @@ class TestSearchAndEmbedUsesFreshGroupsForCurrentMessage:
             {"term": "Mebendazole", "synonyms": []},
             {"term": "GBM", "synonyms": ["glioblastoma"]},
         ]
+
+
+# ---------------------------------------------------------------------------
+# search_and_embed — a context-dependent follow-up ("what can block these
+# pathways?") must be rewritten against recent history before NLP extraction
+# runs, or extraction has nothing to find and retrieval comes back empty.
+# ---------------------------------------------------------------------------
+
+class TestSearchAndEmbedRewritesFollowUpQuery:
+    @pytest.mark.asyncio
+    async def test_extraction_runs_on_rewritten_text_not_raw_message(self):
+        conversation = _FakeConversation([
+            _FakeMessage("what are the Glioma pathways", role="user"),
+            _FakeMessage(
+                "Glioma communicates via Notch, JAK/STAT3, and PI3K/AKT signaling...",
+                role="assistant",
+            ),
+            _FakeMessage("what can block these pathways?", role="user"),
+        ])
+
+        rewritten = "What can block Notch, JAK/STAT3, and PI3K/AKT signaling in glioma?"
+
+        async def fake_extract_term_groups(text):
+            assert text == rewritten, f"NLP extraction ran on {text!r}, expected the rewritten query"
+            return (["Notch", "JAK/STAT3", "PI3K/AKT"], [{"term": "Notch", "synonyms": []}])
+
+        with patch(
+            "src.classes.ollama_connector.OllamaConnector.rewrite_query_with_history",
+            new_callable=AsyncMock,
+        ) as mock_rewrite, \
+             patch("src.routers.conversation_helper._extract_term_groups_from_message", side_effect=fake_extract_term_groups), \
+             patch("src.routers.conversation_helper._extract_urls_from_texts", return_value=[]), \
+             patch("src.routers.conversation_helper._search_pubmed_sources", new_callable=AsyncMock) as mock_pubmed, \
+             patch("src.routers.conversation_helper._search_crossref_sources", new_callable=AsyncMock) as mock_crossref, \
+             patch("src.routers.conversation_helper._search_wikipedia_sources", new_callable=AsyncMock) as mock_wiki, \
+             patch("src.routers.conversation_helper._embed_and_index_sources", return_value=(0, 0)):
+            mock_rewrite.return_value = rewritten
+            mock_pubmed.return_value = []
+            mock_crossref.return_value = []
+            mock_wiki.return_value = []
+
+            result = await search_and_embed(conversation)
+
+        # The two prior messages (user question + assistant answer), in order,
+        # are what the rewrite is grounded on.
+        history_arg, text_arg = mock_rewrite.call_args[0]
+        assert text_arg == "what can block these pathways?"
+        assert history_arg == [
+            ("user", "what are the Glioma pathways"),
+            ("assistant", "Glioma communicates via Notch, JAK/STAT3, and PI3K/AKT signaling..."),
+        ]
+
+        assert result["rewritten_query"] == rewritten
+
+    @pytest.mark.asyncio
+    async def test_first_message_in_conversation_skips_rewrite(self):
+        """No history yet — nothing to resolve against, and no Groq call to pay for."""
+        conversation = _FakeConversation([_FakeMessage("what are the Glioma pathways", role="user")])
+
+        async def fake_extract_term_groups(text):
+            return (["Glioma"], [{"term": "Glioma", "synonyms": []}])
+
+        with patch(
+            "src.classes.ollama_connector.OllamaConnector.rewrite_query_with_history",
+            new_callable=AsyncMock,
+        ) as mock_rewrite, \
+             patch("src.routers.conversation_helper._extract_term_groups_from_message", side_effect=fake_extract_term_groups), \
+             patch("src.routers.conversation_helper._extract_urls_from_texts", return_value=[]), \
+             patch("src.routers.conversation_helper._search_pubmed_sources", new_callable=AsyncMock) as mock_pubmed, \
+             patch("src.routers.conversation_helper._search_crossref_sources", new_callable=AsyncMock) as mock_crossref, \
+             patch("src.routers.conversation_helper._search_wikipedia_sources", new_callable=AsyncMock) as mock_wiki, \
+             patch("src.routers.conversation_helper._embed_and_index_sources", return_value=(0, 0)):
+            mock_pubmed.return_value = []
+            mock_crossref.return_value = []
+            mock_wiki.return_value = []
+
+            result = await search_and_embed(conversation)
+
+        mock_rewrite.assert_not_called()
+        assert result["rewritten_query"] == "what are the Glioma pathways"

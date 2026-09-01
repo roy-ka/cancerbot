@@ -398,6 +398,57 @@ ANSWER (every sentence must have a [source#] citation):
       f"AI generation unavailable — Groq: {groq_exc}, Gemini: {gemini_exc}"
     )
 
+  @classmethod
+  async def rewrite_query_with_history(cls, history: list[tuple[str, str]], text: str) -> str:
+    """Rewrite a follow-up message into a standalone question using recent
+    conversation history, so retrieval isn't blind to references that only
+    resolve via prior turns (e.g. "what can block these pathways?" naming
+    nothing itself). Retrieval (NLP extraction, BM25, and the dense/KNN
+    query) all run on this rewritten text instead of the raw message —
+    generation-time history (_build_prompt) is a separate, later stage and
+    already had full context; this closes the gap on the retrieval side.
+
+    Falls back to the original text on empty history or any error — never
+    raises, since retrieval must never block on this.
+    """
+    from groq import GroqError
+
+    text = (text or '').strip()
+    if not text or not history:
+      return text
+
+    history_lines = "\n".join(
+      f"{role}: {content.strip()[:300]}" for role, content in history if content and content.strip()
+    )
+    if not history_lines:
+      return text
+
+    prompt = (
+      "Rewrite the LATEST user message as a standalone question that makes sense "
+      "without the earlier conversation, resolving pronouns or references "
+      "(e.g. \"these\", \"it\", \"that drug\") to the specific things they refer to. "
+      "If the message is already standalone, return it unchanged. "
+      "Output ONLY the rewritten question — no explanation, no quotes.\n\n"
+      f"Conversation so far:\n{history_lines}\n\n"
+      f"Latest user message: {text[:500]}"
+    )
+    try:
+      completion = await cls._get_async_groq().chat.completions.create(
+        model=cls.groq_model,
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=120,
+      )
+      if not completion.choices:
+        return text
+      rewritten = (completion.choices[0].message.content or '').strip().strip('"\'')
+      return rewritten if rewritten else text
+    except GroqError as exc:
+      logger.warning("[query_rewrite] Groq error (%s: %s), using original text", type(exc).__name__, exc)
+      return text
+    except Exception as exc:
+      logger.warning("[query_rewrite] unexpected error (%s: %s), using original text", type(exc).__name__, exc)
+      return text
+
   @staticmethod
   def _heuristic_title(text: str) -> str:
     """Fallback title: clean up and truncate the raw message text."""

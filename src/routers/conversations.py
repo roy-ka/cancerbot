@@ -250,8 +250,15 @@ async def _process_post_message(
     # about both entities under long-established single-entity literature.
     extracted_query_terms = search_meta.get('terms', [])
     entity_groups = search_meta.get('entity_groups', [])
+    # For a follow-up whose own text names nothing ("what can block these
+    # pathways?"), search_and_embed already resolved it against recent
+    # history before extraction ran — rewritten_query is that resolved text,
+    # same as req.content when there was nothing to resolve. Falling back to
+    # this instead of req.content keeps the KNN query (and the terms/BM25
+    # fallback below) from reverting to the unresolved pronoun-laden message.
+    rewritten_query = (search_meta.get('rewritten_query') or '').strip() or req.content
     retrieval_terms = _representative_terms(entity_groups, extracted_query_terms)
-    retrieval_query = ' '.join(retrieval_terms) if retrieval_terms else req.content
+    retrieval_query = ' '.join(retrieval_terms) if retrieval_terms else rewritten_query
     if url_context_items:
         first_title = (url_context_items[0].get('title') or '').strip()
         if first_title and first_title != req.content:
@@ -263,7 +270,7 @@ async def _process_post_message(
     # halves independent, so they can describe the query differently. The
     # exception is a message that was just a URL — there the fetched page
     # title is the only meaningful thing to embed.
-    dense_query = retrieval_query if url_context_items else ((req.content or '').strip() or retrieval_query)
+    dense_query = retrieval_query if url_context_items else (rewritten_query or retrieval_query)
 
     # Disease areas of the query's own entities (e.g. "brain cancer" for GBM)
     # let retrieval boost sources tagged with the same area.

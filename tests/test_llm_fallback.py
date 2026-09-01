@@ -207,6 +207,81 @@ class TestGenerateTitle:
         assert title == "What is apoptosis"
 
 
+class TestRewriteQueryWithHistory:
+    """rewrite_query_with_history resolves a context-dependent follow-up
+    ("what can block these pathways?") into a standalone question before
+    retrieval runs — see the src.routers.conversation_helper.search_and_embed
+    docstring/comment for the production bug this fixes.
+    """
+
+    @pytest.mark.asyncio
+    async def test_uses_groq_rewritten_query(self):
+        factory, instance = _async_groq_completion_mock(
+            content="What can block Notch, JAK/STAT3, and PI3K/AKT signaling in glioma?"
+        )
+        history = [
+            ("user", "what are the Glioma pathways"),
+            ("assistant", "Glioma communicates via Notch, JAK/STAT3, and PI3K/AKT signaling..."),
+        ]
+        with patch("groq.AsyncGroq", factory):
+            rewritten = await OllamaConnector.rewrite_query_with_history(history, "what can block these pathways?")
+        assert rewritten == "What can block Notch, JAK/STAT3, and PI3K/AKT signaling in glioma?"
+        instance.chat.completions.create.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_no_history_returns_text_unchanged_without_calling_groq(self):
+        factory, instance = _async_groq_completion_mock(content="should not be used")
+        with patch("groq.AsyncGroq", factory):
+            rewritten = await OllamaConnector.rewrite_query_with_history([], "what can block these pathways?")
+        assert rewritten == "what can block these pathways?"
+        instance.chat.completions.create.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_empty_text_returns_empty_without_calling_groq(self):
+        factory, instance = _async_groq_completion_mock(content="should not be used")
+        with patch("groq.AsyncGroq", factory):
+            rewritten = await OllamaConnector.rewrite_query_with_history([("user", "hi")], "   ")
+        assert rewritten == ""
+        instance.chat.completions.create.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_original_text_on_groq_error(self):
+        factory, _ = _async_groq_completion_mock(raises=_rate_limit_exc())
+        history = [("user", "what are the Glioma pathways")]
+        with patch("groq.AsyncGroq", factory):
+            rewritten = await OllamaConnector.rewrite_query_with_history(history, "what can block these pathways?")
+        assert rewritten == "what can block these pathways?"
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_original_text_on_unexpected_error(self):
+        factory, _ = _async_groq_completion_mock(raises=RuntimeError("boom"))
+        history = [("user", "what are the Glioma pathways")]
+        with patch("groq.AsyncGroq", factory):
+            rewritten = await OllamaConnector.rewrite_query_with_history(history, "what can block these pathways?")
+        assert rewritten == "what can block these pathways?"
+
+    @pytest.mark.asyncio
+    async def test_empty_groq_choices_falls_back(self):
+        completion = MagicMock()
+        completion.choices = []
+        instance = MagicMock()
+        instance.chat.completions.create = AsyncMock(return_value=completion)
+        factory = MagicMock(return_value=instance)
+        history = [("user", "what are the Glioma pathways")]
+        with patch("groq.AsyncGroq", factory):
+            rewritten = await OllamaConnector.rewrite_query_with_history(history, "what can block these pathways?")
+        assert rewritten == "what can block these pathways?"
+
+    @pytest.mark.asyncio
+    async def test_history_entries_with_blank_content_are_skipped(self):
+        """All-blank history must behave like no history — no Groq call."""
+        factory, instance = _async_groq_completion_mock(content="should not be used")
+        with patch("groq.AsyncGroq", factory):
+            rewritten = await OllamaConnector.rewrite_query_with_history([("user", ""), ("assistant", "  ")], "hi")
+        assert rewritten == "hi"
+        instance.chat.completions.create.assert_not_called()
+
+
 class TestAnswerLanguageInstruction:
     """stream_text should tell the LLM to answer in the conversation's first
     message's language, while keeping the NO_DATA_RESPONSE fallback in English

@@ -1134,6 +1134,7 @@ async def search_and_embed(
         return {
             "terms": [],
             "latest_terms": [],
+            "rewritten_query": None,
             "pubmed_found": 0,
             "crossref_found": 0,
             "indexed": 0,
@@ -1158,10 +1159,26 @@ async def search_and_embed(
             history_stored_terms.extend(msg_terms)
     history_stored_terms = [t for t in _dedupe_terms(history_stored_terms) if t.lower() not in _TERM_STOP_WORDS]
 
+    # A follow-up like "what can block these pathways?" names nothing itself
+    # — scispaCy has no entity to find in "these" — so NLP extraction and the
+    # embedding query both end up blind unless the question is first resolved
+    # against recent turns. This is retrieval-time context; _build_prompt's
+    # history (generation-time) is separate and doesn't help retrieval, which
+    # already ran before the LLM ever sees the message.
+    search_text = latest_text
+    if latest_text and history_messages:
+        history_pairs = [
+            (str(getattr(m, 'role', 'user') or 'user'), str(getattr(m, 'content', '') or ''))
+            for m in history_messages
+        ]
+        search_text = await OllamaConnector.rewrite_query_with_history(history_pairs, latest_text)
+        if search_text != latest_text:
+            logger.info("[search_and_embed] rewrote query for retrieval: %r -> %r", latest_text, search_text)
+
     entity_groups: list[dict] = []
-    if latest_text:
+    if search_text:
         await emit("extracting_search_terms", {"source": "nlp"})
-        latest_terms, latest_groups = await _extract_term_groups_from_message(latest_text)
+        latest_terms, latest_groups = await _extract_term_groups_from_message(search_text)
         entity_groups = _merge_entity_groups([latest_groups])
     else:
         latest_terms = []
@@ -1207,6 +1224,7 @@ async def search_and_embed(
             # Callers cache this on the message; keep the key present on every
             # return path so its absence never silently means "no extraction ran".
             "latest_terms": [],
+            "rewritten_query": search_text,
             "pubmed_found": 0,
             "crossref_found": 0,
             "wikipedia_found": 0,
@@ -1270,6 +1288,7 @@ async def search_and_embed(
         "terms": terms,
         "latest_terms": latest_terms,
         "entity_groups": entity_groups,
+        "rewritten_query": search_text,
         "url_found": len(url_sources),
         "url_context_items": url_context_items,
         "pubmed_found": len(pubmed_sources),
