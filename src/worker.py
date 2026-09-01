@@ -1,7 +1,7 @@
 """arq worker entry point.
 
-Runs as its own container (see the `worker` service in docker-compose.yml,
-mirroring the existing `url-classifier` service pattern) via:
+Runs as its own container (see the `worker` service in docker-compose.yml)
+via:
   arq src.worker.WorkerSettings
 
 Phase 2: the account-deletion and auth-cleanup sweeps are cron jobs here
@@ -12,7 +12,12 @@ Phase 3: transactional email is enqueued on demand (src.queue.enqueue)
 from src/routers/auth.py and src/classes/ollama_connector.py instead of
 FastAPI BackgroundTasks — see src/jobs/email_jobs.py.
 
-Later phases move url_classifier onto this too.
+Phase 4: URL classification replaces its own standalone polling service
+(formerly `python -m src.workers.url_classifier`, its own docker-compose
+container) with classify_url_job, enqueued immediately when
+conversation_helper.py inserts a job row, plus a cron safety net that
+catches anything stuck or whose insert-time enqueue failed — see
+src/jobs/url_classification.py.
 """
 
 import logging
@@ -30,6 +35,10 @@ from src.jobs.email_jobs import (
     send_delete_account_scheduled_email_job,
     send_delete_account_cancelled_email_job,
     send_fallback_alert_job,
+)
+from src.jobs.url_classification import (
+    classify_url_job,
+    reap_and_requeue_stale_url_classification_jobs,
 )
 
 logger = logging.getLogger(__name__)
@@ -58,6 +67,7 @@ class WorkerSettings:
         send_delete_account_scheduled_email_job,
         send_delete_account_cancelled_email_job,
         send_fallback_alert_job,
+        classify_url_job,
     ]
     cron_jobs = [
         # Hourly on the hour — matches the old sweep's 3600s interval.
@@ -66,6 +76,8 @@ class WorkerSettings:
         cron(account_deletion_sweep, hour=None, minute=0, run_at_startup=True),
         # Every 6 hours — matches the old sweep's 6*3600s interval.
         cron(auth_cleanup_sweep, hour={0, 6, 12, 18}, minute=0, run_at_startup=True),
+        # Every 5 minutes — matches the old worker's REAP_INTERVAL_SECONDS.
+        cron(reap_and_requeue_stale_url_classification_jobs, minute=set(range(0, 60, 5))),
     ]
     on_startup = startup
     on_shutdown = shutdown

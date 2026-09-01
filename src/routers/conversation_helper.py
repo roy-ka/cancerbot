@@ -1624,7 +1624,10 @@ async def fetch_url_contents(urls: list[str]) -> list[dict]:
         else:
             doc_id = "url:" + hashlib.sha1(url.encode("utf-8")).hexdigest()
 
-        await asyncio.to_thread(_enqueue_url_classification, url=url, content_text=text, title=title)
+        job_id = await asyncio.to_thread(_enqueue_url_classification, url=url, content_text=text, title=title)
+        if job_id:
+            from src.queue import enqueue
+            await enqueue("classify_url_job", job_id=job_id)
 
         return {
             "id": doc_id,
@@ -1643,8 +1646,12 @@ async def fetch_url_contents(urls: list[str]) -> list[dict]:
     return [r for r in results if r is not None]
 
 
-def _enqueue_url_classification(*, url: str, content_text: str, title: str | None) -> None:
-    """Insert a pending classification job into the DB queue. Silently skips on error."""
+def _enqueue_url_classification(*, url: str, content_text: str, title: str | None) -> str | None:
+    """Insert a pending classification job row (the audit/status record —
+    see src/jobs/url_classification.py). Returns the new job's id (str) so
+    the caller can enqueue classify_url_job for it, or None on failure.
+    Silently skips on error.
+    """
     try:
         from src.db.session import SessionLocal
         from src.db.models import UrlClassificationJob
@@ -1653,5 +1660,7 @@ def _enqueue_url_classification(*, url: str, content_text: str, title: str | Non
             db.add(job)
             db.commit()
             logger.info(f"[url_queue] Enqueued classification job for {url}")
+            return str(job.id)
     except Exception as e:
         logger.warning(f"[url_queue] Failed to enqueue job for {url}: {type(e).__name__}: {e}")
+        return None

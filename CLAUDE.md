@@ -18,7 +18,7 @@ Never import a package or depend on a service that is not listed in the relevant
 The reverse also matters: `requirements.txt` deliberately does **not** contain
 spacy/scispacy/`en_core_sci_sm`/pyspellchecker. All NLP runs in the `nlp-service`
 container (`nlp_service/requirements.txt`); `src/nlp/__init__.py` is only an HTTP
-client. The backend image is built and run twice (backend + url-classifier), so
+client. The backend image is built and run twice (backend + worker), so
 the scispaCy stack and its model cost hundreds of MB per container for nothing.
 For the same reason `src/utils/utils.py` must stay pandas-free — it's imported by
 `main.py`, `auth.py` and `db_connector.py`, so a module-level `import pandas`
@@ -166,10 +166,12 @@ the whole index each time.
 | PostgreSQL | Docker | 5432 | |
 | Ollama | Docker | 11434 | |
 | NLP microservice | `nlp_service/` | 8100 | Docker only with `prod` profile |
+| Redis | Docker | 6379 | arq job queue — see Background Jobs below |
+| arq worker | `src/worker.py` | — | Docker only with `prod` profile, no exposed port |
 
 **Port binding**: only the backend (8000) is published on `0.0.0.0`. OpenSearch
-(9200/9600), Dashboards (5601), PostgreSQL (5432) and the NLP service (8100) are
-bound to `127.0.0.1` in `docker-compose.yml` — they were reachable from any host
+(9200/9600), Dashboards (5601), PostgreSQL (5432), the NLP service (8100), and
+Redis (6379) are bound to `127.0.0.1` in `docker-compose.yml` — they were reachable from any host
 on the network, and the NLP service in particular has no authentication of its
 own. They stay published on loopback so a backend running on the host in dev can
 still reach them; reaching Dashboards on a remote host now needs an SSH tunnel.
@@ -418,6 +420,30 @@ verification.
 - `extract_terms(text)` → `POST /extract` — entity extraction + abbreviation expansion + MeSH synonym lookup (`nlp_service/synonyms.py`); returns merged term list
 - `correct_spelling(text)` → `POST /spelling/correct` — spell correction with protected medical terms
 - `load_models()` — no-op; logs the service URL at startup
+
+### Background Jobs (arq)
+`src/worker.py` is a separate `arq` worker process (its own `worker` container in
+`docker-compose.yml`, `prod` profile), backed by Redis (`REDIS_URL`). It replaced
+two different older patterns: hand-rolled `while True: await asyncio.sleep(N)`
+loops that ran *inside* the backend web process (account-deletion and
+auth-cleanup sweeps), and a standalone polling container (`url-classifier`,
+`python -m src.workers.url_classifier`, `SELECT ... FOR UPDATE SKIP LOCKED`
+every `URL_CLASSIFIER_POLL_INTERVAL` seconds) — both are gone.
+
+- **`src.queue.enqueue(job_name, **kwargs)`** — how the web process (or another
+  job) publishes work. Never raises: a Redis/worker outage must not turn a
+  successful request into a 500, so a failed enqueue is logged and swallowed —
+  the job simply doesn't run until the queue is back. This mirrors every
+  `send_*` helper in `src/utils/email.py` already logging and swallowing
+  delivery failures rather than surfacing them to the caller.
+- **Cron jobs** (`WorkerSettings.cron_jobs`, `src/worker.py`):
+  - `account_deletion_sweep` (`src/jobs/account_deletion.py`) — hourly, `run_at_startup=True`
+  - `auth_cleanup_sweep` (`src/jobs/auth_cleanup.py`) — every 6h, `run_at_startup=True`
+  - `reap_and_requeue_stale_url_classification_jobs` (`src/jobs/url_classification.py`) — every 5 minutes; resets rows stuck in `processing` back to `pending`, then re-enqueues every `pending` row old enough that its own insert-time enqueue has had time to run (the safety net for the case below)
+- **On-demand jobs** (`WorkerSettings.functions`):
+  - Email: `src/jobs/email_jobs.py` wraps each `src.utils.email.send_*` sender; `src/routers/auth.py`'s six email call sites and `ollama_connector.py`'s Groq-failure fallback alert enqueue these instead of using FastAPI `BackgroundTasks` (which no router uses anymore). `send_account_deleted_email` is the one sender *not* wrapped here — it's only ever called from `account_deletion_sweep`, which already runs inside the worker, so there's nothing to enqueue.
+  - URL classification: `classify_url_job` (`src/jobs/url_classification.py`) — LLM-classifies a user-provided URL as cancer-related via Groq and, if so, indexes it. `conversation_helper.py`'s `_enqueue_url_classification` still inserts the `url_classification_jobs` row first (it stays the audit/status record — `status`/`llm_reasoning`/`error`/`processed_at` are genuinely useful persisted) and then immediately enqueues `classify_url_job` for it, so classification runs right away instead of waiting for a poll tick. The job claims its row with `FOR UPDATE SKIP LOCKED` scoped to its own id, so a duplicate enqueue of the same job (e.g. racing the reaper) can't double-process it.
+- **Local dev**: nothing in `WorkerSettings` runs unless a worker process is actually up — running the backend alone (`uvicorn src.main:app --reload`) does not run cron sweeps or process enqueued jobs. Run the worker separately if you need that: `arq src.worker.WorkerSettings`.
 
 ### Routers (`src/routers/`)
 - `auth.py` — registration, login, password reset

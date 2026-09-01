@@ -10,6 +10,10 @@ from src.jobs.email_jobs import (
     send_delete_account_cancelled_email_job,
     send_fallback_alert_job,
 )
+from src.jobs.url_classification import (
+    classify_url_job,
+    reap_and_requeue_stale_url_classification_jobs,
+)
 from src.worker import WorkerSettings, get_redis_settings, shutdown, startup
 
 
@@ -31,8 +35,7 @@ class TestGetRedisSettings:
 
 
 class TestWorkerSettings:
-    def test_email_jobs_registered(self):
-        """url_classifier is the only enqueue-on-demand job left for a later phase."""
+    def test_all_on_demand_jobs_registered(self):
         assert set(WorkerSettings.functions) == {
             send_verification_email_job,
             send_password_reset_email_job,
@@ -40,11 +43,23 @@ class TestWorkerSettings:
             send_delete_account_scheduled_email_job,
             send_delete_account_cancelled_email_job,
             send_fallback_alert_job,
+            classify_url_job,
         }
 
-    def test_sweep_cron_jobs_registered(self):
+    def test_all_cron_jobs_registered(self):
         cron_coroutines = {job.coroutine for job in WorkerSettings.cron_jobs}
-        assert cron_coroutines == {account_deletion_sweep, auth_cleanup_sweep}
+        assert cron_coroutines == {
+            account_deletion_sweep,
+            auth_cleanup_sweep,
+            reap_and_requeue_stale_url_classification_jobs,
+        }
+
+    def test_url_classification_reaper_runs_every_five_minutes(self):
+        job = next(
+            j for j in WorkerSettings.cron_jobs
+            if j.coroutine is reap_and_requeue_stale_url_classification_jobs
+        )
+        assert job.minute == set(range(0, 60, 5))
 
     def test_account_deletion_sweep_runs_hourly_at_startup(self):
         job = next(j for j in WorkerSettings.cron_jobs if j.coroutine is account_deletion_sweep)

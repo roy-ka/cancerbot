@@ -176,21 +176,30 @@ def mock_enqueue():
     """Prevent tests from enqueueing against a real Redis.
 
     Without this, every code path that fires a background job (auth.py's
-    email sends, ollama_connector.py's fallback alert) calls arq's
-    create_pool against REDIS_URL, and against no real Redis that isn't a
-    fast failure — it's slow enough under pytest's event loop to blow up
-    a whole file's runtime (measured: one file went from ~1s to 170s).
-    Mirrors forcing SENDGRID_API_KEY/BREVO_API_KEY empty above — no test
-    should depend on live external infrastructure by default.
+    email sends, ollama_connector.py's fallback alert, conversation_helper's
+    URL classification) calls arq's create_pool against REDIS_URL, and
+    against no real Redis that isn't a fast failure — it's slow enough
+    under pytest's event loop to blow up a whole file's runtime (measured:
+    one file went from ~1s to 170s). Mirrors forcing SENDGRID_API_KEY/
+    BREVO_API_KEY empty above — no test should depend on live external
+    infrastructure by default.
+
+    auth.py and ollama_connector.py both do `from src.queue import
+    enqueue` at module level, binding their own local name — patching
+    src.queue.enqueue alone wouldn't reach those already-bound references,
+    so each needs its own patch target. conversation_helper.py imports it
+    fresh inside the function body instead, so patching src.queue.enqueue
+    (the source) is what reaches that one.
 
     Yields the ollama_connector-side mock (the one tests most often want to
-    assert against, e.g. the fallback-alert enqueue). auth.py's copy is
-    patched too but not returned here — tests asserting on auth.py's
-    enqueue calls open their own local `with patch("src.routers.auth.enqueue", ...)`,
-    which nests inside and overrides this one for that block.
+    assert against, e.g. the fallback-alert enqueue). The others are
+    patched too but not returned here — tests asserting on their enqueue
+    calls open their own local `with patch("<module>.enqueue", ...)`, which
+    nests inside and overrides this one for that block.
     """
     from unittest.mock import AsyncMock, patch
     with patch("src.routers.auth.enqueue", new=AsyncMock()), \
+         patch("src.queue.enqueue", new=AsyncMock()), \
          patch("src.classes.ollama_connector.enqueue", new=AsyncMock()) as ollama_mock:
         yield ollama_mock
 

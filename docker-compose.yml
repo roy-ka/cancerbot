@@ -208,35 +208,6 @@ services:
     networks:
       - osnet
 
-  url-classifier:
-    profiles: ['prod']
-    build:
-      context: .
-      dockerfile: Dockerfile
-    read_only: true
-    tmpfs:
-      - /tmp
-      - /home/appuser/.cache
-    cap_drop:
-      - ALL
-    command: python -m src.workers.url_classifier
-    env_file: .env
-    environment:
-      ENV: production
-      POSTGRES_URL: 'postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}'
-      OPENSEARCH_URL: 'https://opensearch-node1:9200'
-      OLLAMA_URL: 'http://172.30.0.1:11434'
-      URL_CLASSIFIER_POLL_INTERVAL: '10'
-    volumes:
-      - ./certs/opensearch/root-ca.pem:/app/certs/opensearch/root-ca.pem:ro
-    depends_on:
-      postgres:
-        condition: service_healthy
-      opensearch-node1:
-        condition: service_healthy
-    networks:
-      - osnet
-
 volumes:
   os-data1:
   os-data2:
