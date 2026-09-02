@@ -216,6 +216,11 @@ class WaitlistEntry(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     email = Column(String(320), unique=True, index=True, nullable=False)
+    # Canonical form of `email` (see src/utils/email_normalize.py) — catches
+    # dot/plus-tag variations of an email already on the list. Never used to
+    # send mail, only to detect duplicates; unique so a race between two
+    # requests for variations of the same email can't both insert.
+    normalized_email = Column(String(320), unique=True, index=True, nullable=False)
     name = Column(String(150), nullable=True)
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
     invited = Column(Boolean, default=False, nullable=False)

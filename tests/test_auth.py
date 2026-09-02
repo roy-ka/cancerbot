@@ -199,6 +199,32 @@ class TestRegistrationCap:
 
 
 class TestWaitlist:
+    def test_join_waitlist_rejects_variation_of_registered_email(self, anon_client, test_user):
+        response = anon_client.post(
+            "/auth/waitlist/", json={"email": "TestUser@Example.com", "name": "Someone"}
+        )
+        assert response.status_code == 400
+        assert "already have an account" in response.json()["detail"]
+
+    def test_join_waitlist_does_not_create_entry_for_registered_email_variation(
+        self, anon_client, db_session, test_user
+    ):
+        anon_client.post(
+            "/auth/waitlist/", json={"email": "TestUser@Example.com", "name": "Someone"}
+        )
+        from src.db.models import WaitlistEntry
+        assert db_session.query(WaitlistEntry).count() == 0
+
+    def test_join_waitlist_dedupes_gmail_variation_end_to_end(self, anon_client, db_session):
+        anon_client.post(
+            "/auth/waitlist/", json={"email": "john.doe@gmail.com", "name": "John"}
+        )
+        anon_client.post(
+            "/auth/waitlist/", json={"email": "johndoe+tag@gmail.com", "name": "John Again"}
+        )
+        from src.db.models import WaitlistEntry
+        assert db_session.query(WaitlistEntry).count() == 1
+
     def test_join_waitlist_returns_201(self, anon_client):
         response = anon_client.post(
             "/auth/waitlist/", json={"email": "waitlisted@example.com", "name": "Waitlisted Person"}

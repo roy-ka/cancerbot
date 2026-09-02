@@ -1,14 +1,17 @@
 from src.db.models import WaitlistEntry
+from src.utils.email_normalize import normalize_email_for_dedup
 
 
 def create_waitlist_entry(db, email: str, name: str) -> WaitlistEntry:
-  """Idempotent: re-submitting an email already on the waitlist just
-  returns the existing row instead of erroring or duplicating it (name is
-  not updated on a repeat submission — the first name given wins)."""
-  existing = db.query(WaitlistEntry).filter(WaitlistEntry.email == email).first()
+  """Idempotent: re-submitting an email already on the waitlist — or a
+  dot/plus-tag variation of one already on it — just returns the existing
+  row instead of erroring or duplicating it (name is not updated on a
+  repeat submission — the first name given wins)."""
+  normalized = normalize_email_for_dedup(email)
+  existing = db.query(WaitlistEntry).filter(WaitlistEntry.normalized_email == normalized).first()
   if existing:
     return existing
-  entry = WaitlistEntry(email=email, name=name)
+  entry = WaitlistEntry(email=email, normalized_email=normalized, name=name)
   db.add(entry)
   db.commit()
   return entry

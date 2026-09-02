@@ -18,8 +18,10 @@ from src.db.repositories.users import (
     get_user_by_id,
     update_last_login,
     count_all_users,
+    email_variation_is_registered,
 )
 from src.db.repositories.waitlist import create_waitlist_entry
+from src.utils.email_normalize import normalize_email_for_dedup
 from src.db.repositories.password_resets import create_reset_token, verify_reset_token, consume_reset_token
 from src.db.repositories.email_verification import create_verification_token, verify_and_consume_token, find_token_user_id
 from src.db.repositories.account_deletion import (
@@ -200,6 +202,10 @@ async def join_waitlist(req: WaitlistRequest, request: Request, db: Session = De
     if is_rate_limited(db, f"waitlist:{ip}"):
         raise HTTPException(status_code=429, detail="Too many attempts. Please try again later.")
     record_attempt(db, f"waitlist:{ip}", MAX_WAITLIST_ATTEMPTS)
+
+    normalized = normalize_email_for_dedup(req.email)
+    if email_variation_is_registered(db, normalized):
+        raise HTTPException(status_code=400, detail="You already have an account — log in instead.")
 
     create_waitlist_entry(db=db, email=req.email, name=req.name.strip())
     await enqueue("send_waitlist_joined_email_job", to=req.email, name=req.name.strip())

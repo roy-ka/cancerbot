@@ -3,7 +3,11 @@ from datetime import datetime, timedelta
 from unittest.mock import patch, MagicMock
 import uuid
 
-from src.db.repositories.users import create_user, get_user_by_email, get_user_by_id, update_last_login, count_all_users
+from src.db.repositories.users import (
+    create_user, get_user_by_email, get_user_by_id, update_last_login, count_all_users,
+    email_variation_is_registered,
+)
+from src.utils.email_normalize import normalize_email_for_dedup
 from src.db.repositories.waitlist import create_waitlist_entry, list_waitlist_entries, count_waitlist_entries
 from src.db.repositories.conversations import (
     create_conversation, get_conversation_by_id, soft_delete_conversation, get_conversations_list_by_user_id
@@ -71,6 +75,22 @@ class TestUserRepository:
         )
         assert count_all_users(db_session) == 2
 
+    def test_email_variation_is_registered_true_for_gmail_dot_variation(self, db_session):
+        create_user(
+            db_session,
+            first_name="Ada", last_name="L",
+            email="ada.lovelace@gmail.com",
+            password_hash=SecurityUtils.hash_password("Pass1234"),
+        )
+        assert email_variation_is_registered(
+            db_session, normalize_email_for_dedup("adalovelace@gmail.com")
+        ) is True
+
+    def test_email_variation_is_registered_false_for_unregistered(self, db_session, test_user):
+        assert email_variation_is_registered(
+            db_session, normalize_email_for_dedup("nobody@example.com")
+        ) is False
+
 
 class TestWaitlistRepository:
     def test_create_waitlist_entry_returns_entry_with_id(self, db_session):
@@ -85,6 +105,29 @@ class TestWaitlistRepository:
         second = create_waitlist_entry(db_session, "dupe@example.com", "Second Name")
         assert first.id == second.id
         assert second.name == "First Name"
+        assert count_waitlist_entries(db_session) == 1
+
+    def test_create_waitlist_entry_stores_normalized_email(self, db_session):
+        entry = create_waitlist_entry(db_session, "John.Doe+promo@Gmail.com", "John Doe")
+        assert entry.normalized_email == "johndoe@gmail.com"
+        assert entry.email == "John.Doe+promo@Gmail.com"
+
+    def test_create_waitlist_entry_dedupes_gmail_dot_variation(self, db_session):
+        first = create_waitlist_entry(db_session, "john.doe@gmail.com", "John")
+        second = create_waitlist_entry(db_session, "johndoe@gmail.com", "John Again")
+        assert first.id == second.id
+        assert count_waitlist_entries(db_session) == 1
+
+    def test_create_waitlist_entry_dedupes_plus_tag_variation(self, db_session):
+        first = create_waitlist_entry(db_session, "user@example.com", "User")
+        second = create_waitlist_entry(db_session, "user+newsletter@example.com", "User Again")
+        assert first.id == second.id
+        assert count_waitlist_entries(db_session) == 1
+
+    def test_create_waitlist_entry_dedupes_case_variation(self, db_session):
+        first = create_waitlist_entry(db_session, "case@example.com", "Case")
+        second = create_waitlist_entry(db_session, "Case@Example.com", "Case Again")
+        assert first.id == second.id
         assert count_waitlist_entries(db_session) == 1
 
     def test_list_waitlist_entries_orders_oldest_first(self, db_session):
