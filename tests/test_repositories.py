@@ -13,7 +13,7 @@ from src.db.repositories.conversations import (
     create_conversation, get_conversation_by_id, soft_delete_conversation, get_conversations_list_by_user_id
 )
 from src.db.repositories.messeges import add_message, get_recent_messages, get_messages_by_conversation_id
-from src.db.repositories.password_resets import create_reset_token, verify_reset_token, consume_reset_token
+from src.db.repositories.tokens import create_reset_token, verify_reset_token, consume_reset_token
 from src.auth.security import SecurityUtils
 
 
@@ -317,3 +317,71 @@ class TestPasswordResetRepository:
 
         record2, msg = verify_reset_token(db_session, token)
         assert record2 is None
+
+
+class TestTokenTypeIsolation:
+    """The merged `tokens` table stores all three token types with plain
+    string secrets.token_urlsafe(32) values — nothing about the token
+    string itself reveals its type. A missing token_type filter anywhere in
+    tokens.py would let a password-reset token be accepted as an email
+    verification link (or vice versa), which is the specific bug this
+    class exists to catch."""
+
+    def test_reset_token_does_not_verify_as_verification_token(self, db_session, test_user):
+        from src.db.repositories.tokens import verify_and_consume_token
+
+        reset_token = create_reset_token(db_session, test_user.id)
+        db_session.commit()
+
+        user_id, error = verify_and_consume_token(db_session, reset_token)
+        assert user_id is None
+        assert "invalid" in error.lower()
+
+    def test_verification_token_does_not_verify_as_reset_token(self, db_session, test_user):
+        from src.db.repositories.tokens import create_verification_token
+
+        verification_token = create_verification_token(db_session, test_user.id)
+        db_session.commit()
+
+        record, error = verify_reset_token(db_session, verification_token)
+        assert record is None
+        assert "invalid" in error.lower()
+
+    def test_deletion_token_does_not_verify_as_reset_token(self, db_session, test_user):
+        from src.db.repositories.tokens import create_deletion_request_token
+
+        deletion_token = create_deletion_request_token(db_session, test_user.id)
+        db_session.commit()
+
+        record, error = verify_reset_token(db_session, deletion_token)
+        assert record is None
+        assert "invalid" in error.lower()
+
+    def test_creating_one_type_does_not_invalidate_another_type_for_same_user(self, db_session, test_user):
+        """create_*_token deletes the user's prior unused tokens of *that
+        same type* — it must not also wipe out the user's tokens of a
+        different type."""
+        from src.db.repositories.tokens import create_verification_token
+
+        reset_token = create_reset_token(db_session, test_user.id)
+        db_session.commit()
+        create_verification_token(db_session, test_user.id)
+        db_session.commit()
+
+        record, error = verify_reset_token(db_session, reset_token)
+        assert record is not None
+        assert error == ""
+
+    def test_password_reset_use_count_does_not_affect_other_types(self, db_session, test_user):
+        """use_count tracking is specific to password_reset — consuming a
+        deletion or verification token must not increment it in a way that
+        could ever trip password reset's max-uses check."""
+        from src.db.repositories.tokens import create_deletion_request_token, verify_deletion_token, consume_deletion_token
+
+        deletion_token = create_deletion_request_token(db_session, test_user.id)
+        db_session.commit()
+        record, _ = verify_deletion_token(db_session, deletion_token)
+        consume_deletion_token(db_session, record)
+        db_session.commit()
+
+        assert record.use_count == 0

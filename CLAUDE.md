@@ -305,7 +305,7 @@ Deliberate current state and where it's weak, roughly highest-impact first.
 | `User` | `users` | Auth; has `token_version` (incremented on password reset to invalidate old JWTs) |
 | `Conversation` | `conversations` | Soft-deletable chat threads |
 | `Message` | `messages` | Has `sources_ids` (JSON) and `extracted_terms` (JSON) |
-| `PasswordResetCode` | `password_reset_codes` | Time-limited reset tokens |
+| `Token` | `tokens` | Unified table for password-reset, email-verification, and account-deletion tokens — see `src/db/repositories/tokens.py` |
 | `LoginAttempt` | `login_attempts` | Brute-force tracking (login) |
 | `RateLimitEntry` | `rate_limit_entries` | Rate limiting for register (per-IP, 10/h) and forgot-password (per-email, 5/h) |
 | `SearchAnalytic` | `search_analytics` | Per-message search metrics |

@@ -152,8 +152,13 @@ class Message(Base):
         passive_deletes=True,
     )
 
-class PasswordResetCode(Base):
-    __tablename__ = "password_reset_codes"
+class Token(Base):
+    """Unified table for the three single-purpose token flows: password
+    reset, email verification, and account deletion — see
+    src/db/repositories/tokens.py for the type-specific behavior each of
+    those still needs (different TTLs, and password_reset alone allows
+    multiple verifies via use_count before consumption)."""
+    __tablename__ = "tokens"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     user_id = Column(
@@ -162,32 +167,11 @@ class PasswordResetCode(Base):
         nullable=False,
         index=True,
     )
-    code_hash = Column(String(64), nullable=False)
+    token_type = Column(String(32), nullable=False, index=True)
+    token_hash = Column(String(64), unique=True, index=True, nullable=False)
     expires_at = Column(DateTime(timezone=True), nullable=False)
     used_at = Column(DateTime(timezone=True), nullable=True)
-    attempts = Column(Integer, default=0, nullable=False)
     use_count = Column(Integer, default=0, nullable=False)
-    created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
-
-class EmailVerificationToken(Base):
-    __tablename__ = "email_verification_tokens"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    token_hash = Column(String(64), nullable=False)
-    expires_at = Column(DateTime(timezone=True), nullable=False)
-    used_at = Column(DateTime(timezone=True), nullable=True)
-    created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
-
-
-class AccountDeletionToken(Base):
-    __tablename__ = "account_deletion_tokens"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    token_hash = Column(String(64), nullable=False)
-    expires_at = Column(DateTime(timezone=True), nullable=False)
-    used_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
 
 

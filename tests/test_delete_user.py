@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import patch, AsyncMock
 
 from src.db import models
-from src.db.repositories.account_deletion import create_deletion_request_token
+from src.db.repositories.tokens import create_deletion_request_token
 from src.auth.security import SecurityUtils
 
 
@@ -24,8 +24,9 @@ class TestRequestDelete:
         mock_send.assert_called_once()
 
         db_session.expire_all()
-        tokens = db_session.query(models.AccountDeletionToken).filter(
-            models.AccountDeletionToken.user_id == test_user.id
+        tokens = db_session.query(models.Token).filter(
+            models.Token.user_id == test_user.id,
+            models.Token.token_type == "account_deletion",
         ).all()
         assert len(tokens) == 1
 
@@ -82,8 +83,9 @@ class TestConfirmDelete:
 
     def test_expired_token_returns_400(self, client, test_user, db_session):
         token = create_deletion_request_token(db_session, test_user.id)
-        record = db_session.query(models.AccountDeletionToken).filter(
-            models.AccountDeletionToken.user_id == test_user.id
+        record = db_session.query(models.Token).filter(
+            models.Token.user_id == test_user.id,
+            models.Token.token_type == "account_deletion",
         ).first()
         record.expires_at = datetime.now(timezone.utc) - timedelta(hours=1)
         db_session.commit()

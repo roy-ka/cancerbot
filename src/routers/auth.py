@@ -22,9 +22,13 @@ from src.db.repositories.users import (
 )
 from src.db.repositories.waitlist import create_waitlist_entry
 from src.utils.email_normalize import normalize_email_for_dedup
-from src.db.repositories.password_resets import create_reset_token, verify_reset_token, consume_reset_token
-from src.db.repositories.email_verification import create_verification_token, verify_and_consume_token, find_token_user_id
-from src.db.repositories.account_deletion import (
+from src.db.repositories.tokens import (
+    create_reset_token,
+    verify_reset_token,
+    consume_reset_token,
+    create_verification_token,
+    verify_and_consume_token,
+    find_token_user_id,
     create_deletion_request_token,
     verify_deletion_token,
     consume_deletion_token,

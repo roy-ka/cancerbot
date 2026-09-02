@@ -1,7 +1,7 @@
 import logging
 
 from src.db.session import SessionLocal
-from src.db.repositories.account_deletion import get_users_due_for_deletion
+from src.db.repositories.tokens import get_users_due_for_deletion
 from src.db.repositories.users import delete_user
 from src.utils.email import send_account_deleted_email
 

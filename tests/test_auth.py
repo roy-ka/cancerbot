@@ -448,7 +448,7 @@ class TestForgotPassword:
 
 class TestResetPassword:
     def test_reset_password_success(self, anon_client, test_user, db_session):
-        from src.db.repositories.password_resets import create_reset_token
+        from src.db.repositories.tokens import create_reset_token
         token = create_reset_token(db_session, test_user.id)
         db_session.commit()
 
@@ -557,7 +557,7 @@ class TestTokenRevocation:
         assert response.status_code == 401
 
     def test_reset_password_increments_token_version(self, anon_client, test_user, db_session):
-        from src.db.repositories.password_resets import create_reset_token
+        from src.db.repositories.tokens import create_reset_token
         initial_version = test_user.token_version
         reset_token = create_reset_token(db_session, test_user.id)
         anon_client.post("/auth/reset-password/", json={"token": reset_token, "new_password": "NewSecurePass456!"})
@@ -565,7 +565,7 @@ class TestTokenRevocation:
         assert test_user.token_version == initial_version + 1
 
     def test_reset_password_invalidates_old_token(self, anon_client, test_user, db_session):
-        from src.db.repositories.password_resets import create_reset_token
+        from src.db.repositories.tokens import create_reset_token
         old_token = _make_token(test_user)
         assert anon_client.get("/auth/check/", headers={"Authorization": f"Bearer {old_token}"}).status_code == 200
         reset_token = create_reset_token(db_session, test_user.id)
