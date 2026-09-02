@@ -2,7 +2,8 @@ import { Alert, Box, CircularProgress, Snackbar } from '@mui/material'
 import type { Message } from '../types'
 import MessageItem from './MessageItem'
 import ConversationIntro from './ConversationIntro'
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { crabReadingSendIcon, crabSearchingBooksAnimated } from '../assets'
 
 const getStageMessage = (stage: string): string => {
   const messages: Record<string, string> = {
@@ -45,6 +46,24 @@ export default function MessageList({
 }) {
   const [noOlderOpen, setNoOlderOpen] = useState(false)
   const lastTriggerRef = useRef<number>(0)
+  const stageIndicatorRef = useRef<HTMLDivElement>(null)
+  const streamingMessageRef = useRef<HTMLDivElement>(null)
+  const prevStageRef = useRef<string | null>(null)
+  const prevStreamingRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    if (currentStage && !prevStageRef.current) {
+      stageIndicatorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    }
+    prevStageRef.current = currentStage
+  }, [currentStage])
+
+  useEffect(() => {
+    if (streamingContent !== null && prevStreamingRef.current === null) {
+      streamingMessageRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    }
+    prevStreamingRef.current = streamingContent
+  }, [streamingContent])
 
   const handleScroll = useCallback(
     async (e: React.UIEvent<HTMLDivElement>) => {
@@ -119,6 +138,7 @@ export default function MessageList({
       ))}
       {streamingContent !== null ? (
         <Box
+          ref={streamingMessageRef}
           sx={{
             mb: 2,
             display: 'flex',
@@ -158,6 +178,7 @@ export default function MessageList({
         </Box>
       ) : currentStage ? (
         <Box
+          ref={stageIndicatorRef}
           sx={{
             mt: 2,
             display: 'flex',
@@ -167,10 +188,14 @@ export default function MessageList({
             fontSize: '0.85rem',
           }}
         >
-          <CircularProgress size={14} />
+          <Box component="img" src={crabSearchingBooksAnimated} alt="" sx={{ width: 36, height: 36 }} />
           <span>{getStageMessage(currentStage)}</span>
         </Box>
-      ) : null}
+      ) : (
+        <Box sx={{ mt: 2, display: 'flex', justifyContent: 'flex-start' }}>
+          <Box component="img" src={crabReadingSendIcon} alt="" sx={{ width: 32, height: 32 }} />
+        </Box>
+      )}
     </Box>
   )
 }

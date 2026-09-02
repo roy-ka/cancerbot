@@ -1,5 +1,6 @@
 import { FormControl, TextField, IconButton, Button, Box } from '@mui/material'
 import { forwardRef, useImperativeHandle, useRef } from 'react'
+import { crabReadingSendIcon } from '../assets'
 
 export type InputFieldHandle = {
   append: (text: string) => void
@@ -60,9 +61,16 @@ const InputField = forwardRef<
         <Button
           type="submit"
           variant="contained"
-          sx={{ flexShrink: 0, borderRadius: 1, display: { xs: 'none', sm: 'flex' } }}
+          sx={{
+            flexShrink: 0,
+            borderRadius: 1,
+            display: { xs: 'none', sm: 'flex' },
+            alignItems: 'center',
+            gap: 0.75,
+          }}
         >
-          🦀 Send
+          <Box component="img" src={crabReadingSendIcon} alt="" sx={{ width: 20, height: 20 }} />
+          Send
         </Button>
         {/* Mobile: icon only */}
         <IconButton
@@ -70,13 +78,12 @@ const InputField = forwardRef<
           sx={{
             flexShrink: 0,
             width: 44,
-            fontSize: '22px',
             border: '1px solid rgba(255,255,255,0.25)',
             borderRadius: 1,
             display: { xs: 'flex', sm: 'none' },
           }}
         >
-          🦀
+          <Box component="img" src={crabReadingSendIcon} alt="Send" sx={{ width: 24, height: 24 }} />
         </IconButton>
       </Box>
     </FormControl>
