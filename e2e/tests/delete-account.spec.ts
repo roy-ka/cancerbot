@@ -13,15 +13,27 @@ const E2E_API_URL = process.env.E2E_API_URL ?? 'http://localhost:8000'
 // Fresh browser session — do not reuse the shared E2E_EMAIL storageState.
 test.use({ storageState: { cookies: [], origins: [] } })
 
+// Each test here registers its own throwaway account, so it needs
+// registration open — skip rather than fail when MAX_USERS has capped
+// signups (see waitlist.spec.ts for the gated-registration coverage).
+async function registrationIsOpen(): Promise<boolean> {
+  const api = await playwrightRequest.newContext({ baseURL: E2E_API_URL })
+  const res = await api.get('/auth/registration_status/')
+  const { open } = await res.json()
+  await api.dispose()
+  return open
+}
+
 test.describe('Account deletion', () => {
   test('request, confirm, grace-period login block, and cancel', async ({ page }) => {
+    test.skip(!(await registrationIsOpen()), 'registration is closed (MAX_USERS reached)')
     const email = `delete-e2e-${Date.now()}@example.com`
     const password = 'DeleteE2e123!'
 
     // Register + verify via direct API call (mirrors global-setup.ts)
     const api = await playwrightRequest.newContext({ baseURL: E2E_API_URL })
     const reg = await api.post('/auth/register/', {
-      data: { name: 'Delete E2E', email, password },
+      data: { first_name: 'Delete', last_name: 'E2E', email, password },
     })
     expect(reg.status()).toBe(201)
     const { verification_token: verificationToken } = await reg.json()
@@ -79,12 +91,13 @@ test.describe('Account deletion', () => {
   })
 
   test('deletion scheduled from another device explains the logout', async ({ page }) => {
+    test.skip(!(await registrationIsOpen()), 'registration is closed (MAX_USERS reached)')
     const email = `delete-e2e-other-device-${Date.now()}@example.com`
     const password = 'DeleteE2e123!'
 
     const api = await playwrightRequest.newContext({ baseURL: E2E_API_URL })
     const reg = await api.post('/auth/register/', {
-      data: { name: 'Delete E2E Other Device', email, password },
+      data: { first_name: 'Delete', last_name: 'E2E Other Device', email, password },
     })
     expect(reg.status()).toBe(201)
     const { verification_token: verificationToken } = await reg.json()
@@ -127,12 +140,13 @@ test.describe('Account deletion', () => {
   })
 
   test('confirm-delete page auto-redirects to login without a manual click', async ({ page }) => {
+    test.skip(!(await registrationIsOpen()), 'registration is closed (MAX_USERS reached)')
     const email = `delete-e2e-autoredirect-${Date.now()}@example.com`
     const password = 'DeleteE2e123!'
 
     const api = await playwrightRequest.newContext({ baseURL: E2E_API_URL })
     const reg = await api.post('/auth/register/', {
-      data: { name: 'Delete E2E Auto Redirect', email, password },
+      data: { first_name: 'Delete', last_name: 'E2E Auto Redirect', email, password },
     })
     expect(reg.status()).toBe(201)
     const { verification_token: verificationToken } = await reg.json()
