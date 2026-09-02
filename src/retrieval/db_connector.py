@@ -274,6 +274,47 @@ class dbConnector:
     return found_base_ids
 
   @classmethod
+  def existing_doi_base_ids(cls, dois: set) -> dict:
+    """Best-effort map of each already-indexed DOI (from `dois`, lowercased/
+    stripped) to its existing source_id.
+
+    Catches the case existing_base_source_ids can't: the same real article
+    already indexed under a *different* base_id scheme (e.g. pmid:X, while
+    this candidate would be doi:Y for the same paper — see
+    _stable_source_id's pmid-before-doi priority in conversation_helper.py).
+
+    `doi` is mapped as analyzed `text`, not `keyword`, in the live index, so
+    this uses a `match` query per DOI (operator: and — all analyzed tokens
+    must be present) rather than an exact `terms` lookup. This is a simple
+    query, not an aggregation/`collapse` — those are what actually 400 on
+    this field (see the retrieval-time cross-source DOI dedup in
+    search.py, which hits the same constraint). Preventive, not a
+    guarantee: false negatives are possible if a DOI tokenizes ambiguously.
+    """
+    if not dois:
+      return {}
+    cls._initialize()
+    if not cls.db_client:
+      return {}
+    should = [{"match": {"doi": {"query": doi, "operator": "and"}}} for doi in dois]
+    res = cls.db_client.search(
+      index=cls._model['sources_index'],
+      body={
+        'size': len(dois) * 2,
+        '_source': ['doi', 'source_id', 'id'],
+        'query': {'bool': {'should': should, 'minimum_should_match': 1}},
+      }
+    )
+    found: dict = {}
+    for hit in res['hits']['hits']:
+      src = hit.get('_source', {})
+      doi = (src.get('doi') or '').strip().lower()
+      base = src.get('source_id') or re.sub(r':c\d+$', '', src.get('id') or '')
+      if doi and doi in dois and base:
+        found.setdefault(doi, base)
+    return found
+
+  @classmethod
   def create_index(cls, index_name):
     cls._initialize()
     if not cls.db_client:

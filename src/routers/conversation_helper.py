@@ -1020,9 +1020,13 @@ def _embed_and_index_sources(
         if (g.get("category") or "").strip()
     })
 
-    # Assign stable base IDs and deduplicate within the batch
+    # Assign stable base IDs and deduplicate within the batch. Also track DOIs
+    # seen so far — _stable_source_id prefers pmid over doi, so the same real
+    # article can surface as pmid:X from PubMed and doi:Y from CrossRef in the
+    # same batch, and a bare base_id check wouldn't catch that.
     candidate: list[tuple[str, dict]] = []
     seen_base_ids: set[str] = set()
+    seen_dois: set[str] = set()
     for source in sources:
         content = (source.get("content_for_embedding") or "").strip()
         if len(content.split()) < MIN_FULLTEXT_WORDS:
@@ -1030,16 +1034,43 @@ def _embed_and_index_sources(
             skipped += 1
             continue
         base_id = _stable_source_id(source)
+        doi = (source.get("doi") or "").strip().lower()
         if base_id in seen_base_ids:
             logger.debug(f"[index] skipping duplicate base_id={base_id}")
             skipped += 1
             continue
+        if doi and doi in seen_dois:
+            logger.debug(f"[index] skipping in-batch DOI duplicate doi={doi} base_id={base_id}")
+            skipped += 1
+            continue
         seen_base_ids.add(base_id)
+        if doi:
+            seen_dois.add(doi)
         candidate.append((base_id, source))
 
     # Check which base IDs are already indexed (any chunk present)
     candidate_ids = [bid for bid, _ in candidate]
     already_indexed = db.existing_base_source_ids(candidate_ids)
+
+    # Catch a candidate whose DOI is already indexed under a *different*
+    # base_id (the cross-batch version of the in-batch check above).
+    candidate_dois = {
+        (source.get("doi") or "").strip().lower()
+        for _, source in candidate
+        if (source.get("doi") or "").strip()
+    }
+    existing_doi_base_ids = db.existing_doi_base_ids(candidate_dois) if candidate_dois else {}
+    doi_duplicate_base_ids = {
+        base_id for base_id, source in candidate
+        if (source.get("doi") or "").strip().lower() in existing_doi_base_ids
+    }
+    if doi_duplicate_base_ids:
+        logger.info(
+            "[index] %d candidate(s) skipped — DOI already indexed under a different base_id: %s",
+            len(doi_duplicate_base_ids), sorted(doi_duplicate_base_ids),
+        )
+    already_indexed = already_indexed | doi_duplicate_base_ids
+
     new_ids = [bid for bid in candidate_ids if bid not in already_indexed]
     logger.info(
         "[index] candidates=%d already_indexed=%d to_index=%d — already_indexed=%s",

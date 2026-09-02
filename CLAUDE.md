@@ -131,6 +131,7 @@ python scripts/remove_short_sources.py     # Delete indexed sources with full_te
 python scripts/backfill_full_text_word_count.py  # Backfill full_text_word_count on docs indexed before it existed (idempotent)
 python scripts/backfill_conversation_titles.py   # Regenerate naive first-message-prefix conversation titles via generate_title (idempotent; run automatically on deploy; --dry-run / --limit N)
 python scripts/backfill_source_metadata.py       # Re-fetch pub_year/pub_types/evidence_level from PubMed for pmid sources missing them (idempotent; run automatically on deploy; --dry-run / --limit N)
+python scripts/remove_duplicate_doi_sources.py   # Delete sources double-indexed under two base_id schemes for the same DOI (manual, one-off; defaults to --dry-run, use --execute / --limit N)
 ```
 `fix_crossref_abstracts.py` is not run automatically by `deploy.sh` — it makes a
 live CrossRef + Unpaywall + Ollama round trip per source, so it's meant to be run
@@ -152,6 +153,19 @@ change to avoid making the entire pre-existing corpus unsearchable. It is not
 currently wired into `deploy.sh`; unlike `backfill_chunks.py`, whether to run
 it automatically on every deploy is worth deciding explicitly since it walks
 the whole index each time.
+
+`remove_duplicate_doi_sources.py` is a one-off cleanup for the double-indexing
+bug fixed alongside it: `_stable_source_id` prefers `pmid` over `doi`, so the
+same real article could be indexed twice — once as `pmid:X` from PubMed, once
+as `doi:Y` from CrossRef — since `existing_base_source_ids` only catches an
+*exact* base_id match. `existing_doi_base_ids` (`db_connector.py`) now prevents
+new duplicates of this kind at index time; this script sweeps out anything
+already indexed before that fix. For each DOI reachable under more than one
+base_id, it keeps one (same priority `_stable_source_id` itself uses: pmid >
+doi > nct > url > src) and deletes the rest. Not wired into `deploy.sh` — a
+scan when the fix landed found zero DOIs reachable under more than one
+`source_id` at the corpus size then (see the Retrieval section), so this may
+find nothing to do; run it by hand if the corpus has grown since.
 
 ## Architecture
 
@@ -276,7 +290,7 @@ Deliberate current state and where it's weak, roughly highest-impact first.
 4. **`claims_index` is created + embedded on every startup but never queried.** Either use claims in retrieval or stop maintaining the index.
 5. **Chunking is blind fixed-window (150w/40w overlap).** Fine for abstracts (which rarely chunk), but splits trial records and OA full-text mid-sentence; sentence/section-aware chunking would help the longer sources.
 
-**Addressed** (kept here so the reasoning isn't rediscovered): score normalization in `calculate_search_metrics`, additive score blending replaced by RRF, the dense clause now embedding the natural question rather than the joined terms, and cross-source `pmid:`/`doi:` duplicates — all four are described in the Retrieval section. Note the DOI dedup is **preventive**: when it landed, a scan of the live index found 371 sources, 299 distinct DOIs, and *zero* DOIs reachable under more than one `source_id`, so PubMed and CrossRef had not in fact overlapped yet at that corpus size.
+**Addressed** (kept here so the reasoning isn't rediscovered): score normalization in `calculate_search_metrics`, additive score blending replaced by RRF, the dense clause now embedding the natural question rather than the joined terms, and cross-source `pmid:`/`doi:` duplicates — all four are described in the Retrieval section. Note the DOI dedup is **preventive**: when it landed, a scan of the live index found 371 sources, 299 distinct DOIs, and *zero* DOIs reachable under more than one `source_id`, so PubMed and CrossRef had not in fact overlapped yet at that corpus size. This is a *retrieval-time* dedup (never hand the LLM the same paper twice) — it doesn't stop the same paper from being *indexed* twice in the first place. That's a separate, later fix: `existing_doi_base_ids` (`db_connector.py`), called from `_embed_and_index_sources` (`conversation_helper.py`) — see the "Data Migrations" section above for the one-off cleanup script (`remove_duplicate_doi_sources.py`) for anything indexed twice before this landed.
 
 ### Data Files (`data/`)
 - `sources_canonical.jsonl` — deduplicated sources (merged by PMID > DOI > URL > title)

@@ -65,3 +65,86 @@ class TestOpenSearchTLS:
         _, kwargs = mock_os.call_args
         assert kwargs.get("verify_certs") is False
         assert "ssl_context" not in kwargs
+
+
+class TestExistingDoiBaseIds:
+    """Best-effort DOI-to-source_id lookup used to prevent double-indexing
+    the same real article under two different base_id schemes (e.g.
+    pmid:X from PubMed and doi:Y from CrossRef) — see
+    conversation_helper.py's _embed_and_index_sources."""
+
+    def teardown_method(self):
+        _reset()
+
+    def test_returns_empty_dict_for_no_dois(self):
+        _reset()
+        assert dbConnector.existing_doi_base_ids(set()) == {}
+
+    def test_returns_empty_dict_when_client_unavailable(self):
+        _reset()
+        dbConnector._initialized = True
+        dbConnector.db_client = None
+        assert dbConnector.existing_doi_base_ids({"10.1/x"}) == {}
+
+    def test_maps_doi_to_source_id(self):
+        _reset()
+        dbConnector._initialized = True
+        dbConnector._model = {"sources_index": "sources_v1"}
+        mock_client = MagicMock()
+        mock_client.search.return_value = {
+            "hits": {"hits": [
+                {"_source": {"doi": "10.1/abc", "source_id": "pmid:123", "id": "pmid:123:c0"}},
+            ]}
+        }
+        dbConnector.db_client = mock_client
+
+        assert dbConnector.existing_doi_base_ids({"10.1/abc"}) == {"10.1/abc": "pmid:123"}
+
+    def test_falls_back_to_stripped_id_when_source_id_missing(self):
+        """Legacy pre-chunked-schema docs (see backfill_chunks.py) have no
+        source_id field — fall back to the :cN-stripped id, same as
+        existing_base_source_ids."""
+        _reset()
+        dbConnector._initialized = True
+        dbConnector._model = {"sources_index": "sources_v1"}
+        mock_client = MagicMock()
+        mock_client.search.return_value = {
+            "hits": {"hits": [
+                {"_source": {"doi": "10.1/abc", "id": "doi:10.1/abc:c0"}},
+            ]}
+        }
+        dbConnector.db_client = mock_client
+
+        assert dbConnector.existing_doi_base_ids({"10.1/abc"}) == {"10.1/abc": "doi:10.1/abc"}
+
+    def test_ignores_hits_whose_doi_is_not_in_the_requested_set(self):
+        """The match query is analyzed-text matching, not exact — a stray
+        hit must not be trusted just because it came back in the results."""
+        _reset()
+        dbConnector._initialized = True
+        dbConnector._model = {"sources_index": "sources_v1"}
+        mock_client = MagicMock()
+        mock_client.search.return_value = {
+            "hits": {"hits": [
+                {"_source": {"doi": "10.1/unrelated", "source_id": "pmid:999", "id": "pmid:999:c0"}},
+            ]}
+        }
+        dbConnector.db_client = mock_client
+
+        assert dbConnector.existing_doi_base_ids({"10.1/abc"}) == {}
+
+    def test_query_is_a_match_not_terms_per_doi(self):
+        """doi is mapped as analyzed text, not keyword, in the live index —
+        an exact terms lookup is unreliable there (see CLAUDE.md)."""
+        _reset()
+        dbConnector._initialized = True
+        dbConnector._model = {"sources_index": "sources_v1"}
+        mock_client = MagicMock()
+        mock_client.search.return_value = {"hits": {"hits": []}}
+        dbConnector.db_client = mock_client
+
+        dbConnector.existing_doi_base_ids({"10.1/abc"})
+
+        body = mock_client.search.call_args.kwargs["body"]
+        should = body["query"]["bool"]["should"]
+        assert should == [{"match": {"doi": {"query": "10.1/abc", "operator": "and"}}}]
