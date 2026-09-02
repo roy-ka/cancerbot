@@ -99,6 +99,7 @@ services:
     networks: [osnet]
 
   redis:
+    profiles: ['prod']
     image: redis:7-alpine
     container_name: cancerbot-redis
     command: redis-server --requirepass ${REDIS_PASSWORD} --appendonly yes
