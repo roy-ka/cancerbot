@@ -1,13 +1,14 @@
 from src.db.models import WaitlistEntry
 
 
-def create_waitlist_entry(db, email: str) -> WaitlistEntry:
+def create_waitlist_entry(db, email: str, name: str) -> WaitlistEntry:
   """Idempotent: re-submitting an email already on the waitlist just
-  returns the existing row instead of erroring or duplicating it."""
+  returns the existing row instead of erroring or duplicating it (name is
+  not updated on a repeat submission — the first name given wins)."""
   existing = db.query(WaitlistEntry).filter(WaitlistEntry.email == email).first()
   if existing:
     return existing
-  entry = WaitlistEntry(email=email)
+  entry = WaitlistEntry(email=email, name=name)
   db.add(entry)
   db.commit()
   return entry

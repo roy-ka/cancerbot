@@ -18,6 +18,7 @@ export type RegistrationPayload = {
 
 export type WaitlistPayload = {
   email: string
+  name: string
 }
 
 export type Conversation = {

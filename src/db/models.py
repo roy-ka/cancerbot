@@ -216,6 +216,7 @@ class WaitlistEntry(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     email = Column(String(320), unique=True, index=True, nullable=False)
+    name = Column(String(150), nullable=True)
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
     invited = Column(Boolean, default=False, nullable=False)
     invited_at = Column(DateTime(timezone=True), nullable=True)

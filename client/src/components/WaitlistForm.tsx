@@ -19,6 +19,7 @@ export default function WaitlistForm({
 }: {
   changeToLogin: () => void
 }) {
+  const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [emailError, setEmailError] = useState(false)
   const [error, setError] = useState('')
@@ -46,12 +47,16 @@ export default function WaitlistForm({
 
   const onSubmit = (e: React.SubmitEvent<HTMLFormElement>) => {
     e.preventDefault()
-    if (emailError || !email) return
+    if (emailError || !email || !name.trim()) return
     setError('')
-    join({ email }).catch((err) => {
+    join({ email, name: name.trim() }).catch((err) => {
       console.error('Waitlist error:', err)
       setError(err.message)
     })
+  }
+
+  const changeName = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setName(e.target.value)
   }
 
   const changeEmail = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -76,6 +81,17 @@ export default function WaitlistForm({
           <TextField
             fullWidth
             required
+            id="waitlist_name"
+            name="name"
+            label="Name"
+            autoComplete="name"
+            variant="outlined"
+            onChange={changeName}
+          />
+
+          <TextField
+            fullWidth
+            required
             id="waitlist_email"
             name="email"
             label="Email"
@@ -86,7 +102,12 @@ export default function WaitlistForm({
             error={emailError}
           />
 
-          <Button type="submit" variant="contained" fullWidth disabled={!email || emailError}>
+          <Button
+            type="submit"
+            variant="contained"
+            fullWidth
+            disabled={!email || emailError || !name.trim()}
+          >
             Join the waitlist
           </Button>
         </Stack>

@@ -9,11 +9,11 @@ test.describe('unauthenticated', () => {
     const api = await request.newContext({ baseURL: E2E_API_URL })
     const email = `e2e-waitlist-${Date.now()}@example.com`
 
-    const first = await api.post('/auth/waitlist/', { data: { email } })
+    const first = await api.post('/auth/waitlist/', { data: { email, name: 'E2E Waitlist' } })
     expect(first.status()).toBe(201)
 
     // Re-joining with the same email must not error or duplicate.
-    const second = await api.post('/auth/waitlist/', { data: { email } })
+    const second = await api.post('/auth/waitlist/', { data: { email, name: 'E2E Waitlist' } })
     expect(second.status()).toBe(201)
 
     await api.dispose()
@@ -21,7 +21,15 @@ test.describe('unauthenticated', () => {
 
   test('waitlist rejects an invalid email', async () => {
     const api = await request.newContext({ baseURL: E2E_API_URL })
-    const res = await api.post('/auth/waitlist/', { data: { email: 'not-an-email' } })
+    const res = await api.post('/auth/waitlist/', { data: { email: 'not-an-email', name: 'Someone' } })
+    expect(res.status()).toBe(422)
+    await api.dispose()
+  })
+
+  test('waitlist rejects a missing name', async () => {
+    const api = await request.newContext({ baseURL: E2E_API_URL })
+    const email = `e2e-waitlist-noname-${Date.now()}@example.com`
+    const res = await api.post('/auth/waitlist/', { data: { email } })
     expect(res.status()).toBe(422)
     await api.dispose()
   })
@@ -45,6 +53,7 @@ test.describe('unauthenticated', () => {
       await expect(page.locator('input[name="first_name"]')).toBeVisible()
     } else {
       await expect(page.locator('input[name="first_name"]')).toHaveCount(0)
+      await expect(page.locator('input#waitlist_name')).toBeVisible()
       await expect(page.locator('input#waitlist_email')).toBeVisible()
     }
 

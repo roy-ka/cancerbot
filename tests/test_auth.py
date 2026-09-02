@@ -200,7 +200,9 @@ class TestRegistrationCap:
 
 class TestWaitlist:
     def test_join_waitlist_returns_201(self, anon_client):
-        response = anon_client.post("/auth/waitlist/", json={"email": "waitlisted@example.com"})
+        response = anon_client.post(
+            "/auth/waitlist/", json={"email": "waitlisted@example.com", "name": "Waitlisted Person"}
+        )
         assert response.status_code == 201
 
     def test_join_waitlist_enqueues_confirmation_email(self, anon_client, monkeypatch):
@@ -209,36 +211,53 @@ class TestWaitlist:
         async def fake_enqueue(job_name, **kwargs):
             captured["job_name"] = job_name
             captured["to"] = kwargs.get("to")
+            captured["name"] = kwargs.get("name")
 
         monkeypatch.setattr("src.routers.auth.enqueue", fake_enqueue)
 
-        anon_client.post("/auth/waitlist/", json={"email": "notify-me@example.com"})
+        anon_client.post(
+            "/auth/waitlist/", json={"email": "notify-me@example.com", "name": "Notify Me"}
+        )
 
         assert captured["job_name"] == "send_waitlist_joined_email_job"
         assert captured["to"] == "notify-me@example.com"
+        assert captured["name"] == "Notify Me"
 
-    def test_join_waitlist_persists_email(self, anon_client, db_session):
-        anon_client.post("/auth/waitlist/", json={"email": "persisted@example.com"})
+    def test_join_waitlist_persists_email_and_name(self, anon_client, db_session):
+        anon_client.post(
+            "/auth/waitlist/", json={"email": "persisted@example.com", "name": "Persisted Person"}
+        )
         from src.db.models import WaitlistEntry
         entry = db_session.query(WaitlistEntry).filter(WaitlistEntry.email == "persisted@example.com").first()
         assert entry is not None
+        assert entry.name == "Persisted Person"
 
     def test_join_waitlist_twice_does_not_duplicate(self, anon_client, db_session):
-        anon_client.post("/auth/waitlist/", json={"email": "dupe@example.com"})
-        anon_client.post("/auth/waitlist/", json={"email": "dupe@example.com"})
+        anon_client.post("/auth/waitlist/", json={"email": "dupe@example.com", "name": "Dupe Person"})
+        anon_client.post("/auth/waitlist/", json={"email": "dupe@example.com", "name": "Dupe Person"})
         from src.db.models import WaitlistEntry
         count = db_session.query(WaitlistEntry).filter(WaitlistEntry.email == "dupe@example.com").count()
         assert count == 1
 
     def test_join_waitlist_invalid_email_returns_422(self, anon_client):
-        response = anon_client.post("/auth/waitlist/", json={"email": "not-an-email"})
+        response = anon_client.post(
+            "/auth/waitlist/", json={"email": "not-an-email", "name": "Someone"}
+        )
+        assert response.status_code == 422
+
+    def test_join_waitlist_missing_name_returns_422(self, anon_client):
+        response = anon_client.post("/auth/waitlist/", json={"email": "noname@example.com"})
         assert response.status_code == 422
 
     def test_join_waitlist_blocked_after_limit(self, anon_client):
         from src.db.repositories.rate_limit import MAX_WAITLIST_ATTEMPTS
         for i in range(MAX_WAITLIST_ATTEMPTS):
-            anon_client.post("/auth/waitlist/", json={"email": f"limit{i}@example.com"})
-        response = anon_client.post("/auth/waitlist/", json={"email": "onemore@example.com"})
+            anon_client.post(
+                "/auth/waitlist/", json={"email": f"limit{i}@example.com", "name": "Limit Person"}
+            )
+        response = anon_client.post(
+            "/auth/waitlist/", json={"email": "onemore@example.com", "name": "One More"}
+        )
         assert response.status_code == 429
 
 

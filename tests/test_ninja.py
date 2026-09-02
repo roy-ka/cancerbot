@@ -82,7 +82,7 @@ class TestListWaitlist:
 
     def test_lists_waitlist_entries(self, ninja_client, db_session):
         from src.db.repositories.waitlist import create_waitlist_entry
-        create_waitlist_entry(db_session, "waiting@example.com")
+        create_waitlist_entry(db_session, "waiting@example.com", "Waiting Person")
 
         response = ninja_client.get("/ninja/waitlist/")
         assert response.status_code == 200
@@ -91,10 +91,11 @@ class TestListWaitlist:
 
     def test_entry_shape(self, ninja_client, db_session):
         from src.db.repositories.waitlist import create_waitlist_entry
-        create_waitlist_entry(db_session, "shape@example.com")
+        create_waitlist_entry(db_session, "shape@example.com", "Shape Person")
 
         response = ninja_client.get("/ninja/waitlist/")
         row = next(e for e in response.json()["entries"] if e["email"] == "shape@example.com")
+        assert row["name"] == "Shape Person"
         assert row["invited"] is False
         assert row["invited_at"] is None
         assert row["created_at"] is not None

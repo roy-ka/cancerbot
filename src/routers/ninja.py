@@ -52,6 +52,7 @@ async def list_waitlist(
             {
                 "id": str(e.id),
                 "email": e.email,
+                "name": e.name,
                 "created_at": e.created_at.isoformat() if e.created_at else None,
                 "invited": e.invited,
                 "invited_at": e.invited_at.isoformat() if e.invited_at else None,

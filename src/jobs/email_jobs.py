@@ -48,5 +48,5 @@ async def send_fallback_alert_job(ctx, *, model) -> None:
     await send_fallback_alert(model)
 
 
-async def send_waitlist_joined_email_job(ctx, *, to) -> None:
-    await send_waitlist_joined_email(to=to)
+async def send_waitlist_joined_email_job(ctx, *, to, name) -> None:
+    await send_waitlist_joined_email(to=to, name=name)

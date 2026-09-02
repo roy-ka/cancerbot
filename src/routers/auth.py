@@ -94,6 +94,7 @@ class LoginRequest(BaseModel):
 
 class WaitlistRequest(BaseModel):
     email: EmailStr
+    name: str = Field(..., min_length=1, max_length=150)
 
 
 
@@ -200,8 +201,8 @@ async def join_waitlist(req: WaitlistRequest, request: Request, db: Session = De
         raise HTTPException(status_code=429, detail="Too many attempts. Please try again later.")
     record_attempt(db, f"waitlist:{ip}", MAX_WAITLIST_ATTEMPTS)
 
-    create_waitlist_entry(db=db, email=req.email)
-    await enqueue("send_waitlist_joined_email_job", to=req.email)
+    create_waitlist_entry(db=db, email=req.email, name=req.name.strip())
+    await enqueue("send_waitlist_joined_email_job", to=req.email, name=req.name.strip())
     return {"message": "You're on the waitlist! We'll email you an invite once a spot opens up."}
 
 

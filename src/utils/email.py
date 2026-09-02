@@ -221,10 +221,8 @@ async def send_delete_account_scheduled_email(to: str, name: str, deletion_date:
     )
 
 
-async def send_waitlist_joined_email(to: str, name: str = "there") -> bool:
-    """Sent when someone joins the waitlist (MAX_USERS full). Waitlist
-    entries only store an email (see WaitlistEntry), not a name, so `name`
-    defaults to a generic greeting rather than requiring a schema change."""
+async def send_waitlist_joined_email(to: str, name: str) -> bool:
+    """Sent when someone joins the waitlist (MAX_USERS full)."""
     return await _deliver(to, "waitlist_joined", {"name": name})
 
 

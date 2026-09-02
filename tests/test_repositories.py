@@ -74,27 +74,29 @@ class TestUserRepository:
 
 class TestWaitlistRepository:
     def test_create_waitlist_entry_returns_entry_with_id(self, db_session):
-        entry = create_waitlist_entry(db_session, "new@example.com")
+        entry = create_waitlist_entry(db_session, "new@example.com", "New Person")
         assert entry.id is not None
         assert entry.email == "new@example.com"
+        assert entry.name == "New Person"
         assert entry.invited is False
 
     def test_create_waitlist_entry_is_idempotent(self, db_session):
-        first = create_waitlist_entry(db_session, "dupe@example.com")
-        second = create_waitlist_entry(db_session, "dupe@example.com")
+        first = create_waitlist_entry(db_session, "dupe@example.com", "First Name")
+        second = create_waitlist_entry(db_session, "dupe@example.com", "Second Name")
         assert first.id == second.id
+        assert second.name == "First Name"
         assert count_waitlist_entries(db_session) == 1
 
     def test_list_waitlist_entries_orders_oldest_first(self, db_session):
-        create_waitlist_entry(db_session, "first@example.com")
-        create_waitlist_entry(db_session, "second@example.com")
+        create_waitlist_entry(db_session, "first@example.com", "First")
+        create_waitlist_entry(db_session, "second@example.com", "Second")
         entries = list_waitlist_entries(db_session)
         emails = [e.email for e in entries]
         assert emails.index("first@example.com") < emails.index("second@example.com")
 
     def test_count_waitlist_entries(self, db_session):
         assert count_waitlist_entries(db_session) == 0
-        create_waitlist_entry(db_session, "counted@example.com")
+        create_waitlist_entry(db_session, "counted@example.com", "Counted")
         assert count_waitlist_entries(db_session) == 1
 
 
