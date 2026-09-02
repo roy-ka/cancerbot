@@ -135,6 +135,113 @@ class TestRegister:
         assert response.status_code == 400
 
 
+class TestRegistrationCap:
+    """MAX_USERS gates new registrations for a slow-growth rollout. Blank/unset
+    must behave exactly like today (no cap) — every other registration test in
+    this file relies on that default."""
+
+    def test_registration_open_when_max_users_unset(self, anon_client, monkeypatch):
+        monkeypatch.delenv("MAX_USERS", raising=False)
+        response = anon_client.get("/auth/registration_status/")
+        assert response.status_code == 200
+        assert response.json() == {"open": True}
+
+    def test_registration_open_below_cap(self, anon_client, monkeypatch, test_user):
+        monkeypatch.setenv("MAX_USERS", "100")
+        response = anon_client.get("/auth/registration_status/")
+        assert response.json() == {"open": True}
+
+    def test_registration_closed_at_cap(self, anon_client, monkeypatch, test_user):
+        monkeypatch.setenv("MAX_USERS", "1")
+        response = anon_client.get("/auth/registration_status/")
+        assert response.json() == {"open": False}
+
+    def test_registration_status_does_not_disclose_count(self, anon_client, monkeypatch, test_user):
+        monkeypatch.setenv("MAX_USERS", "1")
+        response = anon_client.get("/auth/registration_status/")
+        assert set(response.json().keys()) == {"open"}
+
+    def test_register_rejected_when_at_cap(self, anon_client, monkeypatch, test_user):
+        monkeypatch.setenv("MAX_USERS", "1")
+        response = anon_client.post(
+            "/auth/register/",
+            json={
+                "first_name": "Late", "last_name": "Comer",
+                "email": "latecomer@example.com",
+                "password": "SecurePass123!",
+            },
+        )
+        assert response.status_code == 403
+
+    def test_register_succeeds_below_cap(self, anon_client, monkeypatch, test_user):
+        monkeypatch.setenv("MAX_USERS", "5")
+        response = anon_client.post(
+            "/auth/register/",
+            json={
+                "first_name": "Room", "last_name": "Enough",
+                "email": "roomenough@example.com",
+                "password": "SecurePass123!",
+            },
+        )
+        assert response.status_code == 201
+
+    def test_register_not_blocked_by_blank_max_users(self, anon_client, monkeypatch):
+        monkeypatch.setenv("MAX_USERS", "")
+        response = anon_client.post(
+            "/auth/register/",
+            json={
+                "first_name": "No", "last_name": "Cap",
+                "email": "nocap@example.com",
+                "password": "SecurePass123!",
+            },
+        )
+        assert response.status_code == 201
+
+
+class TestWaitlist:
+    def test_join_waitlist_returns_201(self, anon_client):
+        response = anon_client.post("/auth/waitlist/", json={"email": "waitlisted@example.com"})
+        assert response.status_code == 201
+
+    def test_join_waitlist_enqueues_confirmation_email(self, anon_client, monkeypatch):
+        captured = {}
+
+        async def fake_enqueue(job_name, **kwargs):
+            captured["job_name"] = job_name
+            captured["to"] = kwargs.get("to")
+
+        monkeypatch.setattr("src.routers.auth.enqueue", fake_enqueue)
+
+        anon_client.post("/auth/waitlist/", json={"email": "notify-me@example.com"})
+
+        assert captured["job_name"] == "send_waitlist_joined_email_job"
+        assert captured["to"] == "notify-me@example.com"
+
+    def test_join_waitlist_persists_email(self, anon_client, db_session):
+        anon_client.post("/auth/waitlist/", json={"email": "persisted@example.com"})
+        from src.db.models import WaitlistEntry
+        entry = db_session.query(WaitlistEntry).filter(WaitlistEntry.email == "persisted@example.com").first()
+        assert entry is not None
+
+    def test_join_waitlist_twice_does_not_duplicate(self, anon_client, db_session):
+        anon_client.post("/auth/waitlist/", json={"email": "dupe@example.com"})
+        anon_client.post("/auth/waitlist/", json={"email": "dupe@example.com"})
+        from src.db.models import WaitlistEntry
+        count = db_session.query(WaitlistEntry).filter(WaitlistEntry.email == "dupe@example.com").count()
+        assert count == 1
+
+    def test_join_waitlist_invalid_email_returns_422(self, anon_client):
+        response = anon_client.post("/auth/waitlist/", json={"email": "not-an-email"})
+        assert response.status_code == 422
+
+    def test_join_waitlist_blocked_after_limit(self, anon_client):
+        from src.db.repositories.rate_limit import MAX_WAITLIST_ATTEMPTS
+        for i in range(MAX_WAITLIST_ATTEMPTS):
+            anon_client.post("/auth/waitlist/", json={"email": f"limit{i}@example.com"})
+        response = anon_client.post("/auth/waitlist/", json={"email": "onemore@example.com"})
+        assert response.status_code == 429
+
+
 class TestResendVerification:
     """/resend-verification/ was the only token-issuing endpoint with no non-prod
     escape hatch: only the token's SHA-256 hash is stored, so a token that isn't

@@ -13,6 +13,7 @@ os.environ.setdefault("NINJA_EMAIL", "ninja-test@example.com")
 os.environ.setdefault("NINJA_PASSWORD", "test-ninja-password")
 os.environ.setdefault("REDIS_PASSWORD", "test-redis-password")
 os.environ.setdefault("REDIS_URL", "redis://:test-redis-password@localhost:6379/0")
+os.environ.setdefault("MAX_USERS", "")  # blank = no registration cap, matching production default
 
 import pytest
 from sqlalchemy import create_engine

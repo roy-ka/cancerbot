@@ -211,6 +211,16 @@ class RateLimitEntry(Base):
     last_attempt_at = Column(DateTime(timezone=True), nullable=True)
 
 
+class WaitlistEntry(Base):
+    __tablename__ = "waitlist_entries"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    email = Column(String(320), unique=True, index=True, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
+    invited = Column(Boolean, default=False, nullable=False)
+    invited_at = Column(DateTime(timezone=True), nullable=True)
+
+
 class SearchAnalytic(Base):
     __tablename__ = "search_analytics"
 

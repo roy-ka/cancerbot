@@ -17,7 +17,9 @@ from src.db.repositories.users import (
     get_user_by_email,
     get_user_by_id,
     update_last_login,
+    count_all_users,
 )
+from src.db.repositories.waitlist import create_waitlist_entry
 from src.db.repositories.password_resets import create_reset_token, verify_reset_token, consume_reset_token
 from src.db.repositories.email_verification import create_verification_token, verify_and_consume_token, find_token_user_id
 from src.db.repositories.account_deletion import (
@@ -39,6 +41,7 @@ from src.db.repositories.rate_limit import (
     MAX_REGISTER_ATTEMPTS,
     MAX_FORGOT_PASSWORD_ATTEMPTS,
     MAX_REQUEST_DELETE_ATTEMPTS,
+    MAX_WAITLIST_ATTEMPTS,
 )
 from src.queue import enqueue
 
@@ -49,6 +52,23 @@ def _get_frontend_url() -> str:
     FRONTEND_URL in production must not silently produce localhost links.
     """
     return os.getenv("FRONTEND_URL", "https://cancer-bot.com")
+
+
+def _get_max_users() -> int | None:
+    """Registration cap for slow-growth rollout. Unset/blank = no cap.
+
+    Read from env on every call (not cached at import time) so tests can
+    monkeypatch it per-test, matching _get_frontend_url's pattern.
+    """
+    raw = os.getenv("MAX_USERS", "").strip()
+    return int(raw) if raw else None
+
+
+def _registration_open(db: Session) -> bool:
+    max_users = _get_max_users()
+    if max_users is None:
+        return True
+    return count_all_users(db) < max_users
 
 
 PASSWORD_REGEX_PATTERNS = {
@@ -70,6 +90,10 @@ class LoginRequest(BaseModel):
     email: EmailStr
     password: str
     rememberMe: bool = False
+
+
+class WaitlistRequest(BaseModel):
+    email: EmailStr
 
 
 
@@ -126,13 +150,24 @@ async def register_user(req: CreateUserRequest, request: Request, db: Session = 
         raise HTTPException(status_code=429, detail="Too many registration attempts. Please try again later.")
     record_attempt(db, f"register:{ip}", MAX_REGISTER_ATTEMPTS)
 
+    # Check for an existing account before the capacity cap: re-registering an
+    # email that's already taken must still return the normal "already
+    # registered" 400, not a confusing "we're full" 403 — the cap only
+    # matters for accounts that would actually consume a new slot.
+    existing = get_user_by_email(db=db, email=req.email)
+    if existing:
+        raise HTTPException(status_code=400, detail="Email already registered")
+
+    if not _registration_open(db):
+        raise HTTPException(
+            status_code=403,
+            detail="Registration is currently full. Please join the waitlist and we'll invite you once a spot opens up.",
+        )
+
     password_error = validate_password(req.password)
     if password_error:
         raise HTTPException(status_code=400, detail=password_error)
 
-    existing = get_user_by_email(db=db, email=req.email)
-    if existing:
-        raise HTTPException(status_code=400, detail="Email already registered")
     password_hash = SecurityUtils.hash_password(req.password)
     user = create_user(
         db=db,
@@ -148,6 +183,26 @@ async def register_user(req: CreateUserRequest, request: Request, db: Session = 
     if not is_prod():
         resp["verification_token"] = token
     return resp
+
+
+@router.get("/registration_status/")
+async def get_registration_status(db: Session = Depends(get_db)):
+    """Whether new registrations are currently accepted. No count is
+    disclosed publicly — just the open/closed boolean the frontend needs to
+    decide whether to show the registration form or the waitlist form."""
+    return {"open": _registration_open(db)}
+
+
+@router.post("/waitlist/", status_code=201)
+async def join_waitlist(req: WaitlistRequest, request: Request, db: Session = Depends(get_db)):
+    ip = _client_ip(request)
+    if is_rate_limited(db, f"waitlist:{ip}"):
+        raise HTTPException(status_code=429, detail="Too many attempts. Please try again later.")
+    record_attempt(db, f"waitlist:{ip}", MAX_WAITLIST_ATTEMPTS)
+
+    create_waitlist_entry(db=db, email=req.email)
+    await enqueue("send_waitlist_joined_email_job", to=req.email)
+    return {"message": "You're on the waitlist! We'll email you an invite once a spot opens up."}
 
 
 @router.post("/login/")

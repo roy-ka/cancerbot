@@ -35,6 +35,7 @@ from src.jobs.email_jobs import (
     send_delete_account_scheduled_email_job,
     send_delete_account_cancelled_email_job,
     send_fallback_alert_job,
+    send_waitlist_joined_email_job,
 )
 from src.jobs.url_classification import (
     classify_url_job,
@@ -67,6 +68,7 @@ class WorkerSettings:
         send_delete_account_scheduled_email_job,
         send_delete_account_cancelled_email_job,
         send_fallback_alert_job,
+        send_waitlist_joined_email_job,
         classify_url_job,
     ]
     cron_jobs = [

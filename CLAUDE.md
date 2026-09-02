@@ -26,7 +26,9 @@ loads pandas + numpy into every backend and worker process.
 
 ## Email Templates
 
-All SendGrid template IDs must be stored in the `EMAIL_TEMPLATES` dict in `src/utils/email.py`. Never hardcode a template ID inline elsewhere in the codebase — always reference it via `EMAIL_TEMPLATES["key"]`.
+The active provider is Brevo. Email bodies are version-controlled HTML in this repo, not opaque provider-dashboard IDs: `src/utils/email_templates.py`'s `TEMPLATES` dict holds `{subject, html}` per key, rendered via `render(template_key, **fields)` (`str.format()` placeholders — `name` is HTML-escaped since it's the only field that ever carries user text). `src/utils/email_brevo.py` calls `render()` and POSTs the result to Brevo's API. Add a new email by adding a `_..._HTML` template string and a `TEMPLATES[...]` entry there — never hardcode HTML inline elsewhere.
+
+SendGrid is dormant (kept only in case it's ever reinstated): `_send_sendgrid`/`SENDGRID_EMAIL_TEMPLATES` in `src/utils/email.py` are commented out and unused by any live sender.
 
 ## Environment Variables
 
@@ -309,6 +311,7 @@ Deliberate current state and where it's weak, roughly highest-impact first.
 | `SearchAnalytic` | `search_analytics` | Per-message search metrics |
 | `ExternalSearchResult` | `external_search_results` | Records PubMed/CrossRef/Wikipedia/ClinicalTrials fetches |
 | `UrlClassificationJob` | `url_classification_jobs` | Queue of URLs pending cancer-relevance classification |
+| `WaitlistEntry` | `waitlist_entries` | Emails collected when registration is full (`MAX_USERS`) — see Auth section |
 
 ### Key Environment Variables (`.env`)
 ```
@@ -343,6 +346,7 @@ JWT_ALGORITHM=HS256
 ACCESS_TOKEN_EXPIRE_MINUTES=60000
 CORS_ORIGINS=http://localhost:5173     # comma-separated for multiple origins
 PROMPT_MAX_HISTORY=12                  # Conversation turns included in prompt
+MAX_USERS=                             # Cap on total registered users; blank/unset = no cap (see Auth section)
 ENV=development                        # set to 'production' in prod
 
 # Ninja (privileged admin account — see "Ninja account" below; unset = no ninja user created)
@@ -376,6 +380,7 @@ JWT tokens (HS256) accepted via `Authorization: Bearer <token>` header or `acces
 - **WebSocket Origin**: CORSMiddleware does not cover WS handshakes, so `post_message_ws` checks `Origin` against `CORS_ORIGINS` itself. A *missing* Origin is allowed on purpose — browsers always send one, so its absence means a non-browser client with no ambient cookie.
 - **`CORS_ORIGINS='*'`** makes `src/main.py` refuse to start in production. Starlette echoes the request Origin when `allow_credentials=True`, so a wildcard lets any site issue authenticated requests with the user's cookie.
 - **Client IP**: `_client_ip` in `auth.py` uses the socket peer only. `X-Forwarded-For` is **not** trusted — the backend serves directly on port 8000, so the header is attacker-controlled and honouring it let anyone defeat the per-IP registration limit by rotating a fake value. If a reverse proxy is ever added, re-enable it *only* for requests whose immediate peer is the proxy, and set `MAX_REGISTER_ATTEMPTS` accordingly — otherwise every user shares one rate-limit bucket.
+- **Registration cap (slow-growth rollout)**: `MAX_USERS` (blank/unset = no cap) gates new signups. `GET /auth/registration_status/` returns `{"open": bool}` (no count disclosed) so the frontend can show the registration form or a waitlist form; `/auth/register/` re-checks the same cap server-side (403 if full) so a client that skips the status check can't bypass it. `POST /auth/waitlist/` stores the email in `WaitlistEntry` (idempotent per email, rate-limited per-IP like register), enqueues a `waitlist_joined` confirmation email (`send_waitlist_joined_email` — `name` defaults to `"there"` since `WaitlistEntry` has no name field), and is listed for the ninja account via `GET /ninja/waitlist/`. There's no automated invite flow; inviting someone is still a manual raise of `MAX_USERS` plus reaching out to their stored email.
 
 ### Prompt safety
 Retrieved evidence is third-party text (abstracts, trial records, scraped
@@ -455,7 +460,7 @@ every `URL_CLASSIFIER_POLL_INTERVAL` seconds) — both are gone.
   - `auth_cleanup_sweep` (`src/jobs/auth_cleanup.py`) — every 6h, `run_at_startup=True`
   - `reap_and_requeue_stale_url_classification_jobs` (`src/jobs/url_classification.py`) — every 5 minutes; resets rows stuck in `processing` back to `pending`, then re-enqueues every `pending` row old enough that its own insert-time enqueue has had time to run (the safety net for the case below)
 - **On-demand jobs** (`WorkerSettings.functions`):
-  - Email: `src/jobs/email_jobs.py` wraps each `src.utils.email.send_*` sender; `src/routers/auth.py`'s six email call sites and `ollama_connector.py`'s Groq-failure fallback alert enqueue these instead of using FastAPI `BackgroundTasks` (which no router uses anymore). `send_account_deleted_email` is the one sender *not* wrapped here — it's only ever called from `account_deletion_sweep`, which already runs inside the worker, so there's nothing to enqueue.
+  - Email: `src/jobs/email_jobs.py` wraps each `src.utils.email.send_*` sender; `src/routers/auth.py`'s email call sites (registration, password reset, account-deletion request/cancel, waitlist join) and `ollama_connector.py`'s Groq-failure fallback alert enqueue these instead of using FastAPI `BackgroundTasks` (which no router uses anymore). `send_account_deleted_email` is the one sender *not* wrapped here — it's only ever called from `account_deletion_sweep`, which already runs inside the worker, so there's nothing to enqueue.
   - URL classification: `classify_url_job` (`src/jobs/url_classification.py`) — LLM-classifies a user-provided URL as cancer-related via Groq and, if so, indexes it. `conversation_helper.py`'s `_enqueue_url_classification` still inserts the `url_classification_jobs` row first (it stays the audit/status record — `status`/`llm_reasoning`/`error`/`processed_at` are genuinely useful persisted) and then immediately enqueues `classify_url_job` for it, so classification runs right away instead of waiting for a poll tick. The job claims its row with `FOR UPDATE SKIP LOCKED` scoped to its own id, so a duplicate enqueue of the same job (e.g. racing the reaper) can't double-process it.
 - **Local dev**: nothing in `WorkerSettings` runs unless a worker process is actually up — running the backend alone (`uvicorn src.main:app --reload`) does not run cron sweeps or process enqueued jobs. Run the worker separately if you need that: `arq src.worker.WorkerSettings`.
 

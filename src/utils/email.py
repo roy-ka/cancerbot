@@ -63,14 +63,17 @@ def _redact_payload(template_data: dict) -> dict:
     }
 
 
-EMAIL_TEMPLATES = {
-    "verification": "d-6a6d6095e74549fbb91c18e741cef813",
-    "password_reset": "d-89a37afdde454f699046dda66cfca385",
-    "fallback_alert": "d-18e52d88f49b4b79b4ff292b1074bd75",
-    "account_deleted": "d-feba610add7d4ad091351504f1a14937",
-    "delete_account_request": "d-4db440ef36e547a0a7e16e35500d935c",
-    "delete_account_scheduled": "d-336a3518ba8140cd9b5689f1aab52a94",
-}
+# Dormant — SendGrid is no longer the active provider (see Brevo path in
+# email_brevo.py / email_templates.py). Kept only as a reference for these
+# template IDs in case SendGrid is ever reinstated; nothing reads this today.
+# SENDGRID_EMAIL_TEMPLATES = {
+#     "verification": "d-6a6d6095e74549fbb91c18e741cef813",
+#     "password_reset": "d-89a37afdde454f699046dda66cfca385",
+#     "fallback_alert": "d-18e52d88f49b4b79b4ff292b1074bd75",
+#     "account_deleted": "d-feba610add7d4ad091351504f1a14937",
+#     "delete_account_request": "d-4db440ef36e547a0a7e16e35500d935c",
+#     "delete_account_scheduled": "d-336a3518ba8140cd9b5689f1aab52a94",
+# }
 
 _FALLBACK_ALERT_TO = "roykazaz@gmail.com"
 
@@ -216,6 +219,13 @@ async def send_delete_account_scheduled_email(to: str, name: str, deletion_date:
         {"name": name, "date": deletion_date, "link": "https://www.cancer-bot.com"},
         disable_subscription_tracking=True,
     )
+
+
+async def send_waitlist_joined_email(to: str, name: str = "there") -> bool:
+    """Sent when someone joins the waitlist (MAX_USERS full). Waitlist
+    entries only store an email (see WaitlistEntry), not a name, so `name`
+    defaults to a generic greeting rather than requiring a schema change."""
+    return await _deliver(to, "waitlist_joined", {"name": name})
 
 
 async def send_delete_account_cancelled_email(to: str, name: str) -> bool:

@@ -3,7 +3,8 @@ from datetime import datetime, timedelta
 from unittest.mock import patch, MagicMock
 import uuid
 
-from src.db.repositories.users import create_user, get_user_by_email, get_user_by_id, update_last_login
+from src.db.repositories.users import create_user, get_user_by_email, get_user_by_id, update_last_login, count_all_users
+from src.db.repositories.waitlist import create_waitlist_entry, list_waitlist_entries, count_waitlist_entries
 from src.db.repositories.conversations import (
     create_conversation, get_conversation_by_id, soft_delete_conversation, get_conversations_list_by_user_id
 )
@@ -59,6 +60,42 @@ class TestUserRepository:
         update_last_login(db_session, test_user)
         db_session.refresh(test_user)
         assert test_user.last_login is not None
+
+    def test_count_all_users(self, db_session, test_user):
+        assert count_all_users(db_session) == 1
+        create_user(
+            db_session,
+            first_name="Second", last_name="User",
+            email="second@example.com",
+            password_hash=SecurityUtils.hash_password("SecondPass123"),
+        )
+        assert count_all_users(db_session) == 2
+
+
+class TestWaitlistRepository:
+    def test_create_waitlist_entry_returns_entry_with_id(self, db_session):
+        entry = create_waitlist_entry(db_session, "new@example.com")
+        assert entry.id is not None
+        assert entry.email == "new@example.com"
+        assert entry.invited is False
+
+    def test_create_waitlist_entry_is_idempotent(self, db_session):
+        first = create_waitlist_entry(db_session, "dupe@example.com")
+        second = create_waitlist_entry(db_session, "dupe@example.com")
+        assert first.id == second.id
+        assert count_waitlist_entries(db_session) == 1
+
+    def test_list_waitlist_entries_orders_oldest_first(self, db_session):
+        create_waitlist_entry(db_session, "first@example.com")
+        create_waitlist_entry(db_session, "second@example.com")
+        entries = list_waitlist_entries(db_session)
+        emails = [e.email for e in entries]
+        assert emails.index("first@example.com") < emails.index("second@example.com")
+
+    def test_count_waitlist_entries(self, db_session):
+        assert count_waitlist_entries(db_session) == 0
+        create_waitlist_entry(db_session, "counted@example.com")
+        assert count_waitlist_entries(db_session) == 1
 
 
 class TestConversationRepository:

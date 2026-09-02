@@ -16,6 +16,10 @@ export type RegistrationPayload = {
   last_name: string
 }
 
+export type WaitlistPayload = {
+  email: string
+}
+
 export type Conversation = {
   id: string
   title: string

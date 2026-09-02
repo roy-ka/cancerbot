@@ -20,6 +20,7 @@ from src.utils.email import (
     send_delete_account_scheduled_email,
     send_delete_account_cancelled_email,
     send_fallback_alert,
+    send_waitlist_joined_email,
 )
 
 
@@ -45,3 +46,7 @@ async def send_delete_account_cancelled_email_job(ctx, *, to, name) -> None:
 
 async def send_fallback_alert_job(ctx, *, model) -> None:
     await send_fallback_alert(model)
+
+
+async def send_waitlist_joined_email_job(ctx, *, to) -> None:
+    await send_waitlist_joined_email(to=to)

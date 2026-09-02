@@ -2,7 +2,7 @@ from src.utils.email_templates import TEMPLATES, render
 
 
 class TestTemplatesShape:
-    def test_seven_templates_present(self):
+    def test_eight_templates_present(self):
         assert set(TEMPLATES) == {
             "verification",
             "password_reset",
@@ -11,6 +11,7 @@ class TestTemplatesShape:
             "delete_account_scheduled",
             "delete_account_cancelled",
             "fallback_alert",
+            "waitlist_joined",
         }
 
     def test_every_template_has_a_subject_and_html_body(self):

@@ -75,6 +75,31 @@ class TestListUsers:
         assert "name" not in row
 
 
+class TestListWaitlist:
+    def test_regular_user_forbidden(self, client):
+        response = client.get("/ninja/waitlist/")
+        assert response.status_code == 403
+
+    def test_lists_waitlist_entries(self, ninja_client, db_session):
+        from src.db.repositories.waitlist import create_waitlist_entry
+        create_waitlist_entry(db_session, "waiting@example.com")
+
+        response = ninja_client.get("/ninja/waitlist/")
+        assert response.status_code == 200
+        emails = [e["email"] for e in response.json()["entries"]]
+        assert "waiting@example.com" in emails
+
+    def test_entry_shape(self, ninja_client, db_session):
+        from src.db.repositories.waitlist import create_waitlist_entry
+        create_waitlist_entry(db_session, "shape@example.com")
+
+        response = ninja_client.get("/ninja/waitlist/")
+        row = next(e for e in response.json()["entries"] if e["email"] == "shape@example.com")
+        assert row["invited"] is False
+        assert row["invited_at"] is None
+        assert row["created_at"] is not None
+
+
 class TestListUserConversations:
     def test_lists_target_users_conversations(self, ninja_client, test_user, test_conversation):
         response = ninja_client.get(f"/ninja/users/{test_user.id}/conversations/")

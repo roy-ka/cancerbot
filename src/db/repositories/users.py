@@ -18,6 +18,9 @@ def get_user_by_email(db, email):
 def get_user_by_id(db, user_id):
   return db.query(User).filter(User.id == user_id).first()
 
+def count_all_users(db) -> int:
+  return db.query(User).count()
+
 def list_all_users(db, limit: int = 50, offset: int = 0):
   return (
     db.query(User)

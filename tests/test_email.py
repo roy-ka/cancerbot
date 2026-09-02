@@ -159,6 +159,7 @@ class TestDeliveryFailureIsContained:
                     to="a@b.c", name="N", deletion_date="January 1, 2027"),
                 as_prod.send_delete_account_cancelled_email(to="a@b.c", name="N"),
                 as_prod.send_fallback_alert("gpt-4o"),
+                as_prod.send_waitlist_joined_email(to="a@b.c"),
             ]
             for coro in calls:
                 assert asyncio.run(coro) is False
@@ -209,6 +210,7 @@ class TestEveryPublicSenderRendersSuccessfully:
                     to="a@b.c", name="N", deletion_date="January 1, 2027"),
                 as_prod.send_delete_account_cancelled_email(to="a@b.c", name="N"),
                 as_prod.send_fallback_alert("gpt-4o"),
+                as_prod.send_waitlist_joined_email(to="a@b.c"),
             ]
             for coro in calls:
                 assert asyncio.run(coro) is True

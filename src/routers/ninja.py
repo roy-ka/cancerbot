@@ -6,6 +6,7 @@ import logging
 from src.deps.db import get_db
 from src.deps.auth import get_current_ninja_user
 from src.db.repositories.users import list_all_users
+from src.db.repositories.waitlist import list_waitlist_entries
 from src.db.repositories.conversations import (
     get_conversation_by_id_no_auth,
     get_conversations_list_by_user_id,
@@ -34,6 +35,28 @@ async def list_users(
                 "created_at": u.created_at.isoformat() if u.created_at else None,
             }
             for u in users
+        ]
+    }
+
+
+@router.get("/waitlist/")
+async def list_waitlist(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_ninja_user),
+):
+    entries = list_waitlist_entries(db=db, limit=limit, offset=offset)
+    return {
+        "entries": [
+            {
+                "id": str(e.id),
+                "email": e.email,
+                "created_at": e.created_at.isoformat() if e.created_at else None,
+                "invited": e.invited,
+                "invited_at": e.invited_at.isoformat() if e.invited_at else None,
+            }
+            for e in entries
         ]
     }
 
