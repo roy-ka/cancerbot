@@ -224,8 +224,21 @@ export default function Chat() {
     }
   }
 
-  const handleSplitConversation = (conversation: Conversation) => {
-    setConversations((prev) => [conversation, ...prev])
+  const handleSplitConversation = (conversation: {
+    id: string
+    title: string
+    lastMessage: string | null
+    lastMessageTime: string | null
+  }) => {
+    setConversations((prev) => [
+      {
+        id: conversation.id,
+        title: conversation.title,
+        lastMessage: conversation.lastMessage ?? '',
+        lastMessageTime: conversation.lastMessageTime ?? '',
+      },
+      ...prev,
+    ])
     setSelectedConversationId(conversation.id)
   }
 
