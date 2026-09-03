@@ -66,6 +66,29 @@ class TestConfirmDelete:
         user = db_session.query(models.User).filter(models.User.id == test_user.id).first()
         assert user.deletion_scheduled_at is not None
 
+    def test_success_enqueues_deferred_deletion_job(self, client, test_user, db_session):
+        """The actual deletion is a one-shot job deferred to
+        deletion_date, not left for a cron sweep to find later — see
+        src/jobs/account_deletion.py."""
+        from src.jobs.account_deletion import job_id_for_user
+
+        token = create_deletion_request_token(db_session, test_user.id)
+        captured = []
+
+        async def fake_enqueue(job_name, **kwargs):
+            captured.append((job_name, kwargs))
+
+        with patch("src.routers.auth.enqueue", new=fake_enqueue):
+            response = _confirm_delete(client, token, "TestPass123!")
+
+        deletion_job = next(
+            (kwargs for name, kwargs in captured if name == "delete_scheduled_user_job"), None
+        )
+        assert deletion_job is not None
+        assert deletion_job["user_id"] == str(test_user.id)
+        assert deletion_job["_job_id"] == job_id_for_user(test_user.id)
+        assert deletion_job["_defer_until"].isoformat() == response.json()["deletion_date"]
+
     def test_wrong_password_returns_401_and_keeps_token_usable(self, client, test_user, db_session):
         token = create_deletion_request_token(db_session, test_user.id)
         response = _confirm_delete(client, token, "WrongPassword!")

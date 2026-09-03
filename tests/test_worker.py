@@ -1,6 +1,7 @@
 import pytest
+from unittest.mock import patch, AsyncMock
 
-from src.jobs.account_deletion import account_deletion_sweep
+from src.jobs.account_deletion import delete_scheduled_user_job
 from src.jobs.auth_cleanup import auth_cleanup_sweep
 from src.jobs.email_jobs import (
     send_verification_email_job,
@@ -48,12 +49,12 @@ class TestWorkerSettings:
             send_waitlist_joined_email_job,
             send_waitlist_invited_email_job,
             classify_url_job,
+            delete_scheduled_user_job,
         }
 
     def test_all_cron_jobs_registered(self):
         cron_coroutines = {job.coroutine for job in WorkerSettings.cron_jobs}
         assert cron_coroutines == {
-            account_deletion_sweep,
             auth_cleanup_sweep,
             reap_and_requeue_stale_url_classification_jobs,
         }
@@ -64,12 +65,6 @@ class TestWorkerSettings:
             if j.coroutine is reap_and_requeue_stale_url_classification_jobs
         )
         assert job.minute == set(range(0, 60, 5))
-
-    def test_account_deletion_sweep_runs_hourly_at_startup(self):
-        job = next(j for j in WorkerSettings.cron_jobs if j.coroutine is account_deletion_sweep)
-        assert job.hour is None  # every hour
-        assert job.minute == 0
-        assert job.run_at_startup is True
 
     def test_auth_cleanup_sweep_runs_every_six_hours_at_startup(self):
         job = next(j for j in WorkerSettings.cron_jobs if j.coroutine is auth_cleanup_sweep)
@@ -83,8 +78,19 @@ class TestWorkerSettings:
 
     @pytest.mark.asyncio
     async def test_startup_and_shutdown_do_not_raise(self):
-        await startup({})
+        # reschedule_pending_deletions opens its own real SessionLocal and
+        # would otherwise hit whatever DB this test process is configured
+        # against — it has its own dedicated coverage in
+        # tests/test_account_deletion_job.py, so it's mocked out here.
+        with patch("src.worker.reschedule_pending_deletions", new=AsyncMock()):
+            await startup({})
         await shutdown({})
+
+    @pytest.mark.asyncio
+    async def test_startup_calls_reschedule_pending_deletions(self):
+        with patch("src.worker.reschedule_pending_deletions", new=AsyncMock()) as mock_reschedule:
+            await startup({})
+        mock_reschedule.assert_awaited_once()
 
     def test_redis_settings_present(self):
         assert WorkerSettings.redis_settings is not None

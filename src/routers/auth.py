@@ -52,6 +52,7 @@ from src.db.repositories.rate_limit import (
     MAX_WAITLIST_ATTEMPTS,
 )
 from src.queue import enqueue
+from src.jobs.account_deletion import job_id_for_user
 
 def _get_frontend_url() -> str:
     """Single source of truth for the frontend origin used in email links.
@@ -482,6 +483,16 @@ async def confirm_delete_account(
         to=user.email,
         name=user.display_name,
         deletion_date=deletion_date.strftime("%B %d, %Y"),
+    )
+    # Fires the actual deletion at exactly deletion_date rather than an
+    # hourly sweep finding it later — see src/jobs/account_deletion.py.
+    # job_id_for_user makes this idempotent if confirm-delete is somehow
+    # called twice for the same schedule.
+    await enqueue(
+        "delete_scheduled_user_job",
+        user_id=str(user.id),
+        _defer_until=deletion_date,
+        _job_id=job_id_for_user(user.id),
     )
     response.delete_cookie(key="access_token", path="/", httponly=True, secure=is_prod(), samesite="lax")
     return {"ok": True, "deletion_date": deletion_date.isoformat()}

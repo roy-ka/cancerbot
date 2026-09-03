@@ -199,19 +199,24 @@ def schedule_deletion(db, user: User) -> datetime:
 
 
 def cancel_deletion(db, user_id) -> None:
+    """Clears the schedule. The deferred delete_scheduled_user_job (see
+    src/jobs/account_deletion.py) that was enqueued for this user's
+    original deletion_scheduled_at is not touched here — it re-checks this
+    same column when it fires and simply no-ops if it's now None, so there
+    is nothing to cancel/abort in Redis."""
     user = db.query(User).filter(User.id == user_id).first()
     if user:
         user.deletion_scheduled_at = None
         db.commit()
 
 
-def get_users_due_for_deletion(db) -> list[User]:
-    now = datetime.now(timezone.utc)
-    return (
-        db.query(User)
-        .filter(User.deletion_scheduled_at.isnot(None), User.deletion_scheduled_at <= now)
-        .all()
-    )
+def get_users_pending_deletion(db) -> list[User]:
+    """Every user with a deletion still scheduled, regardless of whether
+    that date has already passed. Used only for the worker startup
+    reconciliation (src/jobs/account_deletion.py:reschedule_pending_deletions)
+    — the normal path is a one-shot job deferred at the moment deletion is
+    confirmed, not a periodic scan of this."""
+    return db.query(User).filter(User.deletion_scheduled_at.isnot(None)).all()
 
 
 # ---------------------------------------------------------------------------

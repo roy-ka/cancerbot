@@ -7,6 +7,15 @@ via:
 Phase 2: the account-deletion and auth-cleanup sweeps are cron jobs here
 instead of the `while True: ... await asyncio.sleep(N)` loops that used to
 run inside the backend web process itself (src/main.py's lifespan).
+Account deletion later moved off the cron entirely — see the note below.
+
+Phase 5: account deletion is a one-shot job deferred to the exact
+deletion_scheduled_at moment (src.queue.enqueue's _defer_until, arq's
+native "run this later" feature) instead of an hourly cron scan of the
+whole users table. /auth/confirm-delete/ enqueues it directly; a startup
+reconciliation (reschedule_pending_deletions) re-enqueues anyone still
+pending in case Redis lost the job or this is the first boot after the
+migration — see src/jobs/account_deletion.py.
 
 Phase 3: transactional email is enqueued on demand (src.queue.enqueue)
 from src/routers/auth.py and src/classes/ollama_connector.py instead of
@@ -26,7 +35,7 @@ import os
 from arq.connections import RedisSettings
 from arq.cron import cron
 
-from src.jobs.account_deletion import account_deletion_sweep
+from src.jobs.account_deletion import delete_scheduled_user_job, reschedule_pending_deletions
 from src.jobs.auth_cleanup import auth_cleanup_sweep
 from src.jobs.email_jobs import (
     send_verification_email_job,
@@ -55,6 +64,7 @@ def get_redis_settings() -> RedisSettings:
 
 async def startup(ctx):
     logger.info("[worker] arq worker starting up")
+    await reschedule_pending_deletions(ctx)
 
 
 async def shutdown(ctx):
@@ -72,12 +82,9 @@ class WorkerSettings:
         send_waitlist_joined_email_job,
         send_waitlist_invited_email_job,
         classify_url_job,
+        delete_scheduled_user_job,
     ]
     cron_jobs = [
-        # Hourly on the hour — matches the old sweep's 3600s interval.
-        # run_at_startup=True matches the old loop's behavior of sweeping
-        # immediately on process start, then on its regular interval.
-        cron(account_deletion_sweep, hour=None, minute=0, run_at_startup=True),
         # Every 6 hours — matches the old sweep's 6*3600s interval.
         cron(auth_cleanup_sweep, hour={0, 6, 12, 18}, minute=0, run_at_startup=True),
         # Every 5 minutes — matches the old worker's REAP_INTERVAL_SECONDS.
