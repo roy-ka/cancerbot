@@ -330,33 +330,6 @@ export default function MessageItem({
               gap: 0.25,
             }}
           >
-            {conversationId && (
-              <>
-                <Tooltip title={feedback === 1 ? 'Remove upvote' : 'Good answer'}>
-                  <IconButton size="small" onClick={() => submitFeedback(1)} sx={iconButtonSx}>
-                    {feedback === 1 ? (
-                      <ThumbUpIcon fontSize="small" sx={{ color: 'rgba(47, 227, 198, 0.9)' }} />
-                    ) : (
-                      <ThumbUpOffAltIcon fontSize="small" />
-                    )}
-                  </IconButton>
-                </Tooltip>
-                <Tooltip title={feedback === -1 ? 'Remove downvote' : 'Bad answer'}>
-                  <IconButton size="small" onClick={() => submitFeedback(-1)} sx={iconButtonSx}>
-                    {feedback === -1 ? (
-                      <ThumbDownIcon fontSize="small" sx={{ color: 'rgba(240, 128, 128, 0.9)' }} />
-                    ) : (
-                      <ThumbDownOffAltIcon fontSize="small" />
-                    )}
-                  </IconButton>
-                </Tooltip>
-                <Tooltip title="Split into a new conversation from here">
-                  <IconButton size="small" onClick={handleSplit} disabled={splitting} sx={iconButtonSx}>
-                    <CallSplitIcon fontSize="small" />
-                  </IconButton>
-                </Tooltip>
-              </>
-            )}
             <Tooltip title="Translate">
               <IconButton
                 size="small"
@@ -369,6 +342,40 @@ export default function MessageItem({
           </Box>
         )}
         {mesegeEnrichedText}
+        {message.role === 'assistant' && conversationId && (
+          <Box
+            sx={{
+              mt: 1.5,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 0.25,
+            }}
+          >
+            <Tooltip title={feedback === 1 ? 'Remove upvote' : 'Good answer'}>
+              <IconButton size="small" onClick={() => submitFeedback(1)} sx={iconButtonSx}>
+                {feedback === 1 ? (
+                  <ThumbUpIcon fontSize="small" sx={{ color: 'rgba(47, 227, 198, 0.9)' }} />
+                ) : (
+                  <ThumbUpOffAltIcon fontSize="small" />
+                )}
+              </IconButton>
+            </Tooltip>
+            <Tooltip title={feedback === -1 ? 'Remove downvote' : 'Bad answer'}>
+              <IconButton size="small" onClick={() => submitFeedback(-1)} sx={iconButtonSx}>
+                {feedback === -1 ? (
+                  <ThumbDownIcon fontSize="small" sx={{ color: 'rgba(240, 128, 128, 0.9)' }} />
+                ) : (
+                  <ThumbDownOffAltIcon fontSize="small" />
+                )}
+              </IconButton>
+            </Tooltip>
+            <Tooltip title="Split into a new conversation from here">
+              <IconButton size="small" onClick={handleSplit} disabled={splitting} sx={iconButtonSx}>
+                <CallSplitIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          </Box>
+        )}
       </Box>
     </Box>
   )
