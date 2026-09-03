@@ -1,6 +1,11 @@
 import { Box, IconButton, Link, Tooltip, Typography } from '@mui/material'
 import TranslateIcon from '@mui/icons-material/Translate'
-import React, { useMemo } from 'react'
+import ThumbUpIcon from '@mui/icons-material/ThumbUp'
+import ThumbUpOffAltIcon from '@mui/icons-material/ThumbUpOffAlt'
+import ThumbDownIcon from '@mui/icons-material/ThumbDown'
+import ThumbDownOffAltIcon from '@mui/icons-material/ThumbDownOffAlt'
+import CallSplitIcon from '@mui/icons-material/CallSplit'
+import React, { useMemo, useState } from 'react'
 import type { Message, Source } from '../types'
 import MessageSourceItem from './MessageSourceItem'
 import GroupedMessageSourceItem from './GroupedMessageSourceItem'
@@ -8,6 +13,8 @@ import GroupedMessageSourceItem from './GroupedMessageSourceItem'
 const URL_LOCAL_RE = () => /https?:\/\/[^\s<>"'()[\]{}]+/g
 // Trailing punctuation that commonly appears after a URL in prose but isn't part of it
 const TRAILING_PUNCT = /[.,;:!?)]+$/
+
+const BASE_URL = import.meta.env.VITE_BASE_URL || ''
 
 function openInGoogleTranslate(text: string) {
   // Strip [source1]/[pmid:...]/[doi:...] citation tokens — Google Translate
@@ -53,7 +60,65 @@ function renderTextWithLinks(
   return nodes
 }
 
-export default function MessageItem({ message }: { message: Message }) {
+type NewConversation = {
+  id: string
+  title: string
+  lastMessage: string | null
+  lastMessageTime: string | null
+}
+
+export default function MessageItem({
+  message,
+  conversationId,
+  onSplit,
+}: {
+  message: Message
+  conversationId?: string
+  onSplit?: (conversation: NewConversation) => void
+}) {
+  const [feedback, setFeedback] = useState<1 | -1 | null>(message.feedback ?? null)
+  const [splitting, setSplitting] = useState(false)
+
+  const submitFeedback = async (vote: 1 | -1) => {
+    if (!conversationId || !message.id) return
+    const previous = feedback
+    setFeedback(vote === previous ? null : vote) // optimistic
+    try {
+      const res = await fetch(
+        `${BASE_URL}/conversations/${conversationId}/messages/${message.id}/feedback`,
+        {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ vote }),
+        },
+      )
+      if (!res.ok) throw new Error('feedback failed')
+      const data = await res.json()
+      setFeedback(data.vote ?? null)
+    } catch {
+      setFeedback(previous) // revert on failure
+    }
+  }
+
+  const handleSplit = async () => {
+    if (!conversationId || !message.id || splitting) return
+    setSplitting(true)
+    try {
+      const res = await fetch(
+        `${BASE_URL}/conversations/${conversationId}/messages/${message.id}/split`,
+        { method: 'POST', credentials: 'include' },
+      )
+      if (!res.ok) throw new Error('split failed')
+      const newConversation: NewConversation = await res.json()
+      onSplit?.(newConversation)
+    } catch (e) {
+      console.error('split conversation failed:', e)
+    } finally {
+      setSplitting(false)
+    }
+  }
+
   const normalizeRefId = (raw: string) => {
     let id = (raw ?? '').trim()
 
@@ -221,6 +286,11 @@ export default function MessageItem({ message }: { message: Message }) {
     return <Typography sx={{ whiteSpace: 'pre-wrap' }}>{parts}</Typography>
   }, [message.content, mergedSources, message.id])
 
+  const iconButtonSx = {
+    color: 'rgba(255,255,255,0.4)',
+    p: 0.5,
+  }
+
   return (
     <Box
       sx={{
@@ -250,21 +320,53 @@ export default function MessageItem({ message }: { message: Message }) {
         }}
       >
         {message.role === 'assistant' && (
-          <Tooltip title="Translate">
-            <IconButton
-              size="small"
-              onClick={() => openInGoogleTranslate(message.content)}
-              sx={{
-                position: 'absolute',
-                top: 4,
-                right: 4,
-                color: 'rgba(255,255,255,0.4)',
-                p: 0.5,
-              }}
-            >
-              <TranslateIcon fontSize="small" />
-            </IconButton>
-          </Tooltip>
+          <Box
+            sx={{
+              position: 'absolute',
+              top: 4,
+              right: 4,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 0.25,
+            }}
+          >
+            {conversationId && (
+              <>
+                <Tooltip title={feedback === 1 ? 'Remove upvote' : 'Good answer'}>
+                  <IconButton size="small" onClick={() => submitFeedback(1)} sx={iconButtonSx}>
+                    {feedback === 1 ? (
+                      <ThumbUpIcon fontSize="small" sx={{ color: 'rgba(47, 227, 198, 0.9)' }} />
+                    ) : (
+                      <ThumbUpOffAltIcon fontSize="small" />
+                    )}
+                  </IconButton>
+                </Tooltip>
+                <Tooltip title={feedback === -1 ? 'Remove downvote' : 'Bad answer'}>
+                  <IconButton size="small" onClick={() => submitFeedback(-1)} sx={iconButtonSx}>
+                    {feedback === -1 ? (
+                      <ThumbDownIcon fontSize="small" sx={{ color: 'rgba(240, 128, 128, 0.9)' }} />
+                    ) : (
+                      <ThumbDownOffAltIcon fontSize="small" />
+                    )}
+                  </IconButton>
+                </Tooltip>
+                <Tooltip title="Split into a new conversation from here">
+                  <IconButton size="small" onClick={handleSplit} disabled={splitting} sx={iconButtonSx}>
+                    <CallSplitIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+              </>
+            )}
+            <Tooltip title="Translate">
+              <IconButton
+                size="small"
+                onClick={() => openInGoogleTranslate(message.content)}
+                sx={iconButtonSx}
+              >
+                <TranslateIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          </Box>
         )}
         {mesegeEnrichedText}
       </Box>

@@ -3,7 +3,7 @@ from src.retrieval.db_connector import dbConnector
 import logging
 import re
 from typing import Optional, Tuple
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import uuid
 import tldextract
 
@@ -178,6 +178,53 @@ def add_message(db, conversation_id, role, content, sources_ids='', urls=None, m
     add_claims_and_sources(new_message)
 
   return new_message
+
+
+def get_message_by_id(db, message_id):
+  return db.query(Message).filter(Message.id == message_id).first()
+
+
+def get_messages_up_to(db, conversation_id, message_id, include_hidden=False):
+  """Messages in a conversation from the start up to and including
+  `message_id`, oldest-first — the source range for a "split to new
+  conversation" copy. Returns [] if message_id isn't found in this
+  conversation (e.g. wrong conversation, or hidden and include_hidden=False)."""
+  q = db.query(Message).filter(Message.conversation_id == conversation_id)
+  if not include_hidden:
+    q = q.filter(Message.hidden_from_user.is_(False))
+  ordered = q.order_by(Message.created_at.asc(), Message.id.asc()).all()
+
+  cutoff = next((i for i, m in enumerate(ordered) if str(m.id) == str(message_id)), None)
+  if cutoff is None:
+    return []
+  return ordered[: cutoff + 1]
+
+
+def copy_messages(db, messages, dest_conversation_id) -> list:
+  """Insert copies of `messages` (oldest-first) into a different
+  conversation, in one transaction. Explicit incrementing `created_at`
+  (rather than each row defaulting to "now") keeps the copies in the same
+  relative order — ordering elsewhere in this module depends on
+  created_at, and inserting a whole batch in a tight loop risks identical
+  or out-of-order timestamps otherwise."""
+  base_time = datetime.now(timezone.utc)
+  copies = []
+  for i, m in enumerate(messages):
+    copy = Message(
+      conversation_id=dest_conversation_id,
+      role=m.role,
+      content=m.content,
+      created_at=base_time + timedelta(milliseconds=i),
+      sources_ids=m.sources_ids,
+      extracted_terms=m.extracted_terms,
+      urls=m.urls,
+      model_name=m.model_name,
+      hidden_from_user=False,
+    )
+    db.add(copy)
+    copies.append(copy)
+  db.commit()
+  return copies
 
 
 def get_recent_messages(db, conversation_id, limit=50, include_hidden=False):

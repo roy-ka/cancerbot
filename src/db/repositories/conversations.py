@@ -26,10 +26,12 @@ def format_last_msg_time(dt):
     return dt.isoformat()
 
 
-def create_conversation(db, user_id, title=None):
+def create_conversation(db, user_id, title=None, forked_from_conversation_id=None, forked_from_message_id=None):
   new_conversation = Conversation(
     user_id=user_id,
     title=title,
+    forked_from_conversation_id=forked_from_conversation_id,
+    forked_from_message_id=forked_from_message_id,
   )
   db.add(new_conversation)
   db.commit()

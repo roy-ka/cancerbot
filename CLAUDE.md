@@ -303,8 +303,9 @@ Deliberate current state and where it's weak, roughly highest-impact first.
 | Model | Table | Purpose |
 |-------|-------|---------|
 | `User` | `users` | Auth; has `token_version` (incremented on password reset to invalidate old JWTs) |
-| `Conversation` | `conversations` | Soft-deletable chat threads |
+| `Conversation` | `conversations` | Soft-deletable chat threads; `forked_from_conversation_id`/`forked_from_message_id` set when created via the "split" message option |
 | `Message` | `messages` | Has `sources_ids` (JSON) and `extracted_terms` (JSON) |
+| `MessageFeedback` | `message_feedback` | Per-user thumbs up/down (`vote` +1/-1) on an assistant message, unique on `(message_id, user_id)` |
 | `Token` | `tokens` | Unified table for password-reset, email-verification, account-deletion, and waitlist-invite tokens — see `src/db/repositories/tokens.py` |
 | `LoginAttempt` | `login_attempts` | Brute-force tracking (login) |
 | `RateLimitEntry` | `rate_limit_entries` | Rate limiting for register (per-IP, 10/h) and forgot-password (per-email, 5/h) |

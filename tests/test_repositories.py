@@ -12,7 +12,11 @@ from src.db.repositories.waitlist import create_waitlist_entry, list_waitlist_en
 from src.db.repositories.conversations import (
     create_conversation, get_conversation_by_id, soft_delete_conversation, get_conversations_list_by_user_id
 )
-from src.db.repositories.messeges import add_message, get_recent_messages, get_messages_by_conversation_id
+from src.db.repositories.messeges import (
+    add_message, get_recent_messages, get_messages_by_conversation_id,
+    get_messages_up_to, copy_messages,
+)
+from src.db.repositories.message_feedback import set_feedback, get_feedback_for_messages
 from src.db.repositories.tokens import (
     create_reset_token, verify_reset_token, consume_reset_token,
     create_waitlist_invite_token, verify_waitlist_invite_token,
@@ -236,6 +240,88 @@ class TestMessageRepository:
         db_session.commit()
         recent = get_recent_messages(db_session, test_conversation.id, limit=2)
         assert len(recent) == 2
+
+
+class TestMessageFeedbackRepository:
+    def test_set_feedback_creates_vote(self, db_session, test_conversation):
+        msg = add_message(db_session, conversation_id=test_conversation.id, role="assistant", content="answer")
+        result = set_feedback(db_session, message_id=msg.id, user_id=test_conversation.user_id, vote=1)
+        assert result == 1
+
+    def test_set_feedback_same_vote_toggles_off(self, db_session, test_conversation):
+        msg = add_message(db_session, conversation_id=test_conversation.id, role="assistant", content="answer")
+        set_feedback(db_session, message_id=msg.id, user_id=test_conversation.user_id, vote=1)
+        result = set_feedback(db_session, message_id=msg.id, user_id=test_conversation.user_id, vote=1)
+        assert result is None
+
+    def test_set_feedback_different_vote_switches(self, db_session, test_conversation):
+        msg = add_message(db_session, conversation_id=test_conversation.id, role="assistant", content="answer")
+        set_feedback(db_session, message_id=msg.id, user_id=test_conversation.user_id, vote=1)
+        result = set_feedback(db_session, message_id=msg.id, user_id=test_conversation.user_id, vote=-1)
+        assert result == -1
+
+    def test_get_feedback_for_messages_bulk(self, db_session, test_conversation):
+        msg1 = add_message(db_session, conversation_id=test_conversation.id, role="assistant", content="a1")
+        msg2 = add_message(db_session, conversation_id=test_conversation.id, role="assistant", content="a2")
+        set_feedback(db_session, message_id=msg1.id, user_id=test_conversation.user_id, vote=1)
+        set_feedback(db_session, message_id=msg2.id, user_id=test_conversation.user_id, vote=-1)
+
+        result = get_feedback_for_messages(db_session, [msg1.id, msg2.id], test_conversation.user_id)
+        assert result == {str(msg1.id): 1, str(msg2.id): -1}
+
+    def test_get_feedback_for_messages_omits_unvoted(self, db_session, test_conversation):
+        msg = add_message(db_session, conversation_id=test_conversation.id, role="assistant", content="a1")
+        result = get_feedback_for_messages(db_session, [msg.id], test_conversation.user_id)
+        assert result == {}
+
+    def test_get_feedback_for_messages_empty_list(self, db_session, test_conversation):
+        assert get_feedback_for_messages(db_session, [], test_conversation.user_id) == {}
+
+
+class TestConversationSplitRepository:
+    def test_get_messages_up_to_includes_target_and_earlier(self, db_session, test_conversation):
+        # test_conversation fixture already has one user message
+        assistant_msg = add_message(db_session, conversation_id=test_conversation.id, role="assistant", content="a1")
+        add_message(db_session, conversation_id=test_conversation.id, role="user", content="q2")
+
+        result = get_messages_up_to(db_session, test_conversation.id, assistant_msg.id)
+        assert [m.content for m in result] == ["What is cancer?", "a1"]
+
+    def test_get_messages_up_to_excludes_hidden(self, db_session, test_conversation):
+        add_message(db_session, conversation_id=test_conversation.id, role="assistant", content="hidden", hidden_from_user=True)
+        target = add_message(db_session, conversation_id=test_conversation.id, role="assistant", content="visible")
+
+        result = get_messages_up_to(db_session, test_conversation.id, target.id)
+        assert [m.content for m in result] == ["What is cancer?", "visible"]
+
+    def test_get_messages_up_to_missing_message_returns_empty(self, db_session, test_conversation):
+        import uuid
+        result = get_messages_up_to(db_session, test_conversation.id, uuid.uuid4())
+        assert result == []
+
+    def test_copy_messages_creates_new_rows_in_dest_conversation(self, db_session, test_conversation):
+        dest = create_conversation(db_session, user_id=test_conversation.user_id, title="dest")
+        source_messages = get_messages_up_to(
+            db_session, test_conversation.id,
+            add_message(db_session, conversation_id=test_conversation.id, role="assistant", content="a1").id,
+        )
+        copies = copy_messages(db_session, source_messages, dest.id)
+
+        assert len(copies) == len(source_messages)
+        assert all(c.conversation_id == dest.id for c in copies)
+        assert [c.content for c in copies] == [m.content for m in source_messages]
+        # Originals untouched
+        assert all(m.conversation_id == test_conversation.id for m in source_messages)
+
+    def test_copy_messages_preserves_order(self, db_session, test_conversation):
+        dest = create_conversation(db_session, user_id=test_conversation.user_id, title="dest")
+        add_message(db_session, conversation_id=test_conversation.id, role="assistant", content="a1")
+        last = add_message(db_session, conversation_id=test_conversation.id, role="user", content="q2")
+        source_messages = get_messages_up_to(db_session, test_conversation.id, last.id)
+
+        copies = copy_messages(db_session, source_messages, dest.id)
+        ordered = sorted(copies, key=lambda m: m.created_at)
+        assert [m.content for m in ordered] == [m.content for m in source_messages]
 
 
 class TestPasswordResetRepository:

@@ -224,6 +224,11 @@ export default function Chat() {
     }
   }
 
+  const handleSplitConversation = (conversation: Conversation) => {
+    setConversations((prev) => [conversation, ...prev])
+    setSelectedConversationId(conversation.id)
+  }
+
   const handleDeleteAccount = async (): Promise<string | null> => {
     try {
       const res = await fetch(`${BASE_URL}/auth/request-delete/`, {
@@ -396,6 +401,8 @@ export default function Chat() {
               currentStage={currentStage}
               streamingContent={streamingContent}
               onExampleClick={setInputValue}
+              conversationId={selectedConversationId === 'new' ? undefined : selectedConversationId}
+              onSplit={handleSplitConversation}
             />
           </Box>
         </Box>

@@ -47,4 +47,5 @@ export type Message = {
   timestamp: string
   sources: Source[]
   urls?: string[]
+  feedback?: 1 | -1 | null
 }

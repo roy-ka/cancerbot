@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import  List, Optional
 from uuid import uuid4
 
-from sqlalchemy import Column, DateTime, Float, ForeignKey, String, Text, JSON, Integer, Boolean
+from sqlalchemy import Column, DateTime, Float, ForeignKey, String, Text, JSON, Integer, Boolean, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, relationship
 from .base import Base
@@ -66,6 +66,12 @@ class Conversation(Base):
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
     deleted_at = Column(DateTime(timezone=True), nullable=True)
+    # Lineage for the "split to new conversation" feature — plain indexed UUID
+    # columns rather than FKs (same choice as SearchAnalytic's conversation_id/
+    # message_id), so a later delete of the source conversation/message never
+    # blocks or cascades into deleting the split-off conversation.
+    forked_from_conversation_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+    forked_from_message_id = Column(UUID(as_uuid=True), nullable=True)
 
     user: Mapped["User"] = relationship("User", back_populates="conversations")
 
@@ -145,12 +151,26 @@ class Message(Base):
             # If value isn't a list of dicts, don't crash model usage
             pass
 
-
     conversation: Mapped["Conversation"] = relationship(
         "Conversation",
         back_populates="messages",
         passive_deletes=True,
     )
+
+
+class MessageFeedback(Base):
+    __tablename__ = "message_feedback"
+    __table_args__ = (
+        UniqueConstraint("message_id", "user_id", name="uq_message_feedback_message_user"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    message_id = Column(UUID(as_uuid=True), ForeignKey("messages.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    vote = Column(Integer, nullable=False)  # +1 (thumbs up) or -1 (thumbs down)
+    created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+
 
 class Token(Base):
     """Unified table for every single-purpose token flow: password reset,

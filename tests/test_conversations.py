@@ -512,6 +512,148 @@ class TestConversationMessages:
         assert response.status_code in [403, 404]
 
 
+class TestMessageFeedback:
+    def test_feedback_up_returns_vote(self, client, test_conversation, db_session):
+        from src.db.repositories.messeges import add_message
+        msg = add_message(db_session, conversation_id=test_conversation.id, role="assistant", content="answer")
+        db_session.commit()
+
+        response = client.post(
+            f"/conversations/{test_conversation.id}/messages/{msg.id}/feedback",
+            json={"vote": 1},
+        )
+        assert response.status_code == 200
+        assert response.json()["vote"] == 1
+
+    def test_feedback_same_vote_toggles_off(self, client, test_conversation, db_session):
+        from src.db.repositories.messeges import add_message
+        msg = add_message(db_session, conversation_id=test_conversation.id, role="assistant", content="answer")
+        db_session.commit()
+
+        client.post(f"/conversations/{test_conversation.id}/messages/{msg.id}/feedback", json={"vote": -1})
+        response = client.post(
+            f"/conversations/{test_conversation.id}/messages/{msg.id}/feedback",
+            json={"vote": -1},
+        )
+        assert response.json()["vote"] is None
+
+    def test_feedback_on_user_message_returns_400(self, client, test_conversation, db_session):
+        from src.db.repositories.messeges import add_message
+        msg = add_message(db_session, conversation_id=test_conversation.id, role="user", content="question")
+        db_session.commit()
+
+        response = client.post(
+            f"/conversations/{test_conversation.id}/messages/{msg.id}/feedback",
+            json={"vote": 1},
+        )
+        assert response.status_code == 400
+
+    def test_feedback_invalid_vote_returns_422(self, client, test_conversation, db_session):
+        from src.db.repositories.messeges import add_message
+        msg = add_message(db_session, conversation_id=test_conversation.id, role="assistant", content="answer")
+        db_session.commit()
+
+        response = client.post(
+            f"/conversations/{test_conversation.id}/messages/{msg.id}/feedback",
+            json={"vote": 2},
+        )
+        assert response.status_code == 422
+
+    def test_feedback_message_not_found_returns_404(self, client, test_conversation):
+        import uuid
+        response = client.post(
+            f"/conversations/{test_conversation.id}/messages/{uuid.uuid4()}/feedback",
+            json={"vote": 1},
+        )
+        assert response.status_code == 404
+
+    def test_feedback_conversation_not_found_returns_404(self, client, test_conversation, db_session):
+        import uuid
+        from src.db.repositories.messeges import add_message
+        msg = add_message(db_session, conversation_id=test_conversation.id, role="assistant", content="answer")
+        db_session.commit()
+
+        response = client.post(
+            f"/conversations/{uuid.uuid4()}/messages/{msg.id}/feedback",
+            json={"vote": 1},
+        )
+        assert response.status_code == 404
+
+    def test_message_listing_includes_feedback_state(self, client, test_conversation, db_session):
+        from src.db.repositories.messeges import add_message
+        msg = add_message(db_session, conversation_id=test_conversation.id, role="assistant", content="answer")
+        db_session.commit()
+        client.post(f"/conversations/{test_conversation.id}/messages/{msg.id}/feedback", json={"vote": 1})
+
+        response = client.get(f"/conversations/{test_conversation.id}/messages/")
+        row = next(m for m in response.json()["messages"] if m["id"] == str(msg.id))
+        assert row["feedback"] == 1
+
+
+class TestSplitConversation:
+    @patch("src.routers.conversations.OllamaConnector.generate_title", new_callable=AsyncMock)
+    def test_split_creates_new_conversation_with_generated_title(
+        self, mock_generate_title, client, test_conversation, db_session
+    ):
+        from src.db.repositories.messeges import add_message
+        mock_generate_title.return_value = "Split Title"
+        msg = add_message(db_session, conversation_id=test_conversation.id, role="assistant", content="answer")
+        db_session.commit()
+
+        response = client.post(f"/conversations/{test_conversation.id}/messages/{msg.id}/split")
+        assert response.status_code == 201
+        data = response.json()
+        assert data["title"] == "Split Title"
+        assert data["id"] != str(test_conversation.id)
+        # Titled from the preceding question, not the answer itself
+        mock_generate_title.assert_awaited_once_with("What is cancer?")
+
+    @patch("src.routers.conversations.OllamaConnector.generate_title", new_callable=AsyncMock)
+    def test_split_copies_messages_up_to_split_point(
+        self, mock_generate_title, client, test_conversation, db_session
+    ):
+        from src.db.repositories.messeges import add_message
+        mock_generate_title.return_value = "Split Title"
+        msg = add_message(db_session, conversation_id=test_conversation.id, role="assistant", content="answer")
+        add_message(db_session, conversation_id=test_conversation.id, role="user", content="not included")
+        db_session.commit()
+
+        response = client.post(f"/conversations/{test_conversation.id}/messages/{msg.id}/split")
+        new_conv_id = response.json()["id"]
+
+        messages_response = client.get(f"/conversations/{new_conv_id}/messages/")
+        contents = [m["content"] for m in messages_response.json()["messages"]]
+        assert contents == ["What is cancer?", "answer"]
+
+    def test_split_on_user_message_returns_400(self, client, test_conversation, db_session):
+        from src.db.repositories.messeges import add_message
+        msg = add_message(db_session, conversation_id=test_conversation.id, role="user", content="question")
+        db_session.commit()
+
+        response = client.post(f"/conversations/{test_conversation.id}/messages/{msg.id}/split")
+        assert response.status_code == 400
+
+    def test_split_message_not_found_returns_404(self, client, test_conversation):
+        import uuid
+        response = client.post(f"/conversations/{test_conversation.id}/messages/{uuid.uuid4()}/split")
+        assert response.status_code == 404
+
+    @patch("src.routers.conversations.OllamaConnector.generate_title", new_callable=AsyncMock)
+    def test_split_sets_lineage(self, mock_generate_title, client, test_conversation, db_session):
+        import uuid
+        from src.db.repositories.messeges import add_message
+        from src.db.models import Conversation
+        mock_generate_title.return_value = "Split Title"
+        msg = add_message(db_session, conversation_id=test_conversation.id, role="assistant", content="answer")
+        db_session.commit()
+
+        response = client.post(f"/conversations/{test_conversation.id}/messages/{msg.id}/split")
+        new_conv_id = uuid.UUID(response.json()["id"])
+        new_conv = db_session.query(Conversation).filter(Conversation.id == new_conv_id).first()
+        assert str(new_conv.forked_from_conversation_id) == str(test_conversation.id)
+        assert str(new_conv.forked_from_message_id) == str(msg.id)
+
+
 class TestFallbackPath:
     def test_no_data_response_appends_source_citations(self, client, test_conversation):
         from src.classes.ollama_connector import NO_DATA_RESPONSE

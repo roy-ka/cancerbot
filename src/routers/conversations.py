@@ -17,7 +17,16 @@ from src.db.repositories.conversations import (
     format_last_msg_time,
     soft_delete_conversation,
 )
-from src.db.repositories.messeges import add_message, add_claims_and_sources, get_messages_by_conversation_id, get_recent_messages
+from src.db.repositories.messeges import (
+    add_message,
+    add_claims_and_sources,
+    get_messages_by_conversation_id,
+    get_recent_messages,
+    get_message_by_id,
+    get_messages_up_to,
+    copy_messages,
+)
+from src.db.repositories.message_feedback import set_feedback, get_feedback_for_messages
 from uuid import UUID
 from src.retrieval import run_retrieval
 from src.classes.ollama_connector import OllamaConnector, NO_DATA_RESPONSE
@@ -494,6 +503,12 @@ async def get_conversation_messages(
         if oldest.created_at:
             next_before = f"{oldest.created_at.isoformat()}|{str(oldest.id)}"
 
+    feedback_by_message = get_feedback_for_messages(
+        db=db,
+        message_ids=[msg.id for msg in messages],
+        user_id=current_user.id,
+    )
+
     messages_data = [
         {
             "id": str(msg.id),
@@ -501,6 +516,7 @@ async def get_conversation_messages(
             "content": msg.content,
             "created_at": msg.created_at.isoformat() if msg.created_at else None,
             "sources": msg.sources,
+            "feedback": feedback_by_message.get(str(msg.id)),
         }
         for msg in messages
     ]
@@ -514,6 +530,80 @@ async def get_conversation_messages(
         "messages": messages_data,
         "next_before": next_before,
     }
+
+class FeedbackRequest(BaseModel):
+    vote: Literal[1, -1]
+
+
+@router.post("/{conversation_id}/messages/{message_id}/feedback")
+async def submit_message_feedback(
+    conversation_id: UUID,
+    message_id: UUID,
+    req: FeedbackRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    conversation = get_conversation_by_id(db=db, conversation_id=conversation_id, current_user=current_user)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    message = get_message_by_id(db=db, message_id=message_id)
+    if message is None or str(message.conversation_id) != str(conversation_id):
+        raise HTTPException(status_code=404, detail="Message not found")
+    if message.role != "assistant":
+        raise HTTPException(status_code=400, detail="Feedback is only supported on assistant messages")
+
+    vote = set_feedback(db=db, message_id=message_id, user_id=current_user.id, vote=req.vote)
+    return {"vote": vote}
+
+
+@router.post("/{conversation_id}/messages/{message_id}/split", status_code=201)
+async def split_conversation(
+    conversation_id: UUID,
+    message_id: UUID,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    conversation = get_conversation_by_id(db=db, conversation_id=conversation_id, current_user=current_user)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    message = get_message_by_id(db=db, message_id=message_id)
+    if message is None or str(message.conversation_id) != str(conversation_id):
+        raise HTTPException(status_code=404, detail="Message not found")
+    if message.role != "assistant":
+        raise HTTPException(status_code=400, detail="You can only split at an assistant message")
+
+    source_messages = get_messages_up_to(db=db, conversation_id=conversation_id, message_id=message_id)
+    if not source_messages:
+        raise HTTPException(status_code=404, detail="Message not found")
+
+    # Title the new conversation from the question that led to this answer,
+    # not the answer itself — generate_title expects "the message a
+    # conversation starts with", and a short question makes a far better
+    # title than a long generated answer.
+    preceding_user_message = next(
+        (m for m in reversed(source_messages) if m.role == "user"), None
+    )
+    title_source = preceding_user_message.content if preceding_user_message else message.content
+    title = await OllamaConnector.generate_title(title_source)
+
+    new_conversation = create_conversation(
+        db=db,
+        user_id=current_user.id,
+        title=title,
+        forked_from_conversation_id=conversation_id,
+        forked_from_message_id=message_id,
+    )
+    copy_messages(db=db, messages=source_messages, dest_conversation_id=new_conversation.id)
+
+    return {
+        "id": str(new_conversation.id),
+        "title": new_conversation.title,
+        "lastMessage": None,
+        "lastMessageTime": None,
+    }
+
 
 @router.post("/{conversation_id}/add_message")
 async def post_message(

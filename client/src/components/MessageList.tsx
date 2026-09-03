@@ -1,6 +1,7 @@
 import { Alert, Box, CircularProgress, Snackbar } from '@mui/material'
 import type { Message } from '../types'
 import MessageItem from './MessageItem'
+type NewConversation = { id: string; title: string; lastMessage: string | null; lastMessageTime: string | null }
 import ConversationIntro from './ConversationIntro'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { crabReadingSendIcon, crabSearchingBooksAnimated } from '../assets'
@@ -35,6 +36,8 @@ export default function MessageList({
   currentStage = null,
   streamingContent = null,
   onExampleClick,
+  conversationId,
+  onSplit,
 }: {
   messages: Message[]
   onLoadOlder?: () => Promise<boolean> | boolean
@@ -43,6 +46,8 @@ export default function MessageList({
   currentStage?: string | null
   streamingContent?: string | null
   onExampleClick?: (text: string) => void
+  conversationId?: string
+  onSplit?: (conversation: NewConversation) => void
 }) {
   const [noOlderOpen, setNoOlderOpen] = useState(false)
   const lastTriggerRef = useRef<number>(0)
@@ -134,7 +139,12 @@ export default function MessageList({
         <ConversationIntro onExampleClick={onExampleClick} />
       )}
       {messages.map((message) => (
-        <MessageItem message={message} key={message.id || 'new'} />
+        <MessageItem
+          message={message}
+          key={message.id || 'new'}
+          conversationId={conversationId}
+          onSplit={onSplit}
+        />
       ))}
       {streamingContent !== null ? (
         <Box
