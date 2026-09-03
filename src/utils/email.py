@@ -226,6 +226,16 @@ async def send_waitlist_joined_email(to: str, name: str) -> bool:
     return await _deliver(to, "waitlist_joined", {"name": name})
 
 
+async def send_waitlist_invited_email(to: str, name: str, link: str) -> bool:
+    """Sent when a ninja invites (or re-invites) someone off the waitlist.
+    `link` carries the invite token (see src/db/repositories/tokens.py:
+    create_waitlist_invite_token) that lets that one email bypass MAX_USERS
+    for 48 hours."""
+    if not is_prod():
+        logger.info("[email] waitlist invite link for %s: %s", to, _redact_token(link))
+    return await _deliver(to, "waitlist_invited", {"name": name, "link": link})
+
+
 async def send_delete_account_cancelled_email(to: str, name: str) -> bool:
     """Sent when a scheduled deletion is cancelled (user logs in during the
     7-day grace period and confirms via the cancel-deletion dialog)."""

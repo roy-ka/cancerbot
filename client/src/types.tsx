@@ -14,6 +14,7 @@ export type RegistrationPayload = {
   password: string
   first_name: string
   last_name: string
+  invite_token?: string
 }
 
 export type WaitlistPayload = {

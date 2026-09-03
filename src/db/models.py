@@ -153,18 +153,28 @@ class Message(Base):
     )
 
 class Token(Base):
-    """Unified table for the three single-purpose token flows: password
-    reset, email verification, and account deletion — see
+    """Unified table for every single-purpose token flow: password reset,
+    email verification, account deletion, and waitlist invites — see
     src/db/repositories/tokens.py for the type-specific behavior each of
     those still needs (different TTLs, and password_reset alone allows
-    multiple verifies via use_count before consumption)."""
+    multiple verifies via use_count before consumption).
+
+    Exactly one of user_id / waitlist_entry_id is set, never both: the first
+    three types belong to an existing User, while waitlist_invite belongs to
+    a WaitlistEntry (issued before that person has an account at all)."""
     __tablename__ = "tokens"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     user_id = Column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
+        index=True,
+    )
+    waitlist_entry_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("waitlist_entries.id", ondelete="CASCADE"),
+        nullable=True,
         index=True,
     )
     token_type = Column(String(32), nullable=False, index=True)

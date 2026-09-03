@@ -6,13 +6,17 @@ import logging
 from src.deps.db import get_db
 from src.deps.auth import get_current_ninja_user
 from src.db.repositories.users import list_all_users
-from src.db.repositories.waitlist import list_waitlist_entries
+from src.db.repositories.waitlist import list_waitlist_entries, get_waitlist_entry_by_id, mark_waitlist_entry_invited
+from src.db.repositories.tokens import create_waitlist_invite_token
 from src.db.repositories.conversations import (
     get_conversation_by_id_no_auth,
     get_conversations_list_by_user_id,
 )
 from src.db.repositories.messeges import get_messages_by_conversation_id
 from src.routers.conversations import Message, _process_post_message, _check_message_rate
+from src.routers.auth import _get_frontend_url
+from src.queue import enqueue
+from src.utils.utils import is_prod
 
 router = APIRouter(prefix="/ninja", tags=["ninja"])
 
@@ -60,6 +64,40 @@ async def list_waitlist(
             for e in entries
         ]
     }
+
+
+@router.post("/waitlist/{entry_id}/invite")
+async def invite_waitlist_entry(
+    entry_id: UUID,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_ninja_user),
+):
+    """Send (or resend) an invite to one waitlist entry. Generates a fresh
+    48h invite token — a resend supersedes any earlier link, which stops
+    working immediately (see create_waitlist_invite_token)."""
+    entry = get_waitlist_entry_by_id(db=db, entry_id=entry_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Waitlist entry not found")
+
+    token = create_waitlist_invite_token(db=db, waitlist_entry_id=entry.id)
+    link = f"{_get_frontend_url()}/login?invite_token={token}"
+    await enqueue("send_waitlist_invited_email_job", to=entry.email, name=entry.name, link=link)
+    mark_waitlist_entry_invited(db=db, entry=entry)
+
+    resp = {
+        "id": str(entry.id),
+        "email": entry.email,
+        "name": entry.name,
+        "created_at": entry.created_at.isoformat() if entry.created_at else None,
+        "invited": entry.invited,
+        "invited_at": entry.invited_at.isoformat() if entry.invited_at else None,
+    }
+    # Dev-mode escape hatch, same pattern as /auth/register/'s
+    # verification_token — there's no inbox to read the real link from in
+    # tests/CI, and only the hash is stored so it can't be recovered later.
+    if not is_prod():
+        resp["invite_token"] = token
+    return resp
 
 
 @router.get("/users/{user_id}/conversations/")

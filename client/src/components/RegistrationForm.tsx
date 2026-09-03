@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useEffect } from 'react'
 import { Stack, TextField, FormControl, Button, Checkbox, FormControlLabel, Link, Box, Alert, Typography } from '@mui/material'
 import { Link as RouterLink } from 'react-router-dom'
 import type { RegistrationPayload } from '../types'
@@ -92,8 +92,10 @@ function PasswordRequirements({ password }: { password: string }) {
 
 export default function RegistrationForm({
   changeToLogin,
+  inviteToken,
 }: {
   changeToLogin: () => void
+  inviteToken?: string
 }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -106,7 +108,31 @@ export default function RegistrationForm({
   const [termsAccepted, setTermsAccepted] = useState(false)
   const [error, setError] = useState('')
   const [emailSent, setEmailSent] = useState(false)
+  const [emailLockedByInvite, setEmailLockedByInvite] = useState(false)
   const BASE_URL = import.meta.env.VITE_BASE_URL || ''
+
+  // An invite link is tied to one email — pre-fill and lock the field so
+  // the submitted email always matches what /auth/register/ will validate
+  // the invite_token against (a mismatch there is rejected server-side).
+  useEffect(() => {
+    if (!inviteToken) return
+    let cancelled = false
+    fetch(`${BASE_URL}/auth/invite_info/?invite_token=${encodeURIComponent(inviteToken)}`)
+      .then((res) => (res.ok ? res.json() : Promise.reject()))
+      .then((data) => {
+        if (cancelled) return
+        setEmail(data.email)
+        setEmailError(false)
+        setEmailLockedByInvite(true)
+      })
+      .catch(() => {
+        // Invalid/expired token — leave the email field open; submitting
+        // will still be rejected server-side with the real reason.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [inviteToken, BASE_URL])
 
   const verifyEmail = (email: string) => {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email === ''
@@ -138,7 +164,7 @@ export default function RegistrationForm({
       return
     }
     setError('')
-    register({ email, password, first_name: firstName, last_name: lastName }).catch((err) => {
+    register({ email, password, first_name: firstName, last_name: lastName, invite_token: inviteToken }).catch((err) => {
       console.error('Registration error:', err)
       setError(err.message)
     })
@@ -211,8 +237,11 @@ export default function RegistrationForm({
             type="email"
             autoComplete="email"
             variant="outlined"
+            value={email}
             onChange={changeEmail}
             error={emailError}
+            disabled={emailLockedByInvite}
+            helperText={emailLockedByInvite ? "This invite is for this email address" : ' '}
           />
 
           <TextField

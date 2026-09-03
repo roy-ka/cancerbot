@@ -30,12 +30,16 @@ function AuthButtons({ isLogin, setIsLogin }: AuthButtonsProps) {
 
 type View = 'login' | 'register' | 'forgot'
 
-export default function AuthPanel() {
-  const [view, setView] = useState<View>('login')
+export default function AuthPanel({ inviteToken }: { inviteToken?: string }) {
+  const [view, setView] = useState<View>(inviteToken ? 'register' : 'login')
   const [registrationOpen, setRegistrationOpen] = useState(true)
   const BASE_URL = import.meta.env.VITE_BASE_URL || ''
 
   useEffect(() => {
+    // An invite link always shows the registration form — the backend
+    // validates the token itself, so there's no need to (and it would be
+    // confusing to) check the general registration_status here too.
+    if (inviteToken) return
     if (view !== 'register') return
     let cancelled = false
     fetch(`${BASE_URL}/auth/registration_status/`)
@@ -51,18 +55,22 @@ export default function AuthPanel() {
     return () => {
       cancelled = true
     }
-  }, [view, BASE_URL])
+  }, [view, BASE_URL, inviteToken])
+
+  const registrationVisible = !!inviteToken || registrationOpen
 
   const titles: Record<View, string> = {
     login: 'Welcome back',
-    register: registrationOpen ? 'Create your account' : "We're full for now",
+    register: registrationVisible ? 'Create your account' : "We're full for now",
     forgot: 'Reset your password',
   }
   const subtitles: Record<View, string> = {
     login: 'Log in to continue to cancerbot.',
-    register: registrationOpen
-      ? 'Register to start saving sources and exploring evidence.'
-      : "We're limiting new signups while we grow slowly.",
+    register: inviteToken
+      ? "You've been invited — welcome!"
+      : registrationVisible
+        ? 'Register to start saving sources and exploring evidence.'
+        : "We're limiting new signups while we grow slowly.",
     forgot: "We'll send a reset link to your email.",
   }
 
@@ -89,8 +97,8 @@ export default function AuthPanel() {
           <LoginForm onForgotPassword={() => setView('forgot')} />
         )}
         {view === 'register' && (
-          registrationOpen ? (
-            <RegistrationForm changeToLogin={() => setView('login')} />
+          registrationVisible ? (
+            <RegistrationForm changeToLogin={() => setView('login')} inviteToken={inviteToken} />
           ) : (
             <WaitlistForm changeToLogin={() => setView('login')} />
           )

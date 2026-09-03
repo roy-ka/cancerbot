@@ -29,6 +29,7 @@ from . import (
     delete_account_cancelled,
     fallback_alert,
     waitlist_joined,
+    waitlist_invited,
 )
 
 TEMPLATES = {
@@ -63,6 +64,10 @@ TEMPLATES = {
   "waitlist_joined": {
     "subject": waitlist_joined.SUBJECT,
     "html": waitlist_joined.HTML,
+  },
+  "waitlist_invited": {
+    "subject": waitlist_invited.SUBJECT,
+    "html": waitlist_invited.HTML,
   },
 }
 

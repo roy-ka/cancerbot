@@ -13,7 +13,10 @@ from src.db.repositories.conversations import (
     create_conversation, get_conversation_by_id, soft_delete_conversation, get_conversations_list_by_user_id
 )
 from src.db.repositories.messeges import add_message, get_recent_messages, get_messages_by_conversation_id
-from src.db.repositories.tokens import create_reset_token, verify_reset_token, consume_reset_token
+from src.db.repositories.tokens import (
+    create_reset_token, verify_reset_token, consume_reset_token,
+    create_waitlist_invite_token, verify_waitlist_invite_token,
+)
 from src.auth.security import SecurityUtils
 
 
@@ -385,3 +388,63 @@ class TestTokenTypeIsolation:
         db_session.commit()
 
         assert record.use_count == 0
+
+
+class TestWaitlistInviteToken:
+    def test_create_and_verify_round_trip(self, db_session):
+        entry = create_waitlist_entry(db_session, "invite@example.com", "Invite Person")
+        token = create_waitlist_invite_token(db_session, entry.id)
+
+        record, error = verify_waitlist_invite_token(db_session, token, "invite@example.com")
+        assert record is not None
+        assert error == ""
+        assert record.waitlist_entry_id == entry.id
+        assert record.user_id is None
+
+    def test_verify_wrong_email_rejected(self, db_session):
+        entry = create_waitlist_entry(db_session, "owner@example.com", "Owner")
+        token = create_waitlist_invite_token(db_session, entry.id)
+
+        record, error = verify_waitlist_invite_token(db_session, token, "someone-else@example.com")
+        assert record is None
+        assert "different email" in error.lower()
+
+    def test_verify_accepts_email_variation(self, db_session):
+        entry = create_waitlist_entry(db_session, "john.doe@gmail.com", "John")
+        token = create_waitlist_invite_token(db_session, entry.id)
+
+        record, error = verify_waitlist_invite_token(db_session, token, "johndoe+tag@gmail.com")
+        assert record is not None
+        assert error == ""
+
+    def test_resend_invalidates_previous_token(self, db_session):
+        entry = create_waitlist_entry(db_session, "resend2@example.com", "Resend")
+        token1 = create_waitlist_invite_token(db_session, entry.id)
+        token2 = create_waitlist_invite_token(db_session, entry.id)
+
+        record1, error1 = verify_waitlist_invite_token(db_session, token1, "resend2@example.com")
+        assert record1 is None
+
+        record2, error2 = verify_waitlist_invite_token(db_session, token2, "resend2@example.com")
+        assert record2 is not None
+        assert error2 == ""
+
+    def test_expired_invite_token_rejected(self, db_session):
+        from freezegun import freeze_time
+
+        entry = create_waitlist_entry(db_session, "expired@example.com", "Expired")
+        with freeze_time("2026-01-01 12:00:00"):
+            token = create_waitlist_invite_token(db_session, entry.id)
+
+        with freeze_time("2026-01-03 13:00:00"):  # 49h later
+            record, error = verify_waitlist_invite_token(db_session, token, "expired@example.com")
+
+        assert record is None
+        assert "expired" in error.lower()
+
+    def test_invite_token_does_not_verify_as_reset_token(self, db_session):
+        entry = create_waitlist_entry(db_session, "notreset@example.com", "Not Reset")
+        invite_token = create_waitlist_invite_token(db_session, entry.id)
+
+        record, error = verify_reset_token(db_session, invite_token)
+        assert record is None

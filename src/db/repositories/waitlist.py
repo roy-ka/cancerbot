@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from src.db.models import WaitlistEntry
 from src.utils.email_normalize import normalize_email_for_dedup
 
@@ -29,3 +31,16 @@ def list_waitlist_entries(db, limit: int = 50, offset: int = 0):
 
 def count_waitlist_entries(db) -> int:
   return db.query(WaitlistEntry).count()
+
+
+def get_waitlist_entry_by_id(db, entry_id) -> WaitlistEntry | None:
+  return db.query(WaitlistEntry).filter(WaitlistEntry.id == entry_id).first()
+
+
+def mark_waitlist_entry_invited(db, entry: WaitlistEntry) -> None:
+  """Record that an invite was (re)sent. The actual invite token lives in
+  the shared tokens table (src/db/repositories/tokens.py); this just
+  updates the audit fields shown in the ninja waitlist view."""
+  entry.invited = True
+  entry.invited_at = datetime.now(timezone.utc)
+  db.commit()

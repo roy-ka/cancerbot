@@ -34,6 +34,8 @@ from src.db.repositories.tokens import (
     consume_deletion_token,
     schedule_deletion,
     cancel_deletion,
+    verify_waitlist_invite_token,
+    get_waitlist_invite_entry,
 )
 from src.db.repositories.login_attempts import (
     increment_failed_attempts,
@@ -91,6 +93,7 @@ class CreateUserRequest(BaseModel):
     last_name: str = Field(..., min_length=1, max_length=150)
     email: EmailStr
     password: str
+    invite_token: str | None = None
 
 class LoginRequest(BaseModel):
     email: EmailStr
@@ -166,10 +169,15 @@ async def register_user(req: CreateUserRequest, request: Request, db: Session = 
         raise HTTPException(status_code=400, detail="Email already registered")
 
     if not _registration_open(db):
-        raise HTTPException(
-            status_code=403,
-            detail="Registration is currently full. Please join the waitlist and we'll invite you once a spot opens up.",
-        )
+        # A valid, unexpired invite token for this exact email bypasses the
+        # cap — that's the whole point of an individual invite (see
+        # src/db/repositories/tokens.py:verify_waitlist_invite_token).
+        invited = req.invite_token and verify_waitlist_invite_token(db, req.invite_token, req.email)[0]
+        if not invited:
+            raise HTTPException(
+                status_code=403,
+                detail="Registration is currently full. Please join the waitlist and we'll invite you once a spot opens up.",
+            )
 
     password_error = validate_password(req.password)
     if password_error:
@@ -198,6 +206,17 @@ async def get_registration_status(db: Session = Depends(get_db)):
     disclosed publicly — just the open/closed boolean the frontend needs to
     decide whether to show the registration form or the waitlist form."""
     return {"open": _registration_open(db)}
+
+
+@router.get("/invite_info/")
+async def get_invite_info(invite_token: str = Query(...), db: Session = Depends(get_db)):
+    """Look up the email/name for a still-valid waitlist invite token, so
+    the registration form can pre-fill (and lock) the email field. Does not
+    consume the token — /auth/register/ re-validates it at submit time."""
+    entry, error = get_waitlist_invite_entry(db, invite_token)
+    if not entry:
+        raise HTTPException(status_code=400, detail=error)
+    return {"email": entry.email, "name": entry.name}
 
 
 @router.post("/waitlist/", status_code=201)

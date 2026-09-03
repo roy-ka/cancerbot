@@ -173,6 +173,44 @@ class TestRegistrationCap:
         )
         assert response.status_code == 403
 
+    def test_register_with_valid_invite_token_bypasses_cap(self, anon_client, db_session, monkeypatch, test_user):
+        from src.db.repositories.waitlist import create_waitlist_entry
+        from src.db.repositories.tokens import create_waitlist_invite_token
+
+        entry = create_waitlist_entry(db_session, "invited-in@example.com", "Invited In")
+        token = create_waitlist_invite_token(db_session, entry.id)
+
+        monkeypatch.setenv("MAX_USERS", "1")
+        response = anon_client.post(
+            "/auth/register/",
+            json={
+                "first_name": "Invited", "last_name": "In",
+                "email": "invited-in@example.com",
+                "password": "SecurePass123!",
+                "invite_token": token,
+            },
+        )
+        assert response.status_code == 201
+
+    def test_register_with_invite_token_for_different_email_still_blocked(self, anon_client, db_session, monkeypatch, test_user):
+        from src.db.repositories.waitlist import create_waitlist_entry
+        from src.db.repositories.tokens import create_waitlist_invite_token
+
+        entry = create_waitlist_entry(db_session, "someone@example.com", "Someone")
+        token = create_waitlist_invite_token(db_session, entry.id)
+
+        monkeypatch.setenv("MAX_USERS", "1")
+        response = anon_client.post(
+            "/auth/register/",
+            json={
+                "first_name": "Different", "last_name": "Person",
+                "email": "different-person@example.com",
+                "password": "SecurePass123!",
+                "invite_token": token,
+            },
+        )
+        assert response.status_code == 403
+
     def test_register_succeeds_below_cap(self, anon_client, monkeypatch, test_user):
         monkeypatch.setenv("MAX_USERS", "5")
         response = anon_client.post(
@@ -196,6 +234,59 @@ class TestRegistrationCap:
             },
         )
         assert response.status_code == 201
+
+
+class TestInviteInfo:
+    """GET /auth/invite_info/ backs the registration form's email
+    pre-fill/lock — it must never leak info for an invalid token, and must
+    not consume the token (verify_waitlist_invite_token at /auth/register/
+    time is what actually gates registration)."""
+
+    def test_valid_token_returns_email_and_name(self, anon_client, db_session):
+        from src.db.repositories.waitlist import create_waitlist_entry
+        from src.db.repositories.tokens import create_waitlist_invite_token
+
+        entry = create_waitlist_entry(db_session, "prefill@example.com", "Prefill Person")
+        token = create_waitlist_invite_token(db_session, entry.id)
+
+        response = anon_client.get(f"/auth/invite_info/?invite_token={token}")
+        assert response.status_code == 200
+        assert response.json() == {"email": "prefill@example.com", "name": "Prefill Person"}
+
+    def test_invalid_token_returns_400(self, anon_client):
+        response = anon_client.get("/auth/invite_info/?invite_token=not-a-real-token")
+        assert response.status_code == 400
+
+    def test_missing_token_returns_422(self, anon_client):
+        response = anon_client.get("/auth/invite_info/")
+        assert response.status_code == 422
+
+    def test_expired_token_returns_400(self, anon_client, db_session):
+        from freezegun import freeze_time
+        from src.db.repositories.waitlist import create_waitlist_entry
+        from src.db.repositories.tokens import create_waitlist_invite_token
+
+        entry = create_waitlist_entry(db_session, "expiredprefill@example.com", "Expired Prefill")
+        with freeze_time("2026-01-01 12:00:00"):
+            token = create_waitlist_invite_token(db_session, entry.id)
+
+        with freeze_time("2026-01-03 13:00:00"):  # 49h later
+            response = anon_client.get(f"/auth/invite_info/?invite_token={token}")
+        assert response.status_code == 400
+
+    def test_lookup_does_not_consume_token(self, anon_client, db_session):
+        """A second lookup (or the real registration afterwards) must still
+        work — invite_info is read-only."""
+        from src.db.repositories.waitlist import create_waitlist_entry
+        from src.db.repositories.tokens import create_waitlist_invite_token
+
+        entry = create_waitlist_entry(db_session, "notconsumed@example.com", "Not Consumed")
+        token = create_waitlist_invite_token(db_session, entry.id)
+
+        first = anon_client.get(f"/auth/invite_info/?invite_token={token}")
+        second = anon_client.get(f"/auth/invite_info/?invite_token={token}")
+        assert first.status_code == 200
+        assert second.status_code == 200
 
 
 class TestWaitlist:
