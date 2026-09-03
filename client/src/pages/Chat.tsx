@@ -7,6 +7,7 @@ import type { Conversation, Message } from '../types'
 import InputField from '../components/InputField'
 import IconGuideDialog from '../components/IconGuideDialog'
 import { extractUrls } from '../utils/urls'
+import { isPendingDeletionResponse, loginPathForAuthFailure } from '../utils/authRedirect'
 export default function Chat() {
   const BASE_URL = import.meta.env.VITE_BASE_URL || ''
   const navigate = useNavigate()
@@ -71,11 +72,18 @@ export default function Chat() {
 
     fetch(`${BASE_URL}/conversations/`, { credentials: 'include' })
       .then(async (res) => {
-        if (!res.ok) throw new Error(await res.text())
+        if (!res.ok) {
+          if (res.status === 401) {
+            window.location.href = loginPathForAuthFailure(await isPendingDeletionResponse(res))
+            return null
+          }
+          throw new Error(await res.text())
+        }
         const json = await res.json()
         return json?.conversations
       })
-      .then((convs: Conversation[]) => {
+      .then((convs: Conversation[] | null) => {
+        if (!convs) return
         setConversations(convs)
         setConversationsLoaded(true)
         if (Array.isArray(convs) && convs.length > 0) {
@@ -85,12 +93,6 @@ export default function Chat() {
       .catch((e) => {
         setConversationsLoaded(true)
         console.error('conversations failed:', e)
-        if (
-          e instanceof Error &&
-          e.message.includes('Invalid or expired token')
-        ) {
-          window.location.href = '/login'
-        }
       })
   }, [BASE_URL, conversations.length])
 

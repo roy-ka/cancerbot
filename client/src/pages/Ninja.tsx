@@ -16,6 +16,7 @@ import {
 import ArrowBackIcon from '@mui/icons-material/ArrowBack'
 import MessageItem from '../components/MessageItem'
 import type { Source } from '../types'
+import { isPendingDeletionResponse, loginPathForAuthFailure } from '../utils/authRedirect'
 
 type NinjaUser = {
   id: string
@@ -179,10 +180,14 @@ export default function Ninja() {
   useEffect(() => {
     fetch(`${BASE_URL}/auth/check/`, { credentials: 'include' })
       .then(async (res) => {
-        if (!res.ok) throw new Error('not authenticated')
+        if (!res.ok) {
+          navigate(loginPathForAuthFailure(await isPendingDeletionResponse(res)), { replace: true })
+          return null
+        }
         return res.json()
       })
       .then((data) => {
+        if (!data) return
         if (!data.is_ninja) {
           navigate('/chat', { replace: true })
           return

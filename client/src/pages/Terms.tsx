@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Box, Button, Container, Typography, Checkbox, FormControlLabel, Alert, CircularProgress } from '@mui/material'
 import { useNavigate, useSearchParams } from 'react-router-dom'
+import { isPendingDeletionResponse, loginPathForAuthFailure } from '../utils/authRedirect'
 
 const BASE_URL = import.meta.env.VITE_BASE_URL || ''
 
@@ -44,7 +45,7 @@ export default function Terms() {
         credentials: 'include',
       })
       if (res.status === 401) {
-        navigate('/login', { replace: true })
+        navigate(loginPathForAuthFailure(await isPendingDeletionResponse(res)), { replace: true })
         return
       }
       if (!res.ok) throw new Error('accept failed')

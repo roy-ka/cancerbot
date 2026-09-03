@@ -51,7 +51,6 @@ client/.vite/
 
 # --- Editors / OS ---
 .vscode/*
-!.vscode/settings.json
 .idea/
 .DS_Store
 Thumbs.db
