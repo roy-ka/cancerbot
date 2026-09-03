@@ -1,11 +1,22 @@
 """Tests for the ninja-only admin flow: browse users -> browse their
-conversations -> post a message that's hidden from the real user."""
+conversations -> post a message that's hidden from the real user.
+
+The ninja account has no users row at all — its credentials are checked
+directly against NINJA_EMAIL/NINJA_PASSWORD (see src/routers/auth.py's
+_ninja_login and src/deps/auth.py's get_current_ninja_user). conftest.py's
+NINJA_EMAIL/NINJA_PASSWORD env vars back both the real-login tests below
+and the `ninja_client` fixture (which stubs get_current_ninja_user directly
+rather than logging in for real, for tests that don't care about login
+itself)."""
+import os
 import pytest
 from datetime import datetime, timezone
 from unittest.mock import patch, AsyncMock, MagicMock
 
 from src.auth.security import SecurityUtils
 
+NINJA_EMAIL = os.environ["NINJA_EMAIL"]
+NINJA_PASSWORD = os.environ["NINJA_PASSWORD"]
 
 _DEFAULT_STREAM_CONTENT = "Cancer cells exhibit the Warburg effect."
 
@@ -36,12 +47,91 @@ def mock_external_services(mock_retrieval):
         yield
 
 
+class TestNinjaLogin:
+    """Ninja logs in through the normal /auth/login/ endpoint, but against
+    NINJA_EMAIL/NINJA_PASSWORD directly — there's no users row to check a
+    password hash against."""
+
+    def test_correct_credentials_succeed(self, anon_client):
+        response = anon_client.post(
+            "/auth/login/", json={"email": NINJA_EMAIL, "password": NINJA_PASSWORD, "rememberMe": False},
+        )
+        assert response.status_code == 200
+        assert response.json()["is_ninja"] is True
+        assert "access_token" in response.cookies
+
+    def test_wrong_password_rejected(self, anon_client):
+        response = anon_client.post(
+            "/auth/login/", json={"email": NINJA_EMAIL, "password": "WrongPassword!", "rememberMe": False},
+        )
+        assert response.status_code == 401
+
+    def test_wrong_password_locks_out_after_max_attempts(self, anon_client):
+        from src.db.repositories.login_attempts import MAX_LOGIN_ATTEMPTS
+        for _ in range(MAX_LOGIN_ATTEMPTS):
+            anon_client.post(
+                "/auth/login/", json={"email": NINJA_EMAIL, "password": "WrongPassword!", "rememberMe": False},
+            )
+        locked = anon_client.post(
+            "/auth/login/", json={"email": NINJA_EMAIL, "password": NINJA_PASSWORD, "rememberMe": False},
+        )
+        assert locked.status_code == 429
+
+    def test_regular_user_email_falls_through_to_normal_login(self, anon_client, test_user):
+        """A non-ninja email must never be handled by the ninja branch —
+        confirms _ninja_login's email check actually gates on NINJA_EMAIL."""
+        response = anon_client.post(
+            "/auth/login/", json={"email": test_user.email, "password": "TestPass123!", "rememberMe": False},
+        )
+        assert response.status_code == 200
+        assert response.json()["is_ninja"] is False
+
+    def test_token_expires_in_two_hours(self, anon_client):
+        """A privileged account should never get the long-lived sessions
+        regular login flows allow (rememberMe, or the dev-only 1-year
+        override)."""
+        response = anon_client.post(
+            "/auth/login/", json={"email": NINJA_EMAIL, "password": NINJA_PASSWORD, "rememberMe": True},
+        )
+        assert response.status_code == 200
+        token = response.cookies.get("access_token") or anon_client.cookies.get("access_token")
+        payload = SecurityUtils.decode_jwt_token(token)
+        exp = datetime.fromtimestamp(payload["exp"], tz=timezone.utc)
+        delta = exp - datetime.now(timezone.utc)
+        assert delta.total_seconds() < 2 * 3600 + 60  # allow a little slack
+        assert delta.total_seconds() > 2 * 3600 - 60
+
+    def test_regular_user_login_not_capped_at_two_hours(self, anon_client, test_user):
+        response = anon_client.post(
+            "/auth/login/",
+            json={"email": test_user.email, "password": "TestPass123!", "rememberMe": True},
+        )
+        assert response.status_code == 200
+        token = response.cookies.get("access_token") or anon_client.cookies.get("access_token")
+        payload = SecurityUtils.decode_jwt_token(token)
+        exp = datetime.fromtimestamp(payload["exp"], tz=timezone.utc)
+        delta = exp - datetime.now(timezone.utc)
+        assert delta.total_seconds() > 2 * 3600  # rememberMe/dev override grants far more than 2h
+
+    def test_logged_in_ninja_token_rejected_by_regular_get_current_user_route(self, anon_client):
+        """Ninja can no longer use the app as a regular chat user — its JWT
+        carries a sentinel subject that matches no real users row, so a
+        get_current_user-gated route must reject it cleanly (401), not
+        crash trying to look it up."""
+        login = anon_client.post(
+            "/auth/login/", json={"email": NINJA_EMAIL, "password": NINJA_PASSWORD, "rememberMe": False},
+        )
+        assert login.status_code == 200
+        response = anon_client.get("/auth/check/")
+        assert response.status_code == 401
+
+
 class TestNinjaAuthorization:
-    def test_regular_user_forbidden_from_ninja_routes(self, client):
-        response = client.get("/ninja/users/")
+    def test_regular_user_forbidden_from_ninja_routes(self, real_token_client):
+        response = real_token_client.get("/ninja/users/")
         assert response.status_code == 403
 
-    def test_ninja_user_allowed(self, ninja_client, test_user):
+    def test_ninja_user_allowed(self, ninja_client):
         response = ninja_client.get("/ninja/users/")
         assert response.status_code == 200
 
@@ -50,14 +140,19 @@ class TestNinjaAuthorization:
         assert response.status_code == 401
 
 
-class TestNinjaCheckAuthExposesFlag:
-    def test_regular_user_is_ninja_false(self, client):
-        response = client.get("/auth/check/")
-        assert response.json()["is_ninja"] is False
+class TestNinjaCheckEndpoint:
+    def test_ninja_authenticated(self, ninja_client):
+        response = ninja_client.get("/ninja/check/")
+        assert response.status_code == 200
+        assert response.json()["authenticated"] is True
 
-    def test_ninja_user_is_ninja_true(self, ninja_client):
-        response = ninja_client.get("/auth/check/")
-        assert response.json()["is_ninja"] is True
+    def test_regular_user_forbidden(self, real_token_client):
+        response = real_token_client.get("/ninja/check/")
+        assert response.status_code == 403
+
+    def test_anon_unauthorized(self, anon_client):
+        response = anon_client.get("/ninja/check/")
+        assert response.status_code == 401
 
 
 class TestListUsers:
@@ -76,8 +171,8 @@ class TestListUsers:
 
 
 class TestListWaitlist:
-    def test_regular_user_forbidden(self, client):
-        response = client.get("/ninja/waitlist/")
+    def test_regular_user_forbidden(self, real_token_client):
+        response = real_token_client.get("/ninja/waitlist/")
         assert response.status_code == 403
 
     def test_lists_waitlist_entries(self, ninja_client, db_session):
@@ -102,8 +197,8 @@ class TestListWaitlist:
 
 
 class TestInviteWaitlistEntry:
-    def test_regular_user_forbidden(self, client):
-        response = client.post("/ninja/waitlist/00000000-0000-0000-0000-000000000000/invite")
+    def test_regular_user_forbidden(self, real_token_client):
+        response = real_token_client.post("/ninja/waitlist/00000000-0000-0000-0000-000000000000/invite")
         assert response.status_code == 403
 
     def test_missing_entry_returns_404(self, ninja_client, monkeypatch):
@@ -183,54 +278,19 @@ class TestListUserConversations:
 
 
 class TestNinjaMessagesHiddenFromRealUser:
-    def test_ninja_message_not_visible_to_real_user(
-        self, TestingSessionLocal, test_ninja_user, test_user, test_conversation
-    ):
-        # app.dependency_overrides is global on the shared `app` object, so
-        # ninja_client + client fixtures can't be used together in one test
-        # (whichever is set up last wins for both clients) — switch the
-        # current-user override explicitly between the ninja and real-user
-        # calls instead.
-        from fastapi.testclient import TestClient
-        from src.main import app
-        from src.deps.db import get_db
-        from src.deps.auth import get_current_user
-        from src.db import models
+    def test_ninja_message_not_visible_to_real_user(self, ninja_client, real_token_client, test_conversation):
+        post_resp = ninja_client.post(
+            f"/ninja/conversations/{test_conversation.id}/add_message",
+            json={"content": "Is this response accurate?"},
+        )
+        assert post_resp.status_code == 200
 
-        def override_get_db():
-            db = TestingSessionLocal()
-            try:
-                yield db
-            finally:
-                db.close()
-
-        def _as(user_email):
-            def _override():
-                db = TestingSessionLocal()
-                u = db.query(models.User).filter(models.User.email == user_email).first()
-                db.close()
-                return u
-            return _override
-
-        app.dependency_overrides[get_db] = override_get_db
-        try:
-            with TestClient(app) as c:
-                app.dependency_overrides[get_current_user] = _as(test_ninja_user.email)
-                post_resp = c.post(
-                    f"/ninja/conversations/{test_conversation.id}/add_message",
-                    json={"content": "Is this response accurate?"},
-                )
-                assert post_resp.status_code == 200
-
-                # The real user's own endpoint must never show the ninja exchange
-                app.dependency_overrides[get_current_user] = _as(test_user.email)
-                user_resp = c.get(f"/conversations/{test_conversation.id}/messages/")
-                assert user_resp.status_code == 200
-                contents = [m["content"] for m in user_resp.json()["messages"]]
-                assert "Is this response accurate?" not in contents
-                assert _DEFAULT_STREAM_CONTENT not in contents
-        finally:
-            app.dependency_overrides.clear()
+        # The real user's own endpoint must never show the ninja exchange
+        user_resp = real_token_client.get(f"/conversations/{test_conversation.id}/messages/")
+        assert user_resp.status_code == 200
+        contents = [m["content"] for m in user_resp.json()["messages"]]
+        assert "Is this response accurate?" not in contents
+        assert _DEFAULT_STREAM_CONTENT not in contents
 
     def test_ninja_sees_own_hidden_message_in_ninja_view(self, ninja_client, test_conversation):
         ninja_client.post(
@@ -245,16 +305,15 @@ class TestNinjaMessagesHiddenFromRealUser:
         hidden_flags = {m["content"]: m["hidden_from_user"] for m in ninja_resp.json()["messages"]}
         assert hidden_flags["Is this response accurate?"] is True
 
-    def test_ninja_can_post_into_conversation_it_does_not_own(self, ninja_client, test_conversation, test_ninja_user):
-        assert str(test_conversation.user_id) != str(test_ninja_user.id)
+    def test_ninja_can_post_into_conversation_it_does_not_own(self, ninja_client, test_conversation):
         response = ninja_client.post(
             f"/ninja/conversations/{test_conversation.id}/add_message",
             json={"content": "Checking on behalf of support"},
         )
         assert response.status_code == 200
 
-    def test_regular_user_cannot_post_via_ninja_route(self, client, test_conversation):
-        response = client.post(
+    def test_regular_user_cannot_post_via_ninja_route(self, real_token_client, test_conversation):
+        response = real_token_client.post(
             f"/ninja/conversations/{test_conversation.id}/add_message",
             json={"content": "trying anyway"},
         )
@@ -282,81 +341,3 @@ class TestNinjaMessagesHiddenFromRealUser:
             mock_generate_title.assert_not_awaited()
 
         assert response.json()["conversation"]["title"] == "Untouched Title"
-
-
-class TestNinjaLoginExpiry:
-    """A privileged account should never get the long-lived sessions regular
-    login flows allow (rememberMe, or the dev-only 1-year override)."""
-
-    def test_ninja_login_token_expires_in_two_hours(self, anon_client, test_ninja_user):
-        response = anon_client.post(
-            "/auth/login/",
-            json={"email": test_ninja_user.email, "password": "NinjaPass123!", "rememberMe": True},
-        )
-        assert response.status_code == 200
-        token = response.cookies.get("access_token") or anon_client.cookies.get("access_token")
-        payload = SecurityUtils.decode_jwt_token(token)
-        exp = datetime.fromtimestamp(payload["exp"], tz=timezone.utc)
-        delta = exp - datetime.now(timezone.utc)
-        assert delta.total_seconds() < 2 * 3600 + 60  # allow a little slack
-        assert delta.total_seconds() > 2 * 3600 - 60
-
-    def test_regular_user_login_not_capped_at_two_hours(self, anon_client, test_user):
-        response = anon_client.post(
-            "/auth/login/",
-            json={"email": test_user.email, "password": "TestPass123!", "rememberMe": True},
-        )
-        assert response.status_code == 200
-        token = response.cookies.get("access_token") or anon_client.cookies.get("access_token")
-        payload = SecurityUtils.decode_jwt_token(token)
-        exp = datetime.fromtimestamp(payload["exp"], tz=timezone.utc)
-        delta = exp - datetime.now(timezone.utc)
-        assert delta.total_seconds() > 2 * 3600  # rememberMe/dev override grants far more than 2h
-
-
-class TestEnsureNinjaUser:
-    """Unit tests for src.main._ensure_ninja_user — the idempotent startup hook."""
-
-    def test_creates_ninja_when_missing(self, db_session, monkeypatch):
-        from src.main import _ensure_ninja_user
-        from src.db.repositories.users import get_user_by_email
-
-        monkeypatch.setenv("NINJA_EMAIL", "brandnew-ninja@example.com")
-        monkeypatch.setenv("NINJA_PASSWORD", "SomePass123!")
-        with patch("src.db.session.SessionLocal", return_value=db_session):
-            _ensure_ninja_user()
-
-        user = get_user_by_email(db_session, "brandnew-ninja@example.com")
-        assert user is not None
-        assert user.is_ninja is True
-        assert user.email_verified is True
-
-    def test_noop_when_env_vars_missing(self, db_session, monkeypatch):
-        from src.main import _ensure_ninja_user
-        from src.db.repositories.users import get_user_by_email
-
-        monkeypatch.delenv("NINJA_EMAIL", raising=False)
-        monkeypatch.delenv("NINJA_PASSWORD", raising=False)
-        with patch("src.db.session.SessionLocal", return_value=db_session):
-            _ensure_ninja_user()
-
-        assert get_user_by_email(db_session, "brandnew-ninja@example.com") is None
-
-    def test_idempotent_when_already_exists(self, db_session, monkeypatch):
-        from src.main import _ensure_ninja_user
-        from src.db.repositories.users import create_user
-        from src.db.models import User
-
-        create_user(
-            db_session, first_name="Ninja", last_name="Admin", email="existing-ninja@example.com",
-            password_hash=SecurityUtils.hash_password("Whatever123!"),
-        )
-        monkeypatch.setenv("NINJA_EMAIL", "existing-ninja@example.com")
-        monkeypatch.setenv("NINJA_PASSWORD", "Whatever123!")
-        with patch("src.db.session.SessionLocal", return_value=db_session):
-            _ensure_ninja_user()
-            _ensure_ninja_user()  # calling twice must not error or duplicate
-
-        users = db_session.query(User).filter_by(email="existing-ninja@example.com").all()
-        assert len(users) == 1
-        assert users[0].is_ninja is True

@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Query, Request, Response, HTTPException,
 from sqlalchemy.orm import Session
 from src.deps.db import get_db
 from src.auth.security import SecurityUtils
-from src.deps.auth import get_current_user
+from src.deps.auth import get_current_user, NINJA_SUBJECT_ID
 from pydantic import BaseModel, EmailStr, Field
 from datetime import timedelta, datetime, timezone
 import re
@@ -236,8 +236,64 @@ async def join_waitlist(req: WaitlistRequest, request: Request, db: Session = De
     return {"message": "You're on the waitlist! We'll email you an invite once a spot opens up."}
 
 
+def _ninja_login(req: "LoginRequest", response: Response, db: Session) -> dict | None:
+    """The ninja account isn't a users row at all — its credentials live only
+    in NINJA_EMAIL/NINJA_PASSWORD. Returns the login response dict on a
+    match, or None if this request isn't a ninja login attempt (email
+    doesn't match, or the env vars aren't configured) so the caller falls
+    through to the normal DB-backed login path."""
+    ninja_email = os.getenv("NINJA_EMAIL")
+    ninja_password = os.getenv("NINJA_PASSWORD")
+    if not ninja_email or not ninja_password or req.email.strip().lower() != ninja_email.strip().lower():
+        return None
+
+    # Reuses the existing per-email lockout infra (LoginAttempt is keyed by
+    # email string, no FK to a users row needed) so the ninja password can't
+    # be brute-forced any more freely than a real account's.
+    if is_account_locked(db, ninja_email):
+        raise HTTPException(
+            status_code=429,
+            detail="Account locked due to too many failed login attempts. Please reset your password."
+        )
+
+    if not secrets.compare_digest(req.password, ninja_password):
+        increment_failed_attempts(db, ninja_email)
+        remaining = get_remaining_attempts(db, ninja_email)
+        if remaining <= 0:
+            raise HTTPException(
+                status_code=429,
+                detail="Too many failed login attempts. Account locked. Please reset your password."
+            )
+        raise HTTPException(
+            status_code=401,
+            detail=f"Invalid email or password. {remaining} attempt(s) remaining before lockout."
+        )
+    reset_failed_attempts(db, ninja_email)
+
+    # Capped at 2h regardless of rememberMe — a privileged account gets a
+    # short session, not the long-lived cookie a real user can opt into.
+    expires = datetime.now(timezone.utc) + timedelta(hours=2)
+    access_token = SecurityUtils.create_jwt_token({
+        "sub": NINJA_SUBJECT_ID, "email": ninja_email, "is_ninja": True, "exp": expires,
+    })
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        secure=is_prod(),
+        samesite="lax",
+        max_age=7200,
+        path="/",
+    )
+    return {"token_type": "bearer", "is_ninja": True}
+
+
 @router.post("/login/")
 async def generate_token(req: LoginRequest, response: Response, db: Session = Depends(get_db)):
+    ninja_result = _ninja_login(req, response, db)
+    if ninja_result is not None:
+        return ninja_result
+
     # Check if account is locked due to too many failed attempts
     if is_account_locked(db, req.email):
         raise HTTPException(
@@ -300,12 +356,6 @@ async def generate_token(req: LoginRequest, response: Response, db: Session = De
         max_age = 31536000 # one year
         expires =  datetime.now(timezone.utc) + timedelta(days=365)
 
-    # Ninja is a privileged account — cap its session at 2 hours regardless of
-    # rememberMe or the dev-only long-expiry override above.
-    if user.is_ninja:
-        max_age = 7200  # 2 hours
-        expires = datetime.now(timezone.utc) + timedelta(hours=2)
-
     access_token = SecurityUtils.create_jwt_token({"sub": str(user.id), "email": user.email, "tv": user.token_version, 'exp': expires})
     response.set_cookie(
         key="access_token",
@@ -316,7 +366,7 @@ async def generate_token(req: LoginRequest, response: Response, db: Session = De
         max_age=max_age,
         path="/",
     )
-    return {"token_type": "bearer"}
+    return {"token_type": "bearer", "is_ninja": False}
 
 @router.get("/check/")
 async def check_auth(current_user=Depends(get_current_user), db: Session = Depends(get_db)):
@@ -331,7 +381,6 @@ async def check_auth(current_user=Depends(get_current_user), db: Session = Depen
         "last_name": current_user.last_name,
         "terms_version": current_user.terms_version,
         "needs_terms_update": needs_terms_update,
-        "is_ninja": current_user.is_ninja,
     }
 
 @router.post("/logout/")

@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from uuid import UUID
 from fastapi import Depends, HTTPException, status, Cookie, Header
 from sqlalchemy.orm import Session
@@ -5,6 +6,12 @@ from jose import JWTError
 from src.db.repositories.users import get_user_by_id
 from src.deps.db import get_db
 from src.auth.security import SecurityUtils
+
+# Sentinel "sub" for the ninja principal below — a well-formed UUID that
+# never matches a real users.id row, so a ninja JWT presented to a regular
+# get_current_user route fails cleanly with 401 "User not found" instead of
+# crashing UUID(...) parsing on something that isn't a UUID at all.
+NINJA_SUBJECT_ID = "00000000-0000-0000-0000-000000000001"
 
 
 def get_token(
@@ -38,7 +45,22 @@ def get_current_user(
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
 
-def get_current_ninja_user(current_user=Depends(get_current_user)):
-    if not current_user.is_ninja:
+@dataclass(frozen=True)
+class NinjaPrincipal:
+    """Stand-in for a User row — the ninja account isn't backed by the
+    database at all (see src/routers/auth.py's login branch), so this
+    carries only what the /ninja/* routes actually need off `current_user`."""
+    id: str = NINJA_SUBJECT_ID
+
+
+def get_current_ninja_user(token: str = Depends(get_token)) -> NinjaPrincipal:
+    """Independent of get_current_user/the DB — decodes the JWT directly and
+    checks the is_ninja claim minted at login. No users table lookup, by
+    design: the ninja account has no row to look up."""
+    try:
+        payload = SecurityUtils.decode_jwt_token(token)
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    if not payload.get("is_ninja"):
         raise HTTPException(status_code=403, detail="Forbidden")
-    return current_user
+    return NinjaPrincipal()

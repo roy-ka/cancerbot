@@ -36,15 +36,10 @@ function App() {
           }
         />
 
-        {/* Ninja-only admin view — Ninja.tsx itself redirects non-ninja users */}
-        <Route
-          path="/ninja"
-          element={
-            <ProtectedRoute>
-              <Ninja />
-            </ProtectedRoute>
-          }
-        />
+        {/* Ninja-only admin view — not a ProtectedRoute: the ninja account
+            has no users row for ProtectedRoute's DB-backed /auth/check/ to
+            find, so Ninja.tsx does its own auth gate against /ninja/check/. */}
+        <Route path="/ninja" element={<Ninja />} />
 
         {/* Catch-all - go to login, let ProtectedRoute handle redirects */}
         <Route path="*" element={<Navigate to="/login" replace />} />

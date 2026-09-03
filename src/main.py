@@ -29,47 +29,6 @@ class _HealthFilter(logging.Filter):
 if is_prod():
     logging.getLogger("uvicorn.access").addFilter(_HealthFilter())
 
-def _ensure_ninja_user() -> None:
-    """Create the privileged ninja account from env vars if it doesn't exist yet.
-
-    Idempotent — safe to call on every startup. No-op if NINJA_EMAIL or
-    NINJA_PASSWORD aren't set.
-    """
-    email = os.getenv("NINJA_EMAIL")
-    password = os.getenv("NINJA_PASSWORD")
-    if not email or not password:
-        logger.info("NINJA_EMAIL/NINJA_PASSWORD not set — skipping ninja user creation")
-        return
-
-    from src.db.session import SessionLocal
-    from src.db.repositories.users import get_user_by_email
-    from src.auth.security import SecurityUtils
-
-    db = SessionLocal()
-    try:
-        existing = get_user_by_email(db=db, email=email)
-        if existing:
-            if not existing.is_ninja:
-                existing.is_ninja = True
-                db.commit()
-                logger.info("Marked existing user %s as ninja", email)
-            return
-        from src.db.models import User
-        ninja = User(
-            first_name="Ninja",
-            last_name="Admin",
-            email=email,
-            password_hash=SecurityUtils.hash_password(password),
-            email_verified=True,
-            is_ninja=True,
-        )
-        db.add(ninja)
-        db.commit()
-        logger.info("Created ninja user (%s)", email)
-    finally:
-        db.close()
-
-
 def _init_axiom_logging() -> None:
     token = os.getenv("AXIOM_TOKEN")
     dataset = os.getenv("AXIOM_DATASET")
@@ -98,12 +57,6 @@ async def lifespan(app: FastAPI):
             logger.warning("OpenSearch indexes could not be initialized — cluster may still be starting")
     except Exception as e:
         logger.warning(f"Failed to initialize OpenSearch indexes: {e}")
-
-    if os.getenv("ENV", "").lower() != "test":
-        try:
-            _ensure_ninja_user()
-        except Exception as e:
-            logger.warning(f"Failed to ensure ninja user: {e}")
 
     # Account-deletion and auth-cleanup sweeps run as arq cron jobs in the
     # separate `worker` container (see src/worker.py) rather than as

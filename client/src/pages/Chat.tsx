@@ -23,20 +23,12 @@ export default function Chat() {
   const [currentStage, setCurrentStage] = useState<string | null>(null)
   const [streamingContent, setStreamingContent] = useState<string | null>(null)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
-  const [isNinja, setIsNinja] = useState(false)
   // Icon tutorial. Shown while the user has no conversations yet; `loaded`
   // gates it on the conversations fetch having actually returned, so an
   // existing user doesn't see it flash during the initial request.
   const [conversationsLoaded, setConversationsLoaded] = useState(false)
   const [guideManuallyOpen, setGuideManuallyOpen] = useState(false)
   const [guideDismissed, setGuideDismissed] = useState(false)
-
-  useEffect(() => {
-    fetch(`${BASE_URL}/auth/check/`, { credentials: 'include' })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => setIsNinja(!!data?.is_ninja))
-      .catch(() => setIsNinja(false))
-  }, [BASE_URL])
 
   // Prevent body-level scroll so the chat layout fills the viewport exactly
   useEffect(() => {
@@ -308,7 +300,22 @@ export default function Chat() {
       setStreamingContent(null)
       setCurrentStage(null)
       setMessages((prev) => prev.filter((m) => !m.id?.startsWith('temp-')))
-      setErrorMsg('Connection error. Please try again.')
+
+      // The WS handshake goes through the same get_current_user dependency
+      // as every REST route, so it's rejected the same way when deletion
+      // was scheduled from another device — but a WebSocket close carries
+      // no response body to read the reason from. Ask /auth/check/ (a
+      // plain REST call) instead of showing a generic error that would
+      // otherwise be this path's only outcome for that case.
+      fetch(`${BASE_URL}/auth/check/`, { credentials: 'include' })
+        .then(async (res) => {
+          if (!res.ok && (await isPendingDeletionResponse(res))) {
+            window.location.href = loginPathForAuthFailure(true)
+            return
+          }
+          setErrorMsg('Connection error. Please try again.')
+        })
+        .catch(() => setErrorMsg('Connection error. Please try again.'))
     }
 
     ws.onclose = () => {
@@ -399,8 +406,6 @@ export default function Chat() {
             onDeleteAccount={handleDeleteAccount}
             onDeleteConversation={handleDeleteConversation}
             onCloseSidebar={() => setSidebarOpen(false)}
-            isNinja={isNinja}
-            onOpenNinja={() => navigate('/ninja')}
             onOpenGuide={() => setGuideManuallyOpen(true)}
           />
         </Box>

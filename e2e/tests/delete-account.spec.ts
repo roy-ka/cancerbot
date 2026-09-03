@@ -90,6 +90,48 @@ test.describe('Account deletion', () => {
     await expect(page).toHaveURL(/\/(terms|chat)?(\?.*)?$/, { timeout: 15_000 })
   })
 
+  test('a failed automatic re-login after cancelling deletion shows an error, not a silent form', async ({ page }) => {
+    test.skip(!(await registrationIsOpen()), 'registration is closed (MAX_USERS reached)')
+    const email = `delete-e2e-cancel-relogin-${Date.now()}@example.com`
+    const password = 'DeleteE2e123!'
+
+    const api = await playwrightRequest.newContext({ baseURL: E2E_API_URL })
+    const reg = await api.post('/auth/register/', {
+      data: { first_name: 'Delete', last_name: 'E2E Cancel Relogin', email, password },
+    })
+    expect(reg.status()).toBe(201)
+    const { verification_token: verificationToken } = await reg.json()
+    const verify = await api.get(`/auth/verify-email/?token=${verificationToken}`)
+    expect(verify.ok()).toBeTruthy()
+    const login = await api.post('/auth/login/', { data: { email, password } })
+    expect(login.ok()).toBeTruthy()
+    const requestDelete = await api.post('/auth/request-delete/')
+    expect(requestDelete.ok()).toBeTruthy()
+    const { deletion_token: deletionToken } = await requestDelete.json()
+    await api.post('/auth/confirm-delete/', { data: { token: deletionToken, password } })
+    await api.dispose()
+
+    // Trigger the pending-deletion dialog via a normal login...
+    await page.goto('/login')
+    await page.fill('input[name="email"]', email)
+    await page.fill('input[name="password"]', password)
+    await page.click('button[type="submit"]')
+    await expect(page.getByText(/the umbrella is folded, the little book is closed/i)).toBeVisible({
+      timeout: 10_000,
+    })
+
+    // ...then force the automatic re-login that follows a successful cancel
+    // to fail, simulating a transient error on that second request.
+    await page.route('**/auth/login/', (route) => {
+      route.fulfill({ status: 500, contentType: 'application/json', body: '{"detail":"Internal Server Error"}' })
+    })
+    await page.getByRole('button', { name: 'Cancel deletion' }).click()
+
+    await expect(page.getByText(/automatic login failed/i)).toBeVisible({ timeout: 10_000 })
+    // Must stay on the login form, not hang on the pending-deletion dialog.
+    await expect(page.getByText(/the umbrella is folded/i)).not.toBeVisible()
+  })
+
   test('deletion scheduled from another device explains the logout', async ({ page }) => {
     test.skip(!(await registrationIsOpen()), 'registration is closed (MAX_USERS reached)')
     const email = `delete-e2e-other-device-${Date.now()}@example.com`
@@ -135,6 +177,56 @@ test.describe('Account deletion', () => {
     // Back on the original tab: its still-set cookie now gets rejected as
     // pending-deletion, and the redirect must explain why, not just bounce.
     await page.goto('/chat')
+    await expect(page).toHaveURL(/\/login\?reason=pending_deletion/, { timeout: 10_000 })
+    await expect(page.getByText(/scheduled for deletion/i)).toBeVisible()
+  })
+
+  test('deletion scheduled from another device explains a WebSocket send failure too', async ({ page }) => {
+    test.skip(!(await registrationIsOpen()), 'registration is closed (MAX_USERS reached)')
+    const email = `delete-e2e-ws-${Date.now()}@example.com`
+    const password = 'DeleteE2e123!'
+
+    const api = await playwrightRequest.newContext({ baseURL: E2E_API_URL })
+    const reg = await api.post('/auth/register/', {
+      data: { first_name: 'Delete', last_name: 'E2E WS', email, password },
+    })
+    expect(reg.status()).toBe(201)
+    const { verification_token: verificationToken } = await reg.json()
+    const verify = await api.get(`/auth/verify-email/?token=${verificationToken}`)
+    expect(verify.ok()).toBeTruthy()
+
+    await page.goto('/login')
+    await page.fill('input[name="email"]', email)
+    await page.fill('input[name="password"]', password)
+    await page.click('button[type="submit"]')
+    await page.waitForLoadState('networkidle', { timeout: 15_000 })
+    await expect(page).toHaveURL(/terms/, { timeout: 10_000 })
+    await page.locator('input[type="checkbox"]').check()
+    await page.getByRole('button', { name: /accept and continue/i }).click()
+    await page.waitForLoadState('networkidle', { timeout: 10_000 })
+
+    // "Another device" schedules deletion without ever touching this tab's
+    // own session/cookie or reloading this page — the WS handshake for the
+    // *next message sent* is what has to catch the rejection.
+    const otherDevice = await playwrightRequest.newContext({ baseURL: E2E_API_URL })
+    const login = await otherDevice.post('/auth/login/', { data: { email, password } })
+    expect(login.ok()).toBeTruthy()
+    const requestDelete = await otherDevice.post('/auth/request-delete/')
+    expect(requestDelete.ok()).toBeTruthy()
+    const { deletion_token: deletionToken } = await requestDelete.json()
+    const confirmDelete = await otherDevice.post('/auth/confirm-delete/', {
+      data: { token: deletionToken, password },
+    })
+    expect(confirmDelete.ok()).toBeTruthy()
+    await otherDevice.dispose()
+    await api.dispose()
+
+    // No reload/navigation here — sending a message opens a fresh WS
+    // handshake against the now-rejected session, without ProtectedRoute's
+    // own mount-time /auth/check/ ever running again.
+    await page.fill('textarea[name="input"]', 'what is cancer?')
+    await page.keyboard.press('Enter')
+
     await expect(page).toHaveURL(/\/login\?reason=pending_deletion/, { timeout: 10_000 })
     await expect(page.getByText(/scheduled for deletion/i)).toBeVisible()
   })

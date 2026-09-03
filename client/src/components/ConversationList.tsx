@@ -48,8 +48,6 @@ export default function ConversationList({
   onDeleteAccount,
   onDeleteConversation,
   onCloseSidebar,
-  isNinja,
-  onOpenNinja,
   onOpenGuide,
 }: {
   conversations?: Conversation[]
@@ -59,8 +57,6 @@ export default function ConversationList({
   onDeleteAccount?: () => Promise<string | null>
   onDeleteConversation?: (id: string) => Promise<void>
   onCloseSidebar?: () => void
-  isNinja?: boolean
-  onOpenNinja?: () => void
   onOpenGuide?: () => void
 }) {
   const [aboutOpen, setAboutOpen] = useState(false)
@@ -166,17 +162,6 @@ export default function ConversationList({
           </Box>
 
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            {isNinja && (
-              <Tooltip title="Ninja admin view">
-                <IconButton
-                  size="small"
-                  onClick={onOpenNinja}
-                  sx={{ color: 'rgba(255,255,255,0.6)' }}
-                >
-                  🥷
-                </IconButton>
-              </Tooltip>
-            )}
             <Tooltip title="About">
               <IconButton
                 size="small"

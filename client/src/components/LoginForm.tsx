@@ -41,7 +41,8 @@ export default function LoginForm({
     })
     if (res.ok) {
       setError('')
-      navigate('/chat')
+      const data = await res.json().catch(() => null)
+      navigate(data?.is_ninja ? '/ninja' : '/chat')
     } else {
       const err = await res.json()
       const detail = err?.detail
@@ -71,7 +72,9 @@ export default function LoginForm({
       if (res.ok) {
         setPendingDeletion(null)
         setError('')
-        login({ email, password, rememberMe }).catch(() => {})
+        login({ email, password, rememberMe }).catch(() => {
+          setError('Deletion cancelled, but automatic login failed. Please log in again.')
+        })
       } else {
         const err = await res.json().catch(() => null)
         setPendingDeletion(null)

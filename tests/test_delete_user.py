@@ -100,6 +100,24 @@ class TestConfirmDelete:
             retry = _confirm_delete(client, token, "TestPass123!")
         assert retry.status_code == 200
 
+    def test_token_cannot_be_reused_after_success(self, client, test_user, db_session):
+        """A second confirm-delete for the same token must fail, not
+        re-schedule deletion or re-enqueue the deferred delete job — this is
+        the sequential case of the double-submit race the row lock in
+        verify_deletion_token (for_update=True) closes; true concurrent
+        requests can't be reproduced against the in-memory sqlite test DB,
+        which doesn't honor FOR UPDATE."""
+        token = create_deletion_request_token(db_session, test_user.id)
+        with patch("src.routers.auth.enqueue", new=AsyncMock()):
+            first = _confirm_delete(client, token, "TestPass123!")
+        assert first.status_code == 200
+
+        db_session.expire_all()
+        with patch("src.routers.auth.enqueue", new=AsyncMock()) as mock_enqueue:
+            second = _confirm_delete(client, token, "TestPass123!")
+        assert second.status_code == 400
+        mock_enqueue.assert_not_called()
+
     def test_invalid_token_returns_400(self, client):
         response = _confirm_delete(client, "not-a-real-token", "TestPass123!")
         assert response.status_code == 400

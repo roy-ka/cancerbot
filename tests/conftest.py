@@ -15,6 +15,8 @@ os.environ.setdefault("REDIS_PASSWORD", "test-redis-password")
 os.environ.setdefault("REDIS_URL", "redis://:test-redis-password@localhost:6379/0")
 os.environ.setdefault("MAX_USERS", "")  # blank = no registration cap, matching production default
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -23,7 +25,7 @@ from fastapi.testclient import TestClient
 
 from src.main import app
 from src.deps.db import get_db
-from src.deps.auth import get_current_user
+from src.deps.auth import get_current_user, get_current_ninja_user, NinjaPrincipal
 from src.db.base import Base
 from src.db import models
 from src.db.repositories.users import create_user
@@ -95,21 +97,12 @@ def client(TestingSessionLocal, test_user):
 
 
 @pytest.fixture()
-def test_ninja_user(db_session):
-    user = create_user(
-        db_session,
-        first_name="Ninja", last_name="Admin",
-        email="ninja-test@example.com",
-        password_hash=SecurityUtils.hash_password("NinjaPass123!"),
-    )
-    user.email_verified = True
-    user.is_ninja = True
-    db_session.commit()
-    return user
-
-
-@pytest.fixture()
-def ninja_client(TestingSessionLocal, test_ninja_user):
+def real_token_client(TestingSessionLocal, test_user):
+    """Like `client`, but authenticated via a genuine JWT cookie instead of
+    overriding get_current_user — needed for anything that decodes the
+    token itself rather than depending on get_current_user, e.g.
+    get_current_ninja_user (see src/deps/auth.py), which must reject a real
+    non-ninja user's token with 403 rather than never seeing it at all."""
     def override_get_db():
         db = TestingSessionLocal()
         try:
@@ -117,14 +110,33 @@ def ninja_client(TestingSessionLocal, test_ninja_user):
         finally:
             db.close()
 
-    def override_get_current_user():
+    app.dependency_overrides[get_db] = override_get_db
+
+    with TestClient(app) as c:
+        token = SecurityUtils.create_jwt_token({
+            "sub": str(test_user.id), "email": test_user.email, "tv": test_user.token_version,
+            "exp": datetime.now(timezone.utc) + timedelta(hours=1),
+        })
+        c.cookies.set("access_token", token)
+        yield c
+
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture()
+def ninja_client(TestingSessionLocal):
+    """The ninja account has no users row at all (see src/deps/auth.py) —
+    so unlike `client`, this overrides get_current_ninja_user directly with
+    a stub principal instead of routing through a DB-backed get_current_user."""
+    def override_get_db():
         db = TestingSessionLocal()
-        u = db.query(models.User).filter(models.User.email == test_ninja_user.email).first()
-        db.close()
-        return u
+        try:
+            yield db
+        finally:
+            db.close()
 
     app.dependency_overrides[get_db] = override_get_db
-    app.dependency_overrides[get_current_user] = override_get_current_user
+    app.dependency_overrides[get_current_ninja_user] = lambda: NinjaPrincipal()
 
     with TestClient(app) as c:
         yield c

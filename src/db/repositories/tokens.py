@@ -67,19 +67,27 @@ def _verify_token(
     db, token: str, token_type: str, *,
     not_found_msg: str, expired_msg: str,
     max_uses: int | None = None, max_uses_msg: str | None = None,
+    for_update: bool = False,
 ) -> tuple[Token | None, str]:
     """Validate a token of the given type. Returns (record, "") on success or
     (None, error) on failure. Does NOT consume it — callers call
-    _consume_token after the associated action succeeds."""
-    record = (
-        db.query(Token)
-        .filter(
-            Token.token_hash == _hash_token(token),
-            Token.token_type == token_type,
-            Token.used_at.is_(None),
-        )
-        .first()
+    _consume_token after the associated action succeeds.
+
+    for_update=True locks the matching row (SELECT ... FOR UPDATE) so a
+    second concurrent call for the same token blocks until the first
+    transaction commits, then re-evaluates used_at IS NULL against the now-
+    committed row instead of racing past this check on stale data. Only
+    account deletion opts in — it's the one flow here with a real side
+    effect (scheduling deletion + firing a deferred job) that must not run
+    twice for one token."""
+    query = db.query(Token).filter(
+        Token.token_hash == _hash_token(token),
+        Token.token_type == token_type,
+        Token.used_at.is_(None),
     )
+    if for_update:
+        query = query.with_for_update()
+    record = query.first()
 
     if not record:
         return None, not_found_msg
@@ -179,6 +187,7 @@ def verify_deletion_token(db, token: str) -> tuple[Token | None, str]:
         db, token, TOKEN_TYPE_ACCOUNT_DELETION,
         not_found_msg="Invalid or already used deletion link.",
         expired_msg="Deletion link has expired.",
+        for_update=True,
     )
 
 

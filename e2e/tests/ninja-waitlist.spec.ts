@@ -29,9 +29,10 @@ test.describe('ninja waitlist', () => {
     await page.fill('input[name="email"]', NINJA_EMAIL!)
     await page.fill('input[name="password"]', NINJA_PASSWORD!)
     await page.click('button[type="submit"]')
-    await expect(page).toHaveURL(/\/(terms|chat)?(\?.*)?$/, { timeout: 15_000 })
+    // Ninja login navigates straight to /ninja — it can no longer use
+    // /chat as a regular user (see LoginForm.tsx's is_ninja branch).
+    await expect(page).toHaveURL(/\/ninja(\?.*)?$/, { timeout: 15_000 })
 
-    await page.goto('/ninja')
     await page.getByRole('button', { name: /^waitlist$/i }).click()
 
     const row = page.getByTestId(`waitlist-row-${email}`)

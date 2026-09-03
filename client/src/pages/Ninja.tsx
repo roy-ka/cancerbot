@@ -16,7 +16,6 @@ import {
 import ArrowBackIcon from '@mui/icons-material/ArrowBack'
 import MessageItem from '../components/MessageItem'
 import type { Source } from '../types'
-import { isPendingDeletionResponse, loginPathForAuthFailure } from '../utils/authRedirect'
 
 type NinjaUser = {
   id: string
@@ -176,20 +175,14 @@ export default function Ninja() {
   const [sending, setSending] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
-  // Gate access — only ninja accounts may view this page.
+  // Gate access — the ninja account has no users row, so this checks
+  // against /ninja/check/ (which decodes the JWT's is_ninja claim directly)
+  // rather than the regular, DB-backed /auth/check/.
   useEffect(() => {
-    fetch(`${BASE_URL}/auth/check/`, { credentials: 'include' })
-      .then(async (res) => {
+    fetch(`${BASE_URL}/ninja/check/`, { credentials: 'include' })
+      .then((res) => {
         if (!res.ok) {
-          navigate(loginPathForAuthFailure(await isPendingDeletionResponse(res)), { replace: true })
-          return null
-        }
-        return res.json()
-      })
-      .then((data) => {
-        if (!data) return
-        if (!data.is_ninja) {
-          navigate('/chat', { replace: true })
+          navigate('/login', { replace: true })
           return
         }
         setAccessChecked(true)

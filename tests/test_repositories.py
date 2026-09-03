@@ -475,6 +475,21 @@ class TestTokenTypeIsolation:
 
         assert record.use_count == 0
 
+    def test_verify_deletion_token_locks_the_row(self, db_session, test_user):
+        """verify_deletion_token must request SELECT ... FOR UPDATE so a
+        second concurrent /confirm-delete/ call for the same token blocks
+        until the first transaction commits, instead of both racing past
+        the used_at IS NULL check — see _verify_token's for_update param."""
+        from src.db.repositories import tokens as tokens_repo
+
+        deletion_token = tokens_repo.create_deletion_request_token(db_session, test_user.id)
+        db_session.commit()
+
+        with patch.object(tokens_repo, "_verify_token", wraps=tokens_repo._verify_token) as spy:
+            tokens_repo.verify_deletion_token(db_session, deletion_token)
+
+        assert spy.call_args.kwargs.get("for_update") is True
+
 
 class TestWaitlistInviteToken:
     def test_create_and_verify_round_trip(self, db_session):

@@ -33,7 +33,6 @@ class User(Base):
     terms_version = Column(Integer, nullable=True)
     token_version = Column(Integer, default=1, nullable=False)
     deletion_scheduled_at = Column(DateTime(timezone=True), nullable=True)
-    is_ninja = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
 
     @property

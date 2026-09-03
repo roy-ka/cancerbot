@@ -21,6 +21,14 @@ from src.utils.utils import is_prod
 router = APIRouter(prefix="/ninja", tags=["ninja"])
 
 
+@router.get("/check/")
+async def check_ninja_auth(current_user=Depends(get_current_ninja_user)):
+    """The ninja counterpart to /auth/check/ — Ninja.tsx's access gate can't
+    use /auth/check/ since the ninja account has no users row for
+    get_current_user to look up (see src/deps/auth.py)."""
+    return {"authenticated": True}
+
+
 @router.get("/users/")
 async def list_users(
     limit: int = Query(50, ge=1, le=200),
