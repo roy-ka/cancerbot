@@ -7,6 +7,11 @@ import { ThemeProvider } from './context/ThemeContext'
 import { darkTheme } from './theme'
 import { SchemaProvider } from './schema-monitor'
 
+// Make dev builds visually distinguishable from prod in the browser tab.
+if (import.meta.env.DEV) {
+  document.title = `${document.title} dev`
+}
+
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ThemeProvider>
