@@ -38,6 +38,9 @@ export default function MessageList({
   onExampleClick,
   conversationId,
   onSplit,
+  onContinue,
+  continuingMessageId,
+  continuingText,
 }: {
   messages: Message[]
   onLoadOlder?: () => Promise<boolean> | boolean
@@ -48,6 +51,9 @@ export default function MessageList({
   onExampleClick?: (text: string) => void
   conversationId?: string
   onSplit?: (conversation: NewConversation) => void
+  onContinue?: (messageId: string) => void
+  continuingMessageId?: string | null
+  continuingText?: string
 }) {
   const [noOlderOpen, setNoOlderOpen] = useState(false)
   const lastTriggerRef = useRef<number>(0)
@@ -144,6 +150,9 @@ export default function MessageList({
           key={message.id || 'new'}
           conversationId={conversationId}
           onSplit={onSplit}
+          onContinue={onContinue}
+          isContinuing={!!message.id && message.id === continuingMessageId}
+          continuingText={message.id === continuingMessageId ? continuingText : undefined}
         />
       ))}
       {streamingContent !== null ? (

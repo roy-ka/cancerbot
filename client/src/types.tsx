@@ -48,4 +48,5 @@ export type Message = {
   sources: Source[]
   urls?: string[]
   feedback?: 1 | -1 | null
+  truncated?: boolean
 }

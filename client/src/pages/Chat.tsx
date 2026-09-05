@@ -23,6 +23,8 @@ export default function Chat() {
   const [currentStage, setCurrentStage] = useState<string | null>(null)
   const [streamingContent, setStreamingContent] = useState<string | null>(null)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
+  const [continuingMessageId, setContinuingMessageId] = useState<string | null>(null)
+  const [continuingText, setContinuingText] = useState('')
   // Icon tutorial. Shown while the user has no conversations yet; `loaded`
   // gates it on the conversations fetch having actually returned, so an
   // existing user doesn't see it flash during the initial request.
@@ -323,6 +325,52 @@ export default function Chat() {
     }
   }
 
+  const handleContinue = (messageId: string) => {
+    if (!selectedConversationId || selectedConversationId === 'new' || continuingMessageId) return
+
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    const wsHost = BASE_URL ? new URL(BASE_URL).host : window.location.host
+    const wsUrl = `${protocol}//${wsHost}/conversations/${selectedConversationId}/add_message/ws`
+
+    setContinuingMessageId(messageId)
+    setContinuingText('')
+
+    const ws = new WebSocket(wsUrl)
+
+    ws.onopen = () => {
+      ws.send(JSON.stringify({ continue_message_id: messageId }))
+    }
+
+    ws.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data)
+
+        if (msg.type === 'token') {
+          setContinuingText((prev) => prev + msg.token)
+        } else if (msg.type === 'final' && msg.continued_message) {
+          setMessages((prev) =>
+            prev.map((m) => (m.id === messageId ? { ...m, ...msg.continued_message } : m)),
+          )
+          setContinuingMessageId(null)
+          setContinuingText('')
+          ws.close()
+        } else if (msg.type === 'error') {
+          setContinuingMessageId(null)
+          setContinuingText('')
+          setErrorMsg(msg.message || 'Failed to continue the answer. Please try again.')
+        }
+      } catch (e) {
+        console.error('Failed to parse WebSocket message:', e)
+      }
+    }
+
+    ws.onerror = () => {
+      setContinuingMessageId(null)
+      setContinuingText('')
+      setErrorMsg('Connection error. Please try again.')
+    }
+  }
+
   const onMessageSubmit = (e: React.SubmitEvent<HTMLFormElement>) => {
     e.preventDefault()
     const messageText = inputValue.trim()
@@ -421,6 +469,9 @@ export default function Chat() {
               onExampleClick={setInputValue}
               conversationId={selectedConversationId === 'new' ? undefined : selectedConversationId}
               onSplit={handleSplitConversation}
+              onContinue={handleContinue}
+              continuingMessageId={continuingMessageId}
+              continuingText={continuingText}
             />
           </Box>
         </Box>

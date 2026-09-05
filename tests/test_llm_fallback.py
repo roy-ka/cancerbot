@@ -11,39 +11,49 @@ CONTEXT = [{"id": "src-001", "content_for_embedding": "Cancer cells exhibit the 
 # fallback-alert enqueue never hits a real Redis in tests.
 
 
-def _make_gemini_response(content):
+def _make_gemini_response(content, finish_reason=None):
     response = MagicMock()
     response.text = content
+    if finish_reason is None:
+        response.candidates = []
+    else:
+        candidate = MagicMock()
+        candidate.finish_reason = finish_reason
+        response.candidates = [candidate]
     return response
 
 
-def _gemini_mock(content=None, raises=None):
+def _gemini_mock(content=None, raises=None, finish_reason=None):
     m = MagicMock()
     if raises is not None:
         m.models.generate_content.side_effect = raises
     else:
-        m.models.generate_content.return_value = _make_gemini_response(content)
+        m.models.generate_content.return_value = _make_gemini_response(content, finish_reason=finish_reason)
     return m
 
 
-def _make_groq_stream(tokens):
+def _make_groq_stream(tokens, finish_reason=None):
     async def _stream():
-        for token in tokens:
+        for i, token in enumerate(tokens):
             chunk = MagicMock()
             chunk.choices = [MagicMock()]
             chunk.choices[0].delta.content = token
+            # Real API sends finish_reason on the terminal chunk only.
+            chunk.choices[0].finish_reason = finish_reason if i == len(tokens) - 1 else None
             yield chunk
     return _stream()
 
 
-def _async_groq_mock(tokens=None, raises=None):
+def _async_groq_mock(tokens=None, raises=None, finish_reason=None):
     """Mock for `AsyncGroq(...)` — patch target is groq.AsyncGroq itself, since
     stream_text does `from groq import AsyncGroq` locally at call time."""
     instance = MagicMock()
     if raises is not None:
         instance.chat.completions.create = AsyncMock(side_effect=raises)
     else:
-        instance.chat.completions.create = AsyncMock(return_value=_make_groq_stream(tokens or []))
+        instance.chat.completions.create = AsyncMock(
+            return_value=_make_groq_stream(tokens or [], finish_reason=finish_reason)
+        )
     factory = MagicMock(return_value=instance)
     return factory, instance
 
@@ -168,6 +178,84 @@ class TestGroqGeminiFallback:
         assert "[source1]" in "".join(text_chunks)
         sentinel = next(c for c in chunks if isinstance(c, dict))
         assert sentinel.get("source1") == "src-001"
+
+    @pytest.mark.asyncio
+    async def test_finish_reason_length_on_groq_path(self):
+        factory, _ = _async_groq_mock(tokens=["Cut off mid"], finish_reason="length")
+        with patch("groq.AsyncGroq", factory):
+            chunks = await _collect(OllamaConnector.stream_text(CONTEXT, "What is cancer?", []))
+        sentinel = next(c for c in chunks if isinstance(c, dict))
+        assert sentinel["_finish_reason"] == "length"
+
+    @pytest.mark.asyncio
+    async def test_finish_reason_stop_on_groq_path(self):
+        factory, _ = _async_groq_mock(tokens=["Complete answer."], finish_reason="stop")
+        with patch("groq.AsyncGroq", factory):
+            chunks = await _collect(OllamaConnector.stream_text(CONTEXT, "What is cancer?", []))
+        sentinel = next(c for c in chunks if isinstance(c, dict))
+        assert sentinel["_finish_reason"] == "stop"
+
+    @pytest.mark.asyncio
+    async def test_finish_reason_max_tokens_on_gemini_fallback_path(self):
+        factory, _ = _async_groq_mock(raises=_rate_limit_exc())
+        mock_gemini = _gemini_mock(content="Cut off", finish_reason="MAX_TOKENS")
+        with patch("groq.AsyncGroq", factory), \
+             patch.object(OllamaConnector, "gemini", mock_gemini):
+            chunks = await _collect(OllamaConnector.stream_text(CONTEXT, "What is cancer?", []))
+        sentinel = next(c for c in chunks if isinstance(c, dict))
+        assert sentinel["_finish_reason"] == "MAX_TOKENS"
+
+
+class TestIsTruncatedFinishReason:
+    def test_length_is_truncated(self):
+        from src.classes.ollama_connector import is_truncated_finish_reason
+        assert is_truncated_finish_reason("length") is True
+
+    def test_max_tokens_is_truncated(self):
+        from src.classes.ollama_connector import is_truncated_finish_reason
+        assert is_truncated_finish_reason("MAX_TOKENS") is True
+
+    def test_stop_is_not_truncated(self):
+        from src.classes.ollama_connector import is_truncated_finish_reason
+        assert is_truncated_finish_reason("stop") is False
+
+    def test_none_is_not_truncated(self):
+        from src.classes.ollama_connector import is_truncated_finish_reason
+        assert is_truncated_finish_reason(None) is False
+
+
+class TestStreamContinuation:
+    @pytest.mark.asyncio
+    async def test_continues_using_real_source_ids_not_aliases(self):
+        """Continuation must cite the actual stable IDs directly — no
+        source1/source2 alias indirection, since the prior answer already
+        used real IDs and there's nothing to remap."""
+        factory, instance = _async_groq_mock(tokens=["more evidence [src-001]."])
+        sources = [{"id": "src-001", "text": "Cancer cells favor glycolysis."}]
+        with patch("groq.AsyncGroq", factory):
+            chunks = await _collect(OllamaConnector.stream_continuation(
+                sources=sources,
+                original_question="What is the Warburg effect?",
+                prior_answer="Cancer cells exhibit the Warburg effect [src-001]",
+            ))
+        text_chunks = [c for c in chunks if isinstance(c, str)]
+        assert "".join(text_chunks) == "more evidence [src-001]."
+        prompt = instance.chat.completions.create.call_args.kwargs["messages"][0]["content"]
+        assert "[src-001] Cancer cells favor glycolysis." in prompt
+        assert "source1" not in prompt
+
+    @pytest.mark.asyncio
+    async def test_sentinel_has_no_alias_to_id(self):
+        factory, _ = _async_groq_mock(tokens=["more."], finish_reason="stop")
+        with patch("groq.AsyncGroq", factory):
+            chunks = await _collect(OllamaConnector.stream_continuation(
+                sources=[{"id": "src-001", "text": "x"}],
+                original_question="q",
+                prior_answer="partial",
+            ))
+        sentinel = next(c for c in chunks if isinstance(c, dict))
+        assert set(sentinel.keys()) == {"_model", "_finish_reason"}
+        assert sentinel["_finish_reason"] == "stop"
 
 
 class TestGenerateTitle:

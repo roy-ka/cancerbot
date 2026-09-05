@@ -15,6 +15,17 @@ logger = logging.getLogger(__name__)
 
 NO_DATA_RESPONSE = "I couldn't find relevant data in my searches."
 
+# Groq (OpenAI-compatible) reports a length-capped stream as "length"; Gemini
+# reports it as the FinishReason.MAX_TOKENS enum, normalized to its .value
+# string "MAX_TOKENS" in _stream_completion. Anything else (None, "stop",
+# Gemini's "STOP", a safety block, etc.) means the model actually finished
+# or stopped for a reason continuing wouldn't fix.
+_TRUNCATED_FINISH_REASONS = {"length", "MAX_TOKENS"}
+
+
+def is_truncated_finish_reason(reason: str | None) -> bool:
+  return reason in _TRUNCATED_FINISH_REASONS
+
 # The literal delimiters wrapping retrieved evidence in the prompt. They carry
 # the `=====` decoration so they stay distinguishable from the instruction text
 # that *describes* them a few lines earlier — otherwise "exactly one closing
@@ -303,6 +314,96 @@ ANSWER (every sentence must have a [source#] citation):
 
     return full_prompt, alias_to_id, max_tokens
 
+  @classmethod
+  def _build_continuation_prompt(
+    cls,
+    sources: Sequence[Mapping],
+    original_question: str,
+    prior_answer: str,
+    first_message: str | None = None,
+  ) -> tuple[str, int]:
+    """Build a prompt asking the model to continue a truncated answer.
+
+    Unlike _build_prompt, sources are cited by their real stable IDs
+    directly (e.g. [pmid:12345]) rather than a source1/source2 alias —
+    prior_answer already contains those real IDs, so there's no alias
+    table to keep in sync, and _post_process is a no-op on the result.
+    `sources` items must be dict-like with 'id' (or 'source_id') and
+    'full_text' — or the display-entry shape from
+    src/db/repositories/messeges.py:_hit_to_entry, which uses 'text' for
+    the same content (that's what message.sources actually holds)."""
+    max_evidence_chars = int(os.getenv('OLLAMA_EVIDENCE_CHARS', '900'))
+
+    def render_item(item: Mapping) -> str:
+      src = item.get("_source") if isinstance(item.get("_source"), Mapping) else item
+      raw_id = src.get('id') or src.get('source_id')
+      if not raw_id:
+        return ""
+      original_id = re.sub(r':c\d+$', '', str(raw_id).strip())
+      text = ' '.join(str(src.get('full_text') or src.get('text') or '').split())
+      if len(text) > max_evidence_chars:
+        text = text[:max_evidence_chars] + '…'
+      text = _EVIDENCE_FENCE_RE.sub('[filtered]', text)
+      return f"[{original_id}] {text}" if text else f"[{original_id}]"
+
+    rendered = [r for r in (render_item(item) for item in sources) if r]
+    context_block = "\n".join(rendered) if rendered else "(no context provided)"
+
+    language_block = ""
+    if first_message:
+      language_block = f"""
+LANGUAGE:
+Respond in the same language as the conversation's first message below (English if that message is in English).
+First message: "{' '.join(str(first_message).split())[:200]}"
+"""
+
+    full_prompt = f"""
+You are a doctor specializing in cancer research and treatment, metabolism, and integrative medicine.
+
+Your previous answer to the question below was cut off by a length limit partway through. Continue writing
+it from exactly where it left off — do not repeat any text already written, do not restart, do not add a
+preamble. Keep using the same [source_id] citation style already present in the previous answer, citing only
+the source IDs that appear in the Scientific Evidence below. Use ONLY that evidence as factual grounding, not
+your training knowledge.
+{language_block}
+Scientific Evidence:
+{_EVIDENCE_BEGIN}
+{context_block}
+{_EVIDENCE_END}
+
+QUESTION:
+{original_question}
+
+PREVIOUS ANSWER (cut off — continue from exactly here):
+{prior_answer}
+""".strip()
+
+    if not cls.groq_model:
+      raise ValueError(
+        "GROQ_MODEL_NAME is not set. Set it to a Groq-hosted model (e.g., openai/gpt-oss-120b)."
+      )
+
+    max_tokens = int(os.getenv('GROQ_MAX_TOKENS', '1024'))
+    return full_prompt, max_tokens
+
+  @classmethod
+  async def stream_continuation(
+    cls,
+    sources: Sequence[Mapping],
+    original_question: str,
+    prior_answer: str,
+    first_message: str | None = None,
+  ) -> AsyncIterator[str | dict]:
+    """Async generator — same token/sentinel contract as stream_text, but
+    extending a truncated answer instead of starting a fresh one. The
+    sentinel carries "_model"/"_finish_reason" only (no alias_to_id, since
+    continuation cites real IDs directly — see _build_continuation_prompt)."""
+    full_prompt, max_tokens = cls._build_continuation_prompt(
+      sources, original_question, prior_answer, first_message,
+    )
+    async for chunk in cls._stream_completion(full_prompt, max_tokens):
+      yield chunk
+
   # Citation tokens as the LLM actually emits them. The prompt instructs ASCII
   # brackets ([source1]), but models occasionally emit full-width/CJK brackets
   # (【source1】) instead despite that instruction — observed with
@@ -337,12 +438,35 @@ ANSWER (every sentence must have a [source#] citation):
     Tokens are raw LLM output (with [source1] aliases); caller must call _post_process
     on the assembled text to substitute stable IDs before persisting.
 
+    The sentinel also carries "_finish_reason": "length" when the response was
+    cut off by max_tokens rather than the model actually finishing — the
+    caller persists this so the frontend can offer to continue the answer.
+
     first_message, when given, is the conversation's first (non-hidden) user
     message — used to instruct the LLM to answer in that language rather than
     always English.
     """
     full_prompt, alias_to_id, max_tokens = cls._build_prompt(context, question, history, first_message)
 
+    async for chunk in cls._stream_completion(full_prompt, max_tokens):
+      if isinstance(chunk, dict):
+        yield {**alias_to_id, **chunk}
+      else:
+        yield chunk
+
+  @classmethod
+  async def _stream_completion(
+    cls,
+    full_prompt: str,
+    max_tokens: int,
+  ) -> AsyncIterator[str | dict]:
+    """Shared Groq-then-Gemini-fallback streaming core, used by both
+    stream_text (a fresh answer) and stream_continuation (extending a
+    truncated one) — the two differ only in how full_prompt is built.
+
+    Yields tokens, then a final {"_model": ..., "_finish_reason": ...} dict
+    (no alias_to_id — callers merge in whatever context-specific fields they
+    need on top of this)."""
     logger.debug(
       "[groq] stream model=%s max_tokens=%d prompt_len=%d",
       cls.groq_model, max_tokens, len(full_prompt),
@@ -350,6 +474,7 @@ ANSWER (every sentence must have a [source#] citation):
 
     groq_exc = None
     streaming_started = False
+    finish_reason: str | None = None
 
     try:
       stream = await cls._get_async_groq().chat.completions.create(
@@ -359,11 +484,14 @@ ANSWER (every sentence must have a [source#] citation):
         stream=True,
       )
       async for chunk in stream:
-        token = (chunk.choices[0].delta.content or "") if chunk.choices else ""
+        choice = chunk.choices[0] if chunk.choices else None
+        token = (choice.delta.content or "") if choice else ""
+        if choice and choice.finish_reason:
+          finish_reason = choice.finish_reason
         if token:
           streaming_started = True
           yield token
-      yield {**alias_to_id, "_model": cls.groq_model}
+      yield {"_model": cls.groq_model, "_finish_reason": finish_reason}
       return
     except groq.GroqError as exc:
       groq_exc = exc
@@ -372,7 +500,7 @@ ANSWER (every sentence must have a [source#] citation):
 
     if streaming_started:
       # Already emitted partial tokens; can't restart cleanly — just close the stream
-      yield {**alias_to_id, "_model": cls.groq_model}
+      yield {"_model": cls.groq_model, "_finish_reason": finish_reason}
       return
 
     # Gemini fallback — no streaming SDK support; yield full response as one chunk
@@ -388,7 +516,12 @@ ANSWER (every sentence must have a [source#] citation):
       logger.info("[gemini-fallback] model=%s", gemini_model)
       if raw_answer:
         yield raw_answer
-      yield {**alias_to_id, "_model": gemini_model}
+      gemini_finish_reason = None
+      candidates = getattr(response, "candidates", None)
+      if candidates:
+        reason = getattr(candidates[0], "finish_reason", None)
+        gemini_finish_reason = reason.value if hasattr(reason, "value") else reason
+      yield {"_model": gemini_model, "_finish_reason": gemini_finish_reason}
       return
     except Exception as exc:
       gemini_exc = exc

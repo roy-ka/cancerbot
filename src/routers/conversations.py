@@ -20,6 +20,7 @@ from src.db.repositories.conversations import (
 from src.db.repositories.messeges import (
     add_message,
     add_claims_and_sources,
+    append_to_message,
     get_messages_by_conversation_id,
     get_recent_messages,
     get_message_by_id,
@@ -29,7 +30,8 @@ from src.db.repositories.messeges import (
 from src.db.repositories.message_feedback import set_feedback, get_feedback_for_messages
 from uuid import UUID
 from src.retrieval import run_retrieval
-from src.classes.ollama_connector import OllamaConnector, NO_DATA_RESPONSE
+from src.retrieval.db_connector import dbConnector
+from src.classes.ollama_connector import OllamaConnector, NO_DATA_RESPONSE, is_truncated_finish_reason
 from src.routers.conversation_helper import _emit_noop, search_and_embed, fetch_url_contents, _representative_terms
 
 ROLLS = Literal['user', 'assistant']
@@ -124,6 +126,17 @@ def _is_allowed_ws_origin(origin: str | None) -> bool:
 
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
+
+
+def _msg_to_dict(m):
+    return {
+        "id": str(m.id),
+        "role": m.role,
+        "content": m.content,
+        "created_at": m.created_at.isoformat() if getattr(m, 'created_at', None) else None,
+        "sources": getattr(m, 'sources', None),
+        "truncated": getattr(m, 'truncated', False),
+    }
 
 
 async def _process_post_message(
@@ -345,6 +358,7 @@ async def _process_post_message(
                 raw_tokens.append(chunk)
                 await send_token(chunk)
         model_name: str | None = alias_to_id.pop("_model", None)
+        truncated = is_truncated_finish_reason(alias_to_id.pop("_finish_reason", None))
         response = OllamaConnector._post_process("".join(raw_tokens), alias_to_id)
     except ValueError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
@@ -391,6 +405,7 @@ async def _process_post_message(
             sources_ids=context.get('sources_ids'),
             model_name=model_name,
             hidden_from_user=hidden_from_user,
+            truncated=truncated,
         )
 
         db.commit()
@@ -417,15 +432,6 @@ async def _process_post_message(
     took_ms = int((time.time() - t0) * 1000)
     await emit('done', {'took_ms': took_ms})
 
-    def _msg_to_dict(m):
-        return {
-            "id": str(m.id),
-            "role": m.role,
-            "content": m.content,
-            "created_at": m.created_at.isoformat() if getattr(m, 'created_at', None) else None,
-            "sources": getattr(m, 'sources', None),
-        }
-
     return {
         "messages": [_msg_to_dict(user_message), _msg_to_dict(assistant_message)],
         "conversation": {
@@ -436,6 +442,82 @@ async def _process_post_message(
             "lastMessageTime": format_last_msg_time(user_message.created_at),
         },
     }
+
+
+async def _process_continue_message(
+    *,
+    message_id: UUID,
+    db: Session,
+    current_user,
+    emit: StageEmitter = _emit_stage_noop,
+    send_token: SendToken = _send_token_noop,
+):
+    """Extend a message previously cut short by GROQ_MAX_TOKENS, reusing the
+    same evidence sources rather than re-running retrieval — see
+    OllamaConnector.stream_continuation."""
+    t0 = time.time()
+
+    message = get_message_by_id(db, message_id)
+    if message is None or message.role != 'assistant':
+        raise HTTPException(status_code=404, detail="Message not found")
+    if not message.truncated:
+        raise HTTPException(status_code=400, detail="Message was not truncated")
+
+    conversation = get_conversation_by_id_no_auth(db=db, conversation_id=message.conversation_id)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    if str(conversation.user_id) != str(current_user.id):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    original_question = next(
+        (
+            m.content for m in sorted(conversation.messages, key=lambda m: m.created_at, reverse=True)
+            if m.role == 'user' and m.created_at <= message.created_at
+        ),
+        "",
+    )
+    first_message_content = next(
+        (m.content for m in conversation.messages if m.role == 'user' and not m.hidden_from_user),
+        original_question,
+    )
+
+    add_claims_and_sources(message)
+
+    await emit('generating_answer', {})
+
+    try:
+        raw_tokens: list[str] = []
+        finish_reason: str | None = None
+        model_name: str | None = None
+        async for chunk in OllamaConnector.stream_continuation(
+            sources=getattr(message, 'sources', None) or [],
+            original_question=original_question,
+            prior_answer=message.content,
+            first_message=first_message_content,
+        ):
+            if isinstance(chunk, dict):
+                model_name = chunk.get("_model") or model_name
+                finish_reason = chunk.get("_finish_reason")
+            else:
+                raw_tokens.append(chunk)
+                await send_token(chunk)
+        extra_content = "".join(raw_tokens)
+        truncated = is_truncated_finish_reason(finish_reason)
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+    message = append_to_message(db, message, extra_content, truncated)
+    if model_name:
+        message.model_name = model_name
+        db.commit()
+        db.refresh(message)
+
+    add_claims_and_sources(message)
+
+    took_ms = int((time.time() - t0) * 1000)
+    await emit('done', {'took_ms': took_ms})
+
+    return {"continued_message": _msg_to_dict(message)}
 
 
 @router.get("/")
@@ -517,6 +599,7 @@ async def get_conversation_messages(
             "created_at": msg.created_at.isoformat() if msg.created_at else None,
             "sources": msg.sources,
             "feedback": feedback_by_message.get(str(msg.id)),
+            "truncated": msg.truncated,
         }
         for msg in messages
     ]
@@ -668,19 +751,29 @@ async def post_message_ws(
             return
 
         payload = await websocket.receive_json()
-        req = Message(**payload)
 
         await emit('received', {'conversation_id': str(conversation_id)})
 
-        result = await _process_post_message(
-            conversation_id=conversation_id,
-            req=req,
-            db=db,
-            current_user=current_user,
-            conversation=None,
-            emit=emit,
-            send_token=send_token,
-        )
+        continue_message_id = payload.get('continue_message_id')
+        if continue_message_id:
+            result = await _process_continue_message(
+                message_id=UUID(continue_message_id),
+                db=db,
+                current_user=current_user,
+                emit=emit,
+                send_token=send_token,
+            )
+        else:
+            req = Message(**payload)
+            result = await _process_post_message(
+                conversation_id=conversation_id,
+                req=req,
+                db=db,
+                current_user=current_user,
+                conversation=None,
+                emit=emit,
+                send_token=send_token,
+            )
 
         await websocket.send_json({'type': 'final', **result})
         # Wait for client to close — avoids racing a CLOSE frame against the final message
