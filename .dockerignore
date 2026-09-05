@@ -2,6 +2,12 @@
 .env.*
 !example.env
 certs/
+secrets/
+*.pem
+*.key
+*-key.json
+*.p12
+*.pfx
 
 venv/
 venv_test/
