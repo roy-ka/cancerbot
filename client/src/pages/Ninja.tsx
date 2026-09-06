@@ -71,8 +71,10 @@ function WaitlistTab() {
   }
 
   useEffect(() => {
+    // loadEntries sets the loading spinner before its fetch resolves —
+    // that's the point of this effect, not an avoidable cascading render.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadEntries()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const invite = async (entry: WaitlistEntry) => {
@@ -192,6 +194,8 @@ export default function Ninja() {
 
   useEffect(() => {
     if (!accessChecked || tab !== 'users') return
+    // Same loading-before-fetch pattern as WaitlistTab.loadEntries above.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true)
     fetch(`${BASE_URL}/ninja/users/`, { credentials: 'include' })
       .then(async (res) => {
