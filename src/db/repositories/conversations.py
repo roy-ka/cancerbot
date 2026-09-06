@@ -75,6 +75,22 @@ def soft_delete_conversation(db, conversation_id, user_id):
   return True
 
 
+def set_use_profile_context(db, conversation_id, user_id, use_profile_context: bool):
+  stmt = select(Conversation).where(
+    Conversation.id == conversation_id,
+    Conversation.user_id == user_id,
+    Conversation.deleted_at.is_(None),
+  )
+  conversation = db.scalars(stmt).one_or_none()
+  if conversation is None:
+    return None
+
+  conversation.use_profile_context = use_profile_context
+  db.commit()
+  db.refresh(conversation)
+  return conversation
+
+
 def get_conversations_list_by_user_id(db, user_id, limit=10):
   # Subquery: latest message timestamp per conversation (any role)
   last_msg_ts_sq = (

@@ -371,8 +371,10 @@ async def generate_token(req: LoginRequest, response: Response, db: Session = De
 @router.get("/check/")
 async def check_auth(current_user=Depends(get_current_user), db: Session = Depends(get_db)):
     from src.db.repositories.terms import get_latest_terms
+    from src.db.repositories.profile import get_profile
     latest = get_latest_terms(db)
     needs_terms_update = latest is not None and current_user.terms_version != latest.version
+    needs_onboarding = get_profile(db, current_user.id) is None
     return {
         "authenticated": True,
         "user_id": str(current_user.id),
@@ -381,6 +383,7 @@ async def check_auth(current_user=Depends(get_current_user), db: Session = Depen
         "last_name": current_user.last_name,
         "terms_version": current_user.terms_version,
         "needs_terms_update": needs_terms_update,
+        "needs_onboarding": needs_onboarding,
     }
 
 @router.post("/logout/")

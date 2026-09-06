@@ -56,6 +56,15 @@ export default async function globalSetup() {
     await page.waitForLoadState('networkidle', { timeout: 10_000 })
   }
 
+  // Step 3.5: Skip the health-profile onboarding step if redirected there —
+  // this shared account has no profile, and ProtectedRoute would otherwise
+  // redirect every other spec's first protected-page visit here instead of
+  // /chat, since needs_onboarding is account state, not session state.
+  if (page.url().includes('/onboarding')) {
+    await page.getByRole('button', { name: /skip for now/i }).click()
+    await page.waitForLoadState('networkidle', { timeout: 10_000 })
+  }
+
   // Step 4: Save browser storage state (cookies at localhost:5173)
   await ctx.storageState({ path: authStatePath })
   await browser.close()

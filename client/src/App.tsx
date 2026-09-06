@@ -3,6 +3,7 @@ import Login from './pages/Login'
 import Chat from './pages/Chat'
 import Terms from './pages/Terms'
 import Privacy from './pages/Privacy'
+import Onboarding from './pages/Onboarding'
 import VerifyEmail from './pages/VerifyEmail'
 import ResetPassword from './pages/ResetPassword'
 import ConfirmDeleteAccount from './pages/ConfirmDeleteAccount'
@@ -24,6 +25,7 @@ function App() {
         <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
         <Route path="/terms" element={<Terms />} />
         <Route path="/privacy" element={<Privacy />} />
+        <Route path="/onboarding" element={<Onboarding />} />
         <Route path="/verify-email" element={<VerifyEmail />} />
         <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/confirm-delete" element={<ConfirmDeleteAccount />} />

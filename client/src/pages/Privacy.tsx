@@ -56,9 +56,15 @@ export default function Privacy() {
           unavailable). Key terms extracted from your message are also sent, as ordinary search queries, to PubMed,
           CrossRef, Wikipedia, and ClinicalTrials.gov to find supporting evidence.
         </Typography>
+        <Typography variant="body2" sx={{ mb: 1 }}>
+          If you choose to fill in the optional health profile (cancer type, stage, etc. — see "Onboarding" in the
+          account menu), those fields are also sent to Groq/Gemini as part of the prompt, the same way your message
+          text is, so answers can be framed more relevantly. This is entirely optional, and you can disable it for a
+          specific conversation with the toggle shown above the chat, or clear your profile entirely at any time.
+        </Typography>
         <Typography variant="body2">
           <strong>No private or identifying account data</strong> — your name or email — is sent to any of these outside
-          services. They only ever see whatever text you choose to put in a message.
+          services. They only ever see whatever text you choose to put in a message or your profile.
         </Typography>
       </Box>
 

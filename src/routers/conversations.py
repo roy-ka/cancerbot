@@ -16,7 +16,9 @@ from src.db.repositories.conversations import (
     create_conversation,
     format_last_msg_time,
     soft_delete_conversation,
+    set_use_profile_context,
 )
+from src.db.repositories.profile import get_profile, render_profile_context
 from src.db.repositories.messeges import (
     add_message,
     add_claims_and_sources,
@@ -340,6 +342,13 @@ async def _process_post_message(
             req.content,
         )
 
+    # Ninja's own turn never gets the real user's profile context — it's a
+    # debugging tool, not a stand-in for the conversation owner, and the
+    # ninja principal has no profile row of its own to look up anyway.
+    profile_context = None
+    if not hidden_from_user and conversation.use_profile_context:
+        profile_context = render_profile_context(get_profile(db, current_user.id))
+
     await emit('building_prompt', {'history_messages': len(history)})
     await emit('generating_answer', {})
 
@@ -351,6 +360,7 @@ async def _process_post_message(
             question=req.content,
             history=history,
             first_message=first_message_content,
+            profile_context=profile_context,
         ):
             if isinstance(chunk, dict):
                 alias_to_id = chunk
@@ -440,6 +450,7 @@ async def _process_post_message(
             "updatedAt": assistant_message.created_at.isoformat() if getattr(assistant_message, 'created_at', None) else None,
             "lastMessage": user_message.content,
             "lastMessageTime": format_last_msg_time(user_message.created_at),
+            "use_profile_context": conversation.use_profile_context,
         },
     }
 
@@ -609,6 +620,7 @@ async def get_conversation_messages(
             "id": str(conversation.id),
             "title": conversation.title,
             "updatedAt": conversation.updated_at.isoformat() if conversation.updated_at else None,
+            "use_profile_context": conversation.use_profile_context,
         },
         "messages": messages_data,
         "next_before": next_before,
@@ -819,6 +831,7 @@ async def create_empty_conversation(
         "title": conversation.title,
         "lastMessage": None,
         "lastMessageTime": None,
+        "use_profile_context": conversation.use_profile_context,
     }
 
 
@@ -836,6 +849,26 @@ async def new_conversation(
         current_user=current_user,
         conversation=conversation,
     )
+
+
+class UpdateConversationRequest(BaseModel):
+    use_profile_context: bool
+
+
+@router.patch("/{conversation_id}")
+async def update_conversation(
+    conversation_id: UUID,
+    req: UpdateConversationRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    conversation = set_use_profile_context(
+        db=db, conversation_id=conversation_id, user_id=current_user.id,
+        use_profile_context=req.use_profile_context,
+    )
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return {"id": str(conversation.id), "use_profile_context": conversation.use_profile_context}
 
 
 @router.delete("/{conversation_id}")

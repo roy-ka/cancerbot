@@ -49,7 +49,7 @@ export default function Terms() {
         return
       }
       if (!res.ok) throw new Error('accept failed')
-      navigate('/chat', { replace: true })
+      navigate('/onboarding', { replace: true })
     } catch {
       navigate('/login', { replace: true })
     } finally {

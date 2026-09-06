@@ -206,6 +206,28 @@ class TestGroqGeminiFallback:
         assert sentinel["_finish_reason"] == "MAX_TOKENS"
 
 
+class TestProfileContextInPrompt:
+    @pytest.mark.asyncio
+    async def test_profile_context_included_when_given(self):
+        factory, instance = _async_groq_mock(tokens=["answer."])
+        with patch("groq.AsyncGroq", factory):
+            await _collect(OllamaConnector.stream_text(
+                CONTEXT, "What is cancer?", [], profile_context="Cancer type: Glioblastoma\nStage: IV",
+            ))
+        prompt = instance.chat.completions.create.call_args.kwargs["messages"][0]["content"]
+        assert "PATIENT CONTEXT" in prompt
+        assert "Cancer type: Glioblastoma" in prompt
+        assert "do NOT use it to produce an individualized treatment recommendation" in prompt
+
+    @pytest.mark.asyncio
+    async def test_no_profile_block_when_not_given(self):
+        factory, instance = _async_groq_mock(tokens=["answer."])
+        with patch("groq.AsyncGroq", factory):
+            await _collect(OllamaConnector.stream_text(CONTEXT, "What is cancer?", []))
+        prompt = instance.chat.completions.create.call_args.kwargs["messages"][0]["content"]
+        assert "PATIENT CONTEXT" not in prompt
+
+
 class TestIsTruncatedFinishReason:
     def test_length_is_truncated(self):
         from src.classes.ollama_connector import is_truncated_finish_reason

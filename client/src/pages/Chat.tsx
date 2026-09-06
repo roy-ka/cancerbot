@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Alert, Box, Snackbar } from '@mui/material'
+import { Alert, Box, Snackbar, FormControlLabel, Switch, Typography } from '@mui/material'
 import { useNavigate } from 'react-router-dom'
 import ConversationList from '../components/ConversationList'
 import MessageList from '../components/MessageList'
@@ -25,6 +25,8 @@ export default function Chat() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [continuingMessageId, setContinuingMessageId] = useState<string | null>(null)
   const [continuingText, setContinuingText] = useState('')
+  const [hasProfile, setHasProfile] = useState(false)
+  const [useProfileContextEnabled, setUseProfileContextEnabled] = useState(true)
   // Icon tutorial. Shown while the user has no conversations yet; `loaded`
   // gates it on the conversations fetch having actually returned, so an
   // existing user doesn't see it flash during the initial request.
@@ -37,6 +39,21 @@ export default function Chat() {
     document.body.style.overflow = 'hidden'
     return () => { document.body.style.overflow = '' }
   }, [])
+
+  // The per-conversation toggle only makes sense (and is only shown) when
+  // there's an actual populated profile to include or exclude.
+  useEffect(() => {
+    fetch(`${BASE_URL}/profile/me`, { credentials: 'include' })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!data?.exists) return
+        const populated = !!(
+          data.cancer_type || data.stage || data.biomarkers || data.age_band || data.treatment_status
+        )
+        setHasProfile(populated)
+      })
+      .catch(() => setHasProfile(false))
+  }, [BASE_URL])
   // When a new conversation is created and the WS is in-flight, skip the
   // message fetch triggered by setSelectedConversationId so the optimistic
   // message is not wiped before the WS final response arrives.
@@ -97,6 +114,7 @@ export default function Chat() {
         setMessages((prev) => (prev.length === 0 ? prev : []))
         setNextBefore(null)
         setIsLoadingOlder(false)
+        setUseProfileContextEnabled(true)
         return
       }
 
@@ -139,6 +157,9 @@ export default function Chat() {
             updated[idx] = { ...updated[idx], ...apiConversation }
             return updated
           })
+        }
+        if (typeof apiConversation?.use_profile_context === 'boolean') {
+          setUseProfileContextEnabled(apiConversation.use_profile_context)
         }
       } catch (e) {
         console.error('messages failed:', e)
@@ -286,6 +307,9 @@ export default function Chat() {
               return [merged, ...prev.filter((_, i) => i !== idx)]
             })
           }
+          if (typeof msg.conversation?.use_profile_context === 'boolean') {
+            setUseProfileContextEnabled(msg.conversation.use_profile_context)
+          }
           ws.close()
         } else if (msg.type === 'error') {
           setStreamingContent(null)
@@ -369,6 +393,22 @@ export default function Chat() {
       setContinuingText('')
       setErrorMsg('Connection error. Please try again.')
     }
+  }
+
+  const handleToggleProfileContext = () => {
+    if (!selectedConversationId || selectedConversationId === 'new') return
+    const next = !useProfileContextEnabled
+    setUseProfileContextEnabled(next) // optimistic
+    fetch(`${BASE_URL}/conversations/${selectedConversationId}`, {
+      method: 'PATCH',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ use_profile_context: next }),
+    })
+      .then((res) => {
+        if (!res.ok) setUseProfileContextEnabled(!next)
+      })
+      .catch(() => setUseProfileContextEnabled(!next)) // revert on failure
   }
 
   const onMessageSubmit = (e: React.SubmitEvent<HTMLFormElement>) => {
@@ -458,6 +498,24 @@ export default function Chat() {
           />
         </Box>
         <Box className="chat-messages">
+          {hasProfile && selectedConversationId !== 'new' && (
+            <Box sx={{ px: 2, pt: 1 }}>
+              <FormControlLabel
+                control={
+                  <Switch
+                    size="small"
+                    checked={useProfileContextEnabled}
+                    onChange={handleToggleProfileContext}
+                  />
+                }
+                label={
+                  <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.6)' }}>
+                    Using your health profile for this conversation
+                  </Typography>
+                }
+              />
+            </Box>
+          )}
           <Box className="chat-message-list">
             <MessageList
               messages={messages}

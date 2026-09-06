@@ -20,7 +20,9 @@ import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined'
 import PrivacyTipOutlinedIcon from '@mui/icons-material/PrivacyTipOutlined'
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline'
 import PersonRemoveOutlinedIcon from '@mui/icons-material/PersonRemoveOutlined'
+import MedicalInformationOutlinedIcon from '@mui/icons-material/MedicalInformationOutlined'
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import cancerbotIcon from '../assets/cancerbot_dark.svg'
 import type { Conversation } from '../types'
 import ConversationItem from './ConversationItem'
@@ -60,6 +62,7 @@ export default function ConversationList({
   onCloseSidebar?: () => void
   onOpenGuide?: () => void
 }) {
+  const navigate = useNavigate()
   const [aboutOpen, setAboutOpen] = useState(false)
   const [logoutOpen, setLogoutOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
@@ -144,6 +147,20 @@ export default function ConversationList({
                   <LogoutIcon fontSize="small" />
                 </ListItemIcon>
                 <ListItemText primary="Logout" />
+              </MenuItem>
+              <MenuItem
+                onClick={() => {
+                  closeMenu()
+                  navigate('/onboarding')
+                }}
+                sx={{ color: 'rgba(255,255,255,0.8)', gap: 1 }}
+              >
+                <ListItemIcon
+                  sx={{ color: 'rgba(255,255,255,0.6)', minWidth: 32 }}
+                >
+                  <MedicalInformationOutlinedIcon fontSize="small" />
+                </ListItemIcon>
+                <ListItemText primary="Health Profile" />
               </MenuItem>
               <MenuItem
                 onClick={() => {

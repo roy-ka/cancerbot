@@ -10,6 +10,7 @@ interface ProtectedRouteProps {
 export default function ProtectedRoute({ children }: ProtectedRouteProps) {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null)
   const [termsRedirect, setTermsRedirect] = useState<string | null>(null)
+  const [needsOnboarding, setNeedsOnboarding] = useState(false)
   const [pendingDeletion, setPendingDeletion] = useState(false)
 
   useEffect(() => {
@@ -43,6 +44,8 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
         if (data.needs_terms_update) {
           const isUpdate = data.terms_version != null
           setTermsRedirect(isUpdate ? '/terms?updated=1' : '/terms')
+        } else if (data.needs_onboarding) {
+          setNeedsOnboarding(true)
         }
       } catch (e) {
         console.error('Auth check failed:', e)
@@ -63,6 +66,10 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
 
   if (termsRedirect) {
     return <Navigate to={termsRedirect} replace />
+  }
+
+  if (needsOnboarding) {
+    return <Navigate to="/onboarding" replace />
   }
 
   return <>{children}</>

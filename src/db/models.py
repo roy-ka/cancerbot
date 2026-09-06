@@ -51,6 +51,19 @@ class User(Base):
         lazy="selectin",
     )
 
+    # No passive_deletes here (unlike `conversations` above, which can be
+    # many rows and defers to the DB's ON DELETE CASCADE to avoid loading
+    # them all) — this is at most one row, so letting the ORM actively
+    # delete it keeps deletion correct even against a DB that doesn't
+    # enforce the FK cascade (e.g. SQLite in tests, which needs an explicit
+    # PRAGMA this test suite doesn't set).
+    profile: Mapped[Optional["UserProfile"]] = relationship(
+        "UserProfile",
+        back_populates="user",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+
 class Conversation(Base):
     __tablename__ = "conversations"
 
@@ -71,6 +84,10 @@ class Conversation(Base):
     # blocks or cascades into deleting the split-off conversation.
     forked_from_conversation_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     forked_from_message_id = Column(UUID(as_uuid=True), nullable=True)
+    # Per-conversation opt-out of injecting the user's health profile into the
+    # prompt (see UserProfile below) — a user with a stored profile may still
+    # want to ask something unrelated without it coloring the answer.
+    use_profile_context = Column(Boolean, default=True, nullable=False)
 
     user: Mapped["User"] = relationship("User", back_populates="conversations")
 
@@ -170,6 +187,30 @@ class MessageFeedback(Base):
     vote = Column(Integer, nullable=False)  # +1 (thumbs up) or -1 (thumbs down)
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+
+
+class UserProfile(Base):
+    """Optional, user-supplied clinical context (cancer type, stage, ...)
+    used to tailor prompt framing — see OllamaConnector._build_prompt's
+    profile preamble. Every field is nullable: the row's mere existence is
+    what signals "this user has already been offered onboarding" (skipping
+    without filling anything still creates an all-null row), independent of
+    whether any field is actually populated."""
+    __tablename__ = "user_profiles"
+
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    cancer_type = Column(String(255), nullable=True)
+    stage = Column(String(255), nullable=True)
+    biomarkers = Column(Text, nullable=True)
+    # Fixed option sets (enforced by the API layer, not a DB constraint) —
+    # free text risks the LLM over-anchoring on odd phrasing, and fixed
+    # values are what a future retrieval boost would need anyway.
+    age_band = Column(String(50), nullable=True)
+    treatment_status = Column(String(50), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+
+    user: Mapped["User"] = relationship("User", back_populates="profile")
 
 
 class Token(Base):

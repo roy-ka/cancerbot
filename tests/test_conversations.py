@@ -422,6 +422,99 @@ class TestAddMessage:
         assert str(conv["id"]) == str(test_conversation.id)
 
 
+class TestConversationProfileContextToggle:
+    def test_new_conversation_defaults_to_true(self, client):
+        response = client.post("/conversations/create/", json={"title": "Test"})
+        assert response.status_code == 201
+        assert response.json()["use_profile_context"] is True
+
+    def test_patch_flips_the_flag(self, client, test_conversation):
+        response = client.patch(
+            f"/conversations/{test_conversation.id}", json={"use_profile_context": False},
+        )
+        assert response.status_code == 200
+        assert response.json()["use_profile_context"] is False
+
+    def test_patch_wrong_user_conversation_returns_404(self, client, db_session):
+        import uuid
+        from src.db.repositories.conversations import create_conversation
+
+        other_user_id = uuid.uuid4()
+        conv = create_conversation(db_session, user_id=other_user_id, title="Other user's conv")
+        db_session.commit()
+
+        response = client.patch(f"/conversations/{conv.id}", json={"use_profile_context": False})
+        assert response.status_code == 404
+
+    def test_messages_endpoint_reports_the_flag(self, client, test_conversation, db_session):
+        from src.db.repositories.conversations import set_use_profile_context
+
+        set_use_profile_context(db_session, test_conversation.id, test_conversation.user_id, False)
+        response = client.get(f"/conversations/{test_conversation.id}/messages/")
+        assert response.json()["conversation"]["use_profile_context"] is False
+
+
+class TestProfileContextReachesThePrompt:
+    def test_populated_profile_passed_to_stream_text(self, client, test_conversation, db_session):
+        from src.db.repositories.profile import upsert_profile
+
+        upsert_profile(db_session, test_conversation.user_id, cancer_type="Glioblastoma", stage="IV")
+
+        captured = {}
+
+        async def _gen(*args, **kwargs):
+            captured.update(kwargs)
+            yield "answer."
+            yield {}
+
+        with patch("src.routers.conversations.OllamaConnector.stream_text", new=_gen):
+            response = client.post(
+                f"/conversations/{test_conversation.id}/add_message",
+                json={"content": "What is glycolysis?"},
+            )
+        assert response.status_code == 200
+        assert captured["profile_context"] is not None
+        assert "Glioblastoma" in captured["profile_context"]
+
+    def test_no_profile_passes_none(self, client, test_conversation):
+        captured = {}
+
+        async def _gen(*args, **kwargs):
+            captured.update(kwargs)
+            yield "answer."
+            yield {}
+
+        with patch("src.routers.conversations.OllamaConnector.stream_text", new=_gen):
+            client.post(
+                f"/conversations/{test_conversation.id}/add_message",
+                json={"content": "What is glycolysis?"},
+            )
+        assert captured["profile_context"] is None
+
+    def test_toggle_off_suppresses_profile_context_even_when_populated(
+        self, client, test_conversation, db_session
+    ):
+        from src.db.repositories.profile import upsert_profile
+        from src.db.repositories.conversations import set_use_profile_context
+
+        upsert_profile(db_session, test_conversation.user_id, cancer_type="Glioblastoma")
+        set_use_profile_context(db_session, test_conversation.id, test_conversation.user_id, False)
+
+        captured = {}
+
+        async def _gen(*args, **kwargs):
+            captured.update(kwargs)
+            yield "answer."
+            yield {}
+
+        with patch("src.routers.conversations.OllamaConnector.stream_text", new=_gen):
+            client.post(
+                f"/conversations/{test_conversation.id}/add_message",
+                json={"content": "What is glycolysis?"},
+            )
+        assert captured["profile_context"] is None
+
+
 class TestTruncatedFlag:
     def test_assistant_message_persists_truncated_true(self, client, test_conversation):
         async def _gen(*a, **k):
