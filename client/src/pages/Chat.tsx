@@ -300,10 +300,12 @@ export default function Chat() {
         const msg = JSON.parse(event.data)
 
         if (msg.type === 'stage') {
+          // streamingContent stays null (not '') here — MessageList shows the
+          // stage indicator ("Generating answer...") whenever streamingContent
+          // is null and only switches to the token bubble once one exists, so
+          // setting it eagerly on this stage hid the indicator before any
+          // token had actually arrived.
           setCurrentStage(msg.stage)
-          if (msg.stage === 'generating_answer') {
-            setStreamingContent('')
-          }
         } else if (msg.type === 'token') {
           setStreamingContent((prev) => (prev ?? '') + msg.token)
         } else if (msg.type === 'final') {
