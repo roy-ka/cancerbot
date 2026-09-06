@@ -172,6 +172,33 @@ async def send_fallback_alert(model: str) -> bool:
     return await _deliver(_FALLBACK_ALERT_TO, "fallback_alert", {"model": model})
 
 
+def _admin_digest_recipients() -> list[str]:
+    raw = os.getenv("ADMIN_DIGEST_EMAILS", "").strip()
+    return [addr.strip() for addr in raw.split(",") if addr.strip()]
+
+
+async def send_daily_admin_digest_email(template_data: dict) -> int:
+    """Send the daily admin digest to every address in ADMIN_DIGEST_EMAILS.
+
+    Returns the number of recipients it was actually delivered to (0 if the
+    env var is unset — a deliberate no-op, not an error; see
+    src/jobs/admin_digest.py)."""
+    delivered = 0
+    for to in _admin_digest_recipients():
+        if await _deliver(to, "daily_admin_digest", template_data):
+            delivered += 1
+    return delivered
+
+
+async def send_weekly_admin_digest_email(template_data: dict) -> int:
+    """Same contract as send_daily_admin_digest_email, for the weekly digest."""
+    delivered = 0
+    for to in _admin_digest_recipients():
+        if await _deliver(to, "weekly_admin_digest", template_data):
+            delivered += 1
+    return delivered
+
+
 async def send_verification_email(to: str, name: str, token: str, frontend_url: str) -> bool:
     verify_url = f"{frontend_url}/verify-email?token={token}"
     if not is_prod():

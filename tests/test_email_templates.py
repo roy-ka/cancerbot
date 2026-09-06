@@ -2,7 +2,7 @@ from src.utils.email_templates import TEMPLATES, render
 
 
 class TestTemplatesShape:
-    def test_nine_templates_present(self):
+    def test_eleven_templates_present(self):
         assert set(TEMPLATES) == {
             "verification",
             "password_reset",
@@ -13,6 +13,8 @@ class TestTemplatesShape:
             "fallback_alert",
             "waitlist_joined",
             "waitlist_invited",
+            "daily_admin_digest",
+            "weekly_admin_digest",
         }
 
     def test_every_template_has_a_subject_and_html_body(self):
@@ -62,3 +64,25 @@ class TestRender:
         import pytest
         with pytest.raises(KeyError):
             render("does_not_exist", name="Ada")
+
+    def test_daily_admin_digest_renders(self):
+        subject, html = render(
+            "daily_admin_digest",
+            date="September 6, 2026",
+            new_users=3, new_conversations=10, messages_sent=42,
+            fallback_triggered=1, waitlist_joined=2,
+            axiom_section="<p>ok</p>",
+        )
+        assert "September 6, 2026" in subject
+        assert "42" in html
+        assert "<p>ok</p>" in html
+
+    def test_weekly_admin_digest_renders(self):
+        subject, html = render(
+            "weekly_admin_digest",
+            date="September 6, 2026",
+            new_users=3, new_conversations=10, messages_sent=42,
+            fallback_triggered=1, waitlist_joined=2, total_users=100,
+        )
+        assert "September 6, 2026" in subject
+        assert "100" in html

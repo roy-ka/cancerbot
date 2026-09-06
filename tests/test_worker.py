@@ -17,6 +17,7 @@ from src.jobs.url_classification import (
     classify_url_job,
     reap_and_requeue_stale_url_classification_jobs,
 )
+from src.jobs.admin_digest import daily_admin_digest, weekly_admin_digest
 from src.worker import WorkerSettings, get_redis_settings, shutdown, startup
 
 
@@ -57,6 +58,8 @@ class TestWorkerSettings:
         assert cron_coroutines == {
             auth_cleanup_sweep,
             reap_and_requeue_stale_url_classification_jobs,
+            daily_admin_digest,
+            weekly_admin_digest,
         }
 
     def test_url_classification_reaper_runs_every_five_minutes(self):
@@ -71,6 +74,17 @@ class TestWorkerSettings:
         assert job.hour == {0, 6, 12, 18}
         assert job.minute == 0
         assert job.run_at_startup is True
+
+    def test_daily_admin_digest_runs_at_8am(self):
+        job = next(j for j in WorkerSettings.cron_jobs if j.coroutine is daily_admin_digest)
+        assert job.hour == 8
+        assert job.minute == 0
+
+    def test_weekly_admin_digest_runs_monday_8am(self):
+        job = next(j for j in WorkerSettings.cron_jobs if j.coroutine is weekly_admin_digest)
+        assert job.weekday == 0
+        assert job.hour == 8
+        assert job.minute == 0
 
     def test_lifecycle_hooks_are_set(self):
         assert WorkerSettings.on_startup is startup

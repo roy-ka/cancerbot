@@ -33,7 +33,9 @@ if os.getenv("ENV", "").lower() in ("prod", "production"):
 
 
 def _init_axiom_logging() -> None:
-    token = os.getenv("AXIOM_TOKEN")
+    # Ingest-only token — see AXIOM_TOKEN_READ in src/jobs/admin_digest.py
+    # (backend service) for the separate, query-scoped token.
+    token = os.getenv("AXIOM_TOKEN_WRITE")
     dataset = os.getenv("AXIOM_DATASET")
     if not token or not dataset:
         return

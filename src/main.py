@@ -30,7 +30,9 @@ if is_prod():
     logging.getLogger("uvicorn.access").addFilter(_HealthFilter())
 
 def _init_axiom_logging() -> None:
-    token = os.getenv("AXIOM_TOKEN")
+    # Ingest-only token — see AXIOM_TOKEN_READ in src/jobs/admin_digest.py
+    # for the separate, query-scoped token the daily digest queries with.
+    token = os.getenv("AXIOM_TOKEN_WRITE")
     dataset = os.getenv("AXIOM_DATASET")
     if not token or not dataset:
         return

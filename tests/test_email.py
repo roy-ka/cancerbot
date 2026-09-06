@@ -228,6 +228,63 @@ class TestEveryPublicSenderRendersSuccessfully:
         assert "gpt-4o" in mock_post.call_args.kwargs["json"]["htmlContent"]
 
 
+class TestAdminDigestEmails:
+    _daily_fields = {
+        "date": "September 6, 2026", "new_users": 1, "new_conversations": 2,
+        "messages_sent": 3, "fallback_triggered": 0, "waitlist_joined": 0,
+        "axiom_section": "<p>ok</p>",
+    }
+    _weekly_fields = {
+        "date": "September 6, 2026", "new_users": 1, "new_conversations": 2,
+        "messages_sent": 3, "fallback_triggered": 0, "waitlist_joined": 0,
+        "total_users": 10,
+    }
+
+    def test_daily_digest_sent_to_every_recipient(self, as_prod, monkeypatch):
+        monkeypatch.setenv("BREVO_API_KEY", "test-key")
+        monkeypatch.setenv("ADMIN_DIGEST_EMAILS", "a@example.com, b@example.com")
+
+        with patch("src.utils.email_brevo.requests.post") as mock_post:
+            mock_post.return_value = _mock_post_response()
+            delivered = asyncio.run(as_prod.send_daily_admin_digest_email(self._daily_fields))
+
+        assert delivered == 2
+        assert mock_post.call_count == 2
+        recipients = {call.kwargs["json"]["to"][0]["email"] for call in mock_post.call_args_list}
+        assert recipients == {"a@example.com", "b@example.com"}
+
+    def test_weekly_digest_sent_to_every_recipient(self, as_prod, monkeypatch):
+        monkeypatch.setenv("BREVO_API_KEY", "test-key")
+        monkeypatch.setenv("ADMIN_DIGEST_EMAILS", "a@example.com")
+
+        with patch("src.utils.email_brevo.requests.post") as mock_post:
+            mock_post.return_value = _mock_post_response()
+            delivered = asyncio.run(as_prod.send_weekly_admin_digest_email(self._weekly_fields))
+
+        assert delivered == 1
+        mock_post.assert_called_once()
+
+    def test_no_recipients_configured_is_a_noop(self, as_prod, monkeypatch):
+        monkeypatch.setenv("BREVO_API_KEY", "test-key")
+        monkeypatch.setenv("ADMIN_DIGEST_EMAILS", "")
+
+        with patch("src.utils.email_brevo.requests.post") as mock_post:
+            delivered = asyncio.run(as_prod.send_daily_admin_digest_email(self._daily_fields))
+
+        assert delivered == 0
+        mock_post.assert_not_called()
+
+    def test_one_bad_recipient_does_not_block_the_others(self, as_prod, monkeypatch):
+        monkeypatch.setenv("BREVO_API_KEY", "test-key")
+        monkeypatch.setenv("ADMIN_DIGEST_EMAILS", "a@example.com,b@example.com")
+
+        with patch("src.utils.email_brevo.requests.post") as mock_post:
+            mock_post.side_effect = [_mock_post_response(500), _mock_post_response(200)]
+            delivered = asyncio.run(as_prod.send_daily_admin_digest_email(self._daily_fields))
+
+        assert delivered == 1
+
+
 class TestDormantSendgridPath:
     """_send_sendgrid/EMAIL_TEMPLATES are kept in email.py, unused by any live
     sender, in case SendGrid is ever reinstated. Minimal regression coverage

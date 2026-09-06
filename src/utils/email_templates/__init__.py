@@ -30,6 +30,8 @@ from . import (
     fallback_alert,
     waitlist_joined,
     waitlist_invited,
+    daily_admin_digest,
+    weekly_admin_digest,
 )
 
 TEMPLATES = {
@@ -68,6 +70,14 @@ TEMPLATES = {
   "waitlist_invited": {
     "subject": waitlist_invited.SUBJECT,
     "html": waitlist_invited.HTML,
+  },
+  "daily_admin_digest": {
+    "subject": daily_admin_digest.SUBJECT,
+    "html": daily_admin_digest.HTML,
+  },
+  "weekly_admin_digest": {
+    "subject": weekly_admin_digest.SUBJECT,
+    "html": weekly_admin_digest.HTML,
   },
 }
 

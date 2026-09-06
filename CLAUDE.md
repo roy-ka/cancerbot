@@ -492,7 +492,9 @@ Fallback (only when `OPENSEARCH_CA_CERT` is unset): `verify_certs=False` alone i
 New migrations that create tables or indexes must use raw SQL with `IF NOT EXISTS` via `op.execute()`, not `op.create_table()` / `op.create_index()`. This avoids `DuplicateTable` errors when revision IDs change between deploys. See `add_bug_reports_table_001.py` as the canonical example.
 
 ### Axiom
-Initialised in `src/main.py` and `nlp_service/app.py` via `_init_axiom_logging()` — an `AxiomHandler` is attached to the root logger, forwarding standard Python `logging` calls at INFO+ to the Axiom dataset named by `AXIOM_DATASET`, authenticated via `AXIOM_TOKEN`. Both env vars must be set for logging to activate; init is skipped silently (no error) if either is missing. Log records carry no explicit environment tag — the logger `name` field (e.g. `src.main`, `nlp_service.app`) is the only built-in way to distinguish sources when querying.
+Initialised in `src/main.py` and `nlp_service/app.py` via `_init_axiom_logging()` — an `AxiomHandler` is attached to the root logger, forwarding standard Python `logging` calls at INFO+ to the Axiom dataset named by `AXIOM_DATASET`, authenticated via `AXIOM_TOKEN_WRITE`. Both env vars must be set for logging to activate; init is skipped silently (no error) if either is missing. Log records carry no explicit environment tag — the logger `name` field (e.g. `src.main`, `nlp_service.app`) is the only built-in way to distinguish sources when querying.
+
+Querying (not just ingesting) uses a **separate** token, `AXIOM_TOKEN_READ` — Axiom scopes tokens per-action, and the ingest token above does not (and should not) also carry query access. Only `src/jobs/admin_digest.py`'s daily digest queries Axiom (`apl_query`, log volume by level + top errors over the last 24h); it degrades gracefully (logs and returns `None`) if `AXIOM_TOKEN_READ`/`AXIOM_DATASET` are unset or the query fails, rather than blocking the digest from sending.
 
 ### Deploy Script (`scripts/deploy.sh`)
 - Checks disk free ≥ 100GB before building; runs `docker system prune` and re-checks if low

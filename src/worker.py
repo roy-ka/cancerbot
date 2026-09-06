@@ -51,6 +51,7 @@ from src.jobs.url_classification import (
     classify_url_job,
     reap_and_requeue_stale_url_classification_jobs,
 )
+from src.jobs.admin_digest import daily_admin_digest, weekly_admin_digest
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +90,9 @@ class WorkerSettings:
         cron(auth_cleanup_sweep, hour={0, 6, 12, 18}, minute=0, run_at_startup=True),
         # Every 5 minutes — matches the old worker's REAP_INTERVAL_SECONDS.
         cron(reap_and_requeue_stale_url_classification_jobs, minute=set(range(0, 60, 5))),
+        # Admin-only usage/health digests — see src/jobs/admin_digest.py.
+        cron(daily_admin_digest, hour=8, minute=0),
+        cron(weekly_admin_digest, weekday=0, hour=8, minute=0),  # Monday
     ]
     on_startup = startup
     on_shutdown = shutdown
