@@ -17,6 +17,7 @@ import {
 import PersonOutlineIcon from '@mui/icons-material/PersonOutline'
 import LogoutIcon from '@mui/icons-material/Logout'
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined'
+import PrivacyTipOutlinedIcon from '@mui/icons-material/PrivacyTipOutlined'
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline'
 import PersonRemoveOutlinedIcon from '@mui/icons-material/PersonRemoveOutlined'
 import { useState } from 'react'
@@ -162,16 +163,19 @@ export default function ConversationList({
           </Box>
 
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <Tooltip title="About">
+            <FindTrialsDialog />
+            <Tooltip title="Privacy">
               <IconButton
                 size="small"
-                onClick={() => setAboutOpen(true)}
+                component="a"
+                href="/privacy"
+                target="_blank"
+                rel="noopener noreferrer"
                 sx={{ color: 'rgba(255,255,255,0.6)' }}
               >
-                <InfoOutlinedIcon fontSize="small" />
+                <PrivacyTipOutlinedIcon fontSize="small" />
               </IconButton>
             </Tooltip>
-            <FindTrialsDialog />
             {onOpenGuide && (
               <Tooltip title="Icon guide">
                 <IconButton
@@ -185,6 +189,15 @@ export default function ConversationList({
                 </IconButton>
               </Tooltip>
             )}
+            <Tooltip title="About">
+              <IconButton
+                size="small"
+                onClick={() => setAboutOpen(true)}
+                sx={{ color: 'rgba(255,255,255,0.6)' }}
+              >
+                <InfoOutlinedIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
             <BugReportDialog compact />
           </Box>
 

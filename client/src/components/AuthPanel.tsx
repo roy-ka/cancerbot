@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Box, Button, Typography } from '@mui/material'
+import { Box, Button, Link, Typography } from '@mui/material'
 import LoginForm from './LoginForm'
 import RegistrationForm from './RegistrationForm'
 import WaitlistForm from './WaitlistForm'
@@ -106,6 +106,12 @@ export default function AuthPanel({ inviteToken }: { inviteToken?: string }) {
         {view === 'forgot' && (
           <ForgotPasswordForm onBack={() => setView('login')} />
         )}
+      </Box>
+
+      <Box sx={{ textAlign: 'center', mt: 2 }}>
+        <Link href="/privacy" target="_blank" rel="noopener noreferrer" variant="body2">
+          Privacy Policy
+        </Link>
       </Box>
     </Box>
   )

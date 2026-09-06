@@ -2,6 +2,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import Login from './pages/Login'
 import Chat from './pages/Chat'
 import Terms from './pages/Terms'
+import Privacy from './pages/Privacy'
 import VerifyEmail from './pages/VerifyEmail'
 import ResetPassword from './pages/ResetPassword'
 import ConfirmDeleteAccount from './pages/ConfirmDeleteAccount'
@@ -22,6 +23,7 @@ function App() {
         {/* Public — redirect to /chat if already authenticated */}
         <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
         <Route path="/terms" element={<Terms />} />
+        <Route path="/privacy" element={<Privacy />} />
         <Route path="/verify-email" element={<VerifyEmail />} />
         <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/confirm-delete" element={<ConfirmDeleteAccount />} />
