@@ -24,6 +24,47 @@ async function registrationIsOpen(): Promise<boolean> {
   return open
 }
 
+// Terms acceptance now lands on /onboarding (the health-profile step), not
+// /chat directly — a brand-new account here has never seen it, so skip it
+// rather than fill it in, since it's not what these tests are about.
+async function skipOnboardingIfShown(page: import('@playwright/test').Page) {
+  // .isVisible() is a one-shot snapshot check, not a poll — it does not
+  // retry for `timeout`, so it can (and did) return false a few ms after
+  // navigation, before Onboarding's own /profile/me fetch had rendered the
+  // button. .waitFor() actually polls.
+  const skip = page.getByRole('button', { name: /^skip for now$/i })
+  const shown = await skip
+    .waitFor({ state: 'visible', timeout: 15_000 })
+    .then(() => true)
+    .catch(() => false)
+  if (shown) {
+    await skip.click()
+    // Skip navigates to /chat client-side (no full document load), and
+    // waitForLoadState('networkidle') alone can resolve before the newly
+    // mounted ProtectedRoute even starts its own /auth/check fetch — a race
+    // that let a fast-following "other device" deletion complete before this
+    // tab's mount-time check ran, failing it immediately instead of leaving
+    // it authenticated for the *next* action (WS send) to catch. Waiting for
+    // the composer to render guarantees that check already succeeded.
+    await page.waitForURL(/\/chat/, { timeout: 10_000 })
+    await page.getByRole('button', { name: /^send$/i }).waitFor({ state: 'visible', timeout: 10_000 })
+  }
+}
+
+// A fresh, zero-conversation account auto-opens the "Getting around
+// CancerBot" icon guide on /chat, which sits on top of the page (including
+// the account-menu button in the sidebar) until dismissed.
+async function dismissIconGuideIfShown(page: import('@playwright/test').Page) {
+  const gotIt = page.getByRole('button', { name: /^got it$/i })
+  const shown = await gotIt
+    .waitFor({ state: 'visible', timeout: 5_000 })
+    .then(() => true)
+    .catch(() => false)
+  if (shown) {
+    await gotIt.click()
+  }
+}
+
 test.describe('Account deletion', () => {
   test('request, confirm, grace-period login block, and cancel', async ({ page }) => {
     test.skip(!(await registrationIsOpen()), 'registration is closed (MAX_USERS reached)')
@@ -53,6 +94,8 @@ test.describe('Account deletion', () => {
     await page.locator('input[type="checkbox"]').check()
     await page.getByRole('button', { name: /accept and continue/i }).click()
     await page.waitForLoadState('networkidle', { timeout: 10_000 })
+    await skipOnboardingIfShown(page)
+    await dismissIconGuideIfShown(page)
 
     // Open the account menu → Delete Account → send the confirmation email
     await page.locator('button:has(svg[data-testid="PersonOutlineIcon"])').first().click()
@@ -204,6 +247,7 @@ test.describe('Account deletion', () => {
     await page.locator('input[type="checkbox"]').check()
     await page.getByRole('button', { name: /accept and continue/i }).click()
     await page.waitForLoadState('networkidle', { timeout: 10_000 })
+    await skipOnboardingIfShown(page)
 
     // "Another device" schedules deletion without ever touching this tab's
     // own session/cookie or reloading this page — the WS handshake for the
@@ -221,11 +265,15 @@ test.describe('Account deletion', () => {
     await otherDevice.dispose()
     await api.dispose()
 
+    // The icon guide also steals focus from the composer here — a keyboard
+    // Enter would submit into the dialog instead of sending.
+    await dismissIconGuideIfShown(page)
+
     // No reload/navigation here — sending a message opens a fresh WS
     // handshake against the now-rejected session, without ProtectedRoute's
     // own mount-time /auth/check/ ever running again.
     await page.fill('textarea[name="input"]', 'what is cancer?')
-    await page.keyboard.press('Enter')
+    await page.getByRole('button', { name: /^send$/i }).click()
 
     await expect(page).toHaveURL(/\/login\?reason=pending_deletion/, { timeout: 10_000 })
     await expect(page.getByText(/scheduled for deletion/i)).toBeVisible()

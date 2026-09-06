@@ -459,10 +459,22 @@ export default function Chat() {
         body: JSON.stringify({ title: messageText.slice(0, 20) }),
       })
         .then(async (res) => {
-          if (!res.ok) throw new Error(await res.text())
+          if (!res.ok) {
+            // Same pending-deletion case sendViaWebSocket's ws.onerror
+            // handles below — this is the other path a first message can
+            // take (starting a brand-new conversation goes through this
+            // plain REST call instead of straight to the WebSocket), so it
+            // needs the same explained redirect rather than a generic error.
+            if (await isPendingDeletionResponse(res)) {
+              window.location.href = loginPathForAuthFailure(true)
+              return null
+            }
+            throw new Error(await res.text())
+          }
           return res.json()
         })
         .then((conv) => {
+          if (!conv) return
           skipFetchForConvRef.current = conv.id
           setConversations((prev) => [conv, ...prev])
           setSelectedConversationId(conv.id)
