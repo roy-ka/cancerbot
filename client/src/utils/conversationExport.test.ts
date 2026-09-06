@@ -141,6 +141,33 @@ describe('conversationToPrintHtml', () => {
     expect(html).toContain('href="https://pubmed.ncbi.nlm.nih.gov/1/"')
   })
 
+  it('linkifies an in-body citation token using that message\'s own sources', () => {
+    const html = conversationToPrintHtml('My Chat', [
+      message({
+        role: 'assistant',
+        content: 'Cancer cells prefer glycolysis [pmid:38175589].',
+        sources: [source({ id: 'pmid:38175589', url: null, name: 'Paper' })],
+      }),
+    ])
+    expect(html).toContain('<a href="https://pubmed.ncbi.nlm.nih.gov/38175589/">[pmid:38175589]</a>')
+  })
+
+  it('leaves a citation token as plain text when its source is unknown', () => {
+    const html = conversationToPrintHtml('My Chat', [
+      message({ role: 'assistant', content: 'See [pmid:999].', sources: [] }),
+    ])
+    expect(html).toContain('[pmid:999]')
+    expect(html).not.toContain('<a href')
+  })
+
+  it('does not linkify bracketed text that is not a real citation', () => {
+    const html = conversationToPrintHtml('My Chat', [
+      message({ role: 'user', content: 'What about [some note] here?', sources: [] }),
+    ])
+    expect(html).toContain('[some note]')
+    expect(html).not.toContain('<a href')
+  })
+
   it('produces a full, well-formed HTML document', () => {
     const html = conversationToPrintHtml('My Chat', [message()])
     expect(html).toContain('<!DOCTYPE html>')

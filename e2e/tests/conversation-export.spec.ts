@@ -67,5 +67,13 @@ test.describe('Conversation export', () => {
       'src',
       'https://cancer-bot.com/cancerbot_light.png',
     )
+
+    // The assistant's answer cites sources inline (e.g. [doi:...]) — those
+    // must be real clickable links in the exported PDF, not just the
+    // separate Sources list at the end.
+    const inlineCitationLink = popup.locator('.message.assistant .content a').first()
+    await expect(inlineCitationLink).toBeVisible()
+    const href = await inlineCitationLink.getAttribute('href')
+    expect(href).toMatch(/^https?:\/\//)
   })
 })

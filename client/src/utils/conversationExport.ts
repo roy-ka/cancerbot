@@ -86,15 +86,35 @@ function escapeHtml(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
+// Matches a citation token like [pmid:12345] — mirrors MessageItem.tsx's
+// in-app citation parsing, simplified to an exact id match (no punctuation
+// trimming/normalization) since export content is already post-processed,
+// stable-id text straight from the backend.
+const CITATION_TOKEN_RE = /\[([^\]\s]+)\]/g
+
+/** Turns [pmid:12345]-style citation tokens in already-escaped message text
+ * into real links, using that message's own sources — the same info the
+ * in-app citation chips use, but as plain <a> tags for a static document. */
+function linkifyCitations(escapedContent: string, sources: Source[]): string {
+  const byId = new Map(sources.map((s) => [s.id, s] as const))
+  return escapedContent.replace(CITATION_TOKEN_RE, (fullMatch, id: string) => {
+    const source = byId.get(id)
+    if (!source) return fullMatch
+    const href = sourceHref(source)
+    return href ? `<a href="${href}">${fullMatch}</a>` : fullMatch
+  })
+}
+
 export function conversationToPrintHtml(title: string, messages: Message[]): string {
   const body = messages
     .map((message) => {
       const who = message.role === 'user' ? 'You' : 'CancerBot'
       const when = formatTimestamp(message.timestamp)
+      const content = linkifyCitations(escapeHtml(message.content), message.sources ?? [])
       return `
         <div class="message ${message.role}">
           <div class="meta"><strong>${who}</strong>${when ? ` — ${escapeHtml(when)}` : ''}</div>
-          <div class="content">${escapeHtml(message.content).replace(/\n/g, '<br/>')}</div>
+          <div class="content">${content.replace(/\n/g, '<br/>')}</div>
         </div>
       `
     })
