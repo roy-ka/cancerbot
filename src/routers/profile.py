@@ -58,13 +58,16 @@ def update_my_profile(
     # the (all-null) row, which is what stops onboarding from resurfacing.
     payload = req.model_dump(exclude_unset=True)
 
-    if payload.get("age_band") not in (None, *AGE_BANDS):
-        raise HTTPException(status_code=422, detail=f"age_band must be one of {AGE_BANDS}")
-    if payload.get("treatment_status") not in (None, *TREATMENT_STATUSES):
-        raise HTTPException(status_code=422, detail=f"treatment_status must be one of {TREATMENT_STATUSES}")
-
-    # An explicit "" (a cleared text field) means the same as null here.
+    # An explicit "" means the same as null here — a cleared text field, or
+    # (for age_band/treatment_status) the Onboarding.tsx <Select>'s "Prefer
+    # not to say" option, whose value is "" rather than being unset. Must
+    # normalize before validating below, or that default selection 422s.
     fields = {k: (None if v == "" else v) for k, v in payload.items()}
+
+    if fields.get("age_band") not in (None, *AGE_BANDS):
+        raise HTTPException(status_code=422, detail=f"age_band must be one of {AGE_BANDS}")
+    if fields.get("treatment_status") not in (None, *TREATMENT_STATUSES):
+        raise HTTPException(status_code=422, detail=f"treatment_status must be one of {TREATMENT_STATUSES}")
 
     profile = upsert_profile(db, current_user.id, **fields)
     return _profile_to_dict(profile)

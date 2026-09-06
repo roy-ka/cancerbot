@@ -50,8 +50,19 @@ test.describe('Health profile onboarding', () => {
     // Saving takes us to chat, and the per-conversation toggle appears
     // because this account now has a populated profile.
     await expect(page).toHaveURL(/chat/, { timeout: 10_000 })
+
+    // A brand-new account with zero conversations auto-opens the "Getting
+    // around CancerBot" icon guide, which otherwise steals focus from the
+    // composer (a keyboard Enter would submit into the dialog, not send the
+    // message) — wait for and dismiss it before typing anything.
+    const guideDismiss = page.getByRole('button', { name: /^got it$/i })
+    await expect(guideDismiss).toBeVisible({ timeout: 10_000 })
+    await guideDismiss.click()
+    await expect(guideDismiss).not.toBeVisible()
+
     await page.fill('textarea[name="input"]', 'What is glioblastoma?')
-    await page.keyboard.press('Enter')
+    await page.getByRole('button', { name: /^send$/i }).click()
+
     await expect(page.getByText(/using your health profile/i)).toBeVisible({ timeout: 15_000 })
 
     // Re-open from the account menu — should be pre-filled and offer Clear

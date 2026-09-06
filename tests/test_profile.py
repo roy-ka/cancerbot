@@ -52,6 +52,20 @@ class TestUpdateProfile:
         response = client.put("/profile/me", json={"treatment_status": "cured_forever"})
         assert response.status_code == 422
 
+    def test_empty_string_age_band_accepted_as_unset(self, client):
+        """The frontend's <Select> "Prefer not to say" option submits ""
+        rather than omitting the field — this must not 422, or saving the
+        onboarding form with those left at their default fails outright."""
+        response = client.put(
+            "/profile/me",
+            json={"cancer_type": "Glioblastoma", "age_band": "", "treatment_status": ""},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["age_band"] is None
+        assert data["treatment_status"] is None
+        assert data["cancer_type"] == "Glioblastoma"
+
     def test_partial_update_does_not_clear_other_fields(self, client):
         client.put("/profile/me", json={"cancer_type": "Glioblastoma", "stage": "IV"})
         response = client.put("/profile/me", json={"stage": "III"})

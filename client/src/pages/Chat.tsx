@@ -1,5 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Alert, Box, Snackbar, FormControlLabel, Switch, Typography } from '@mui/material'
+import {
+  Alert,
+  Box,
+  Snackbar,
+  FormControlLabel,
+  Switch,
+  Typography,
+  IconButton,
+  Menu,
+  MenuItem,
+  Tooltip,
+} from '@mui/material'
+import FileDownloadOutlinedIcon from '@mui/icons-material/FileDownloadOutlined'
 import { useNavigate } from 'react-router-dom'
 import ConversationList from '../components/ConversationList'
 import MessageList from '../components/MessageList'
@@ -8,6 +20,7 @@ import InputField from '../components/InputField'
 import IconGuideDialog from '../components/IconGuideDialog'
 import { extractUrls } from '../utils/urls'
 import { isPendingDeletionResponse, loginPathForAuthFailure } from '../utils/authRedirect'
+import { conversationToMarkdown, downloadMarkdown, printConversationAsPdf } from '../utils/conversationExport'
 export default function Chat() {
   const BASE_URL = import.meta.env.VITE_BASE_URL || ''
   const navigate = useNavigate()
@@ -27,6 +40,7 @@ export default function Chat() {
   const [continuingText, setContinuingText] = useState('')
   const [hasProfile, setHasProfile] = useState(false)
   const [useProfileContextEnabled, setUseProfileContextEnabled] = useState(true)
+  const [exportMenuAnchor, setExportMenuAnchor] = useState<HTMLElement | null>(null)
   // Icon tutorial. Shown while the user has no conversations yet; `loaded`
   // gates it on the conversations fetch having actually returned, so an
   // existing user doesn't see it flash during the initial request.
@@ -411,6 +425,22 @@ export default function Chat() {
       .catch(() => setUseProfileContextEnabled(!next)) // revert on failure
   }
 
+  const currentConversationTitle =
+    conversations.find((c) => c.id === selectedConversationId)?.title || 'Conversation'
+
+  const handleExportMarkdown = () => {
+    setExportMenuAnchor(null)
+    downloadMarkdown(
+      `${currentConversationTitle}.md`,
+      conversationToMarkdown(currentConversationTitle, messages),
+    )
+  }
+
+  const handleExportPdf = () => {
+    setExportMenuAnchor(null)
+    printConversationAsPdf(currentConversationTitle, messages)
+  }
+
   const onMessageSubmit = (e: React.SubmitEvent<HTMLFormElement>) => {
     e.preventDefault()
     const messageText = inputValue.trim()
@@ -498,22 +528,40 @@ export default function Chat() {
           />
         </Box>
         <Box className="chat-messages">
-          {hasProfile && selectedConversationId !== 'new' && (
-            <Box sx={{ px: 2, pt: 1 }}>
-              <FormControlLabel
-                control={
-                  <Switch
-                    size="small"
-                    checked={useProfileContextEnabled}
-                    onChange={handleToggleProfileContext}
-                  />
-                }
-                label={
-                  <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.6)' }}>
-                    Using your health profile for this conversation
-                  </Typography>
-                }
-              />
+          {selectedConversationId !== 'new' && (
+            <Box sx={{ px: 2, pt: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
+              {hasProfile && (
+                <FormControlLabel
+                  control={
+                    <Switch
+                      size="small"
+                      checked={useProfileContextEnabled}
+                      onChange={handleToggleProfileContext}
+                    />
+                  }
+                  label={
+                    <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.6)' }}>
+                      Using your health profile for this conversation
+                    </Typography>
+                  }
+                />
+              )}
+              <Tooltip title="Export conversation">
+                <IconButton
+                  onClick={(e) => setExportMenuAnchor(e.currentTarget)}
+                  sx={{ color: 'rgba(255,255,255,0.6)' }}
+                >
+                  <FileDownloadOutlinedIcon fontSize="medium" />
+                </IconButton>
+              </Tooltip>
+              <Menu
+                anchorEl={exportMenuAnchor}
+                open={Boolean(exportMenuAnchor)}
+                onClose={() => setExportMenuAnchor(null)}
+              >
+                <MenuItem onClick={handleExportMarkdown}>Download as Markdown</MenuItem>
+                <MenuItem onClick={handleExportPdf}>Download as PDF</MenuItem>
+              </Menu>
             </Box>
           )}
           <Box className="chat-message-list">
