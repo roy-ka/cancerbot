@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Navigate } from 'react-router-dom'
+import { Navigate, useLocation } from 'react-router-dom'
 import { Box } from '@mui/material'
 import { isPendingDeletionResponse, loginPathForAuthFailure } from '../utils/authRedirect'
 
@@ -8,6 +8,7 @@ interface ProtectedRouteProps {
 }
 
 export default function ProtectedRoute({ children }: ProtectedRouteProps) {
+  const location = useLocation()
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null)
   const [termsRedirect, setTermsRedirect] = useState<string | null>(null)
   const [needsOnboarding, setNeedsOnboarding] = useState(false)
@@ -68,7 +69,13 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
     return <Navigate to={termsRedirect} replace />
   }
 
-  if (needsOnboarding) {
+  // Guard against self-redirecting: /onboarding is itself wrapped in
+  // ProtectedRoute (so its own needs-auth check doesn't independently race
+  // this one — see the App.tsx route def), so without this check a user
+  // who legitimately still needs onboarding while sitting on that exact
+  // page would get handed a <Navigate to="/onboarding"> back to where they
+  // already are, on every mount.
+  if (needsOnboarding && location.pathname !== '/onboarding') {
     return <Navigate to="/onboarding" replace />
   }
 

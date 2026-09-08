@@ -54,14 +54,16 @@ export default function Onboarding() {
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
+    // This page is wrapped in ProtectedRoute (see App.tsx), which already
+    // confirmed the session before rendering it — so unlike save()/
+    // handleClear() below (later, user-initiated actions where a session
+    // can legitimately have expired since), a failure here is transient,
+    // not a real logout. Redirecting to /login independently of
+    // ProtectedRoute's own check raced it and could disagree over which
+    // page to land on, looping between /chat, /onboarding and /login
+    // forever. Fail quiet instead: show an empty form rather than bounce.
     fetch(`${BASE_URL}/profile/me`, { credentials: 'include' })
-      .then(async (res) => {
-        if (!res.ok) {
-          navigate(loginPathForAuthFailure(await isPendingDeletionResponse(res)), { replace: true })
-          return null
-        }
-        return res.json()
-      })
+      .then(async (res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (!data) return
         if (data.exists) {
@@ -75,9 +77,9 @@ export default function Onboarding() {
           })
         }
       })
-      .catch(() => navigate('/login', { replace: true }))
+      .catch(() => {})
       .finally(() => setLoading(false))
-  }, [navigate])
+  }, [])
 
   const setField = (field: keyof ProfileState) => (e: React.ChangeEvent<HTMLInputElement>) => {
     setProfile((prev) => ({ ...prev, [field]: e.target.value }))
