@@ -8,4 +8,8 @@ requests
 conllu
 pyspellchecker>=0.8.2
 axiom-py
+# Reranking cross-encoder (CPU-only torch pulled in transitively) — kept in
+# this service, not the backend/worker images, for the same reason scispaCy
+# is: the backend image builds twice (backend + worker), nlp-service once.
+sentence-transformers>=3.0.0,<4.0.0
 https://s3-us-west-2.amazonaws.com/ai2-s2-scispacy/releases/v0.5.4/en_core_sci_sm-0.5.4.tar.gz

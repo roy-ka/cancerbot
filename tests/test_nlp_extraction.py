@@ -131,6 +131,67 @@ class TestExtractTerms:
 
 
 # ---------------------------------------------------------------------------
+# TestRerank
+# ---------------------------------------------------------------------------
+
+class TestRerank:
+    """Unit tests for src.nlp.rerank — mocks the sync HTTP call."""
+
+    def test_returns_scores_in_request_order(self):
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {"scores": [0.9, -2.1]}
+
+        with patch("src.nlp._get_sync_client") as mock_client_fn:
+            mock_client = MagicMock()
+            mock_client.post = MagicMock(return_value=mock_resp)
+            mock_client_fn.return_value = mock_client
+
+            from src.nlp import rerank
+            result = rerank("what blocks GBM?", ["doc about GBM", "unrelated doc"])
+
+        assert result == [0.9, -2.1]
+
+    def test_empty_query_returns_none(self):
+        from src.nlp import rerank
+        assert rerank("", ["doc"]) is None
+
+    def test_empty_documents_returns_none(self):
+        from src.nlp import rerank
+        assert rerank("query", []) is None
+
+    def test_http_error_returns_none(self):
+        import httpx
+
+        with patch("src.nlp._get_sync_client") as mock_client_fn:
+            mock_client = MagicMock()
+            mock_client.post = MagicMock(side_effect=httpx.ConnectError("refused"))
+            mock_client_fn.return_value = mock_client
+
+            from src.nlp import rerank
+            result = rerank("query", ["doc"])
+
+        assert result is None
+
+    def test_mismatched_score_count_returns_none(self):
+        """A malformed nlp-service response must fail open, not crash the
+        caller trying to zip mismatched-length lists."""
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {"scores": [0.9]}
+
+        with patch("src.nlp._get_sync_client") as mock_client_fn:
+            mock_client = MagicMock()
+            mock_client.post = MagicMock(return_value=mock_resp)
+            mock_client_fn.return_value = mock_client
+
+            from src.nlp import rerank
+            result = rerank("query", ["doc one", "doc two"])
+
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
 # TestSpellingCorrectionBeforeExtraction
 # ---------------------------------------------------------------------------
 

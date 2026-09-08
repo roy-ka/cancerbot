@@ -2,10 +2,41 @@ from .search import search_sources
 from .db_connector import dbConnector
 
 import logging
+import os
 import re
 logger = logging.getLogger(__name__)
 
 db = dbConnector()
+
+
+def _rerank_sources(question: str, sources: list) -> list:
+  """Reorder search_sources' already cosine-gated, capped list by cross-
+  encoder relevance to the natural question — a precision pass, not a
+  second relevance gate: it only reorders, it never drops a source the
+  gate already let through (a multi-part question can have a source that
+  only supports one part of the answer; dropping it here would repeat the
+  "discard everything if not everything is supported" bug the prompt's
+  citation rule was just fixed for). Fails open on any error — original
+  RRF order is a reasonable result on its own, so a reranker outage must
+  not break retrieval.
+  """
+  if os.getenv("RERANK_ENABLED", "true").strip().lower() not in ("1", "true", "yes"):
+    return sources
+  if len(sources) < 2:
+    return sources
+
+  # Local import: same reasoning as OllamaConnector below — keeps this
+  # module free of the extra import chain unless reranking actually runs.
+  from ..nlp import rerank
+
+  documents = [s.get('_source', {}).get('content_for_embedding') or '' for s in sources]
+  scores = rerank(question, documents)
+  if scores is None:
+    return sources
+
+  for source, score in zip(sources, scores):
+    source['_rerank_score'] = score
+  return sorted(sources, key=lambda s: s.get('_rerank_score', 0.0), reverse=True)
 
 def calculate_search_metrics(query: str, results: list) -> dict:
   """Calculate search metrics from results.
@@ -57,6 +88,7 @@ def run_retrieval(
   # thread hop. search_sources already returns the relevance-gated, capped set
   # (variable count, not a fixed top-k), so there's nothing more to slice here.
   sources = search_sources(db, query, query_embedding, disease_areas=disease_areas)
+  sources = _rerank_sources(dense_text, sources)
 
   metrics = calculate_search_metrics(query, sources)
 

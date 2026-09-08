@@ -606,3 +606,65 @@ class TestSearchMetrics:
 
         metrics = calculate_search_metrics("x" * 900, [])
         assert len(metrics["search_query"]) == 500
+
+
+class TestRerankSources:
+    """_rerank_sources reorders search_sources' output by cross-encoder
+    score — a precision pass on an already-gated list, not a second filter
+    (see src/retrieval/__init__.py's docstring for why it must never drop a
+    source the cosine gate already let through)."""
+
+    def _sources(self):
+        return [
+            {"_source": {"id": "a", "content_for_embedding": "about topic A"}, "_score": 0.03},
+            {"_source": {"id": "b", "content_for_embedding": "about topic B"}, "_score": 0.02},
+            {"_source": {"id": "c", "content_for_embedding": "about topic C"}, "_score": 0.01},
+        ]
+
+    def test_reorders_by_rerank_score_descending(self, monkeypatch):
+        from src.retrieval import _rerank_sources
+
+        monkeypatch.setenv("RERANK_ENABLED", "true")
+        monkeypatch.setattr("src.nlp.rerank", lambda query, documents: [0.1, 0.9, 0.5])
+
+        result = _rerank_sources("question", self._sources())
+
+        assert [s["_source"]["id"] for s in result] == ["b", "c", "a"]
+        assert result[0]["_rerank_score"] == 0.9
+
+    def test_disabled_leaves_order_unchanged(self, monkeypatch):
+        from src.retrieval import _rerank_sources
+
+        monkeypatch.setenv("RERANK_ENABLED", "false")
+        sources = self._sources()
+
+        result = _rerank_sources("question", sources)
+
+        assert result is sources
+        assert "_rerank_score" not in result[0]
+
+    def test_rerank_failure_leaves_order_unchanged(self, monkeypatch):
+        """rerank() itself already fails open (returns None) on any HTTP
+        error — this confirms the caller respects that instead of crashing
+        on a None score list."""
+        from src.retrieval import _rerank_sources
+
+        monkeypatch.setenv("RERANK_ENABLED", "true")
+        monkeypatch.setattr("src.nlp.rerank", lambda query, documents: None)
+        sources = self._sources()
+
+        result = _rerank_sources("question", sources)
+
+        assert [s["_source"]["id"] for s in result] == ["a", "b", "c"]
+
+    def test_fewer_than_two_sources_skips_rerank_call(self, monkeypatch):
+        from src.retrieval import _rerank_sources
+
+        monkeypatch.setenv("RERANK_ENABLED", "true")
+        called = []
+        monkeypatch.setattr("src.nlp.rerank", lambda query, documents: called.append(1) or [1.0])
+
+        result = _rerank_sources("question", self._sources()[:1])
+
+        assert called == []
+        assert len(result) == 1

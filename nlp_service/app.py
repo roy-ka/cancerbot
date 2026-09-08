@@ -85,6 +85,12 @@ logger.info("[startup] Pipeline: %s", nlp.pipe_names)
 spell_checker = SpellChecker(distance=1)
 logger.info("[startup] SpellChecker ready")
 
+logger.info("[startup] Loading cross-encoder 'cross-encoder/ms-marco-MiniLM-L-6-v2'...")
+from sentence_transformers import CrossEncoder
+
+reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+logger.info("[startup] Cross-encoder ready")
+
 
 # Upper bound on text accepted by the pipeline endpoints. A scispaCy parse is
 # CPU-bound and roughly linear in input size, and this service has no auth of
@@ -102,6 +108,19 @@ class ExtractReq(BaseModel):
 
 class SpellingReq(BaseModel):
     text: str = Field(..., max_length=MAX_TEXT_CHARS)
+
+
+# Reranking operates on already-retrieved, already-gated chunks (MAX_RESULTS
+# in src/retrieval/search.py, currently 10) — these bounds exist for the same
+# no-auth DoS reason as MAX_TEXT_CHARS, sized to that caller rather than to
+# an arbitrary worst case.
+MAX_RERANK_DOCS = 32
+MAX_RERANK_DOC_CHARS = 2_000
+
+
+class RerankReq(BaseModel):
+    query: str = Field(..., max_length=MAX_TEXT_CHARS)
+    documents: list[str] = Field(..., max_length=MAX_RERANK_DOCS)
 
 
 def _dedupe(items: list[str]) -> list[str]:
@@ -225,6 +244,19 @@ async def spelling_correct(req: SpellingReq):
     corrected = "".join(parts)
     logger.info("[spelling] %.3fs — %d changes", time.time() - t0, len(changes))
     return {"text": req.text, "corrected": corrected, "changes": changes}
+
+
+@app.post("/rerank")
+async def rerank(req: RerankReq):
+    t0 = time.time()
+    if not req.documents:
+        return {"scores": []}
+
+    documents = [d[:MAX_RERANK_DOC_CHARS] for d in req.documents]
+    pairs = [(req.query, doc) for doc in documents]
+    scores = await run_in_threadpool(reranker.predict, pairs)
+    logger.info("[rerank] %.3fs — %d documents", time.time() - t0, len(documents))
+    return {"scores": [float(s) for s in scores]}
 
 
 @app.get("/health")
