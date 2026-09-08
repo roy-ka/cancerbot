@@ -434,6 +434,13 @@ if command -v trivy &>/dev/null; then
   _trivy_cleanup() { rm -f "${TRIVY_TAR:-}"; }
   trap '_trivy_cleanup' EXIT INT TERM
 
+  # --table-mode summary still prints one row per scanned target, and trivy
+  # treats every individually pip-installed package's dist-info/METADATA as
+  # its own target (no lockfile to group them under) — hundreds of 0-vuln
+  # rows on every deploy. This template instead prints only actual
+  # HIGH/CRITICAL findings (one line each), nothing when the image is clean.
+  TRIVY_TEMPLATE=$'{{ range . }}{{ range .Vulnerabilities }}{{ .Severity }}\t{{ .PkgName }}\t{{ .InstalledVersion }}\t{{ .FixedVersion }}\t{{ .VulnerabilityID }}\n{{ end }}{{ end }}'
+
   for IMAGE in cancerbot-backend cancerbot-worker; do
     if docker image inspect "$IMAGE" &>/dev/null; then
       echo "  Scanning $IMAGE..."
@@ -447,7 +454,7 @@ if command -v trivy &>/dev/null; then
         SCAN_FAILED=true
         continue
       fi
-      if ! trivy image --quiet --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed --no-progress --table-mode summary --input "$TRIVY_TAR"; then
+      if ! trivy image --quiet --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed --no-progress --format template --template "$TRIVY_TEMPLATE" --input "$TRIVY_TAR"; then
         echo "✗ Trivy scan failed for $IMAGE — HIGH/CRITICAL vulnerabilities found (commit: $(git rev-parse HEAD))"
         SCAN_FAILED=true
       else
