@@ -13,7 +13,7 @@ import os
 from datetime import datetime, timedelta, timezone
 
 from src.db.session import SessionLocal
-from src.db.models import User, Conversation, Message, SearchAnalytic, WaitlistEntry
+from src.db.models import User, Conversation, Message, SearchAnalytic, WaitlistEntry, BugReport
 from src.utils.email import send_daily_admin_digest_email, send_weekly_admin_digest_email
 
 logger = logging.getLogger(__name__)
@@ -32,6 +32,7 @@ def _gather_db_stats(db, since: datetime) -> dict:
             SearchAnalytic.created_at >= since, SearchAnalytic.fallback_triggered == 1,
         ).count(),
         "waitlist_joined": db.query(WaitlistEntry).filter(WaitlistEntry.created_at >= since).count(),
+        "bug_reports": db.query(BugReport).filter(BugReport.created_at >= since).count(),
     }
 
 

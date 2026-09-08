@@ -3,7 +3,7 @@ import pytest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch, AsyncMock, MagicMock
 
-from src.db.models import SearchAnalytic
+from src.db.models import SearchAnalytic, BugReport
 from src.db.repositories.conversations import create_conversation
 from src.db.repositories.messeges import add_message
 from src.db.repositories.waitlist import create_waitlist_entry
@@ -60,6 +60,14 @@ class TestGatherDbStats:
         since = datetime.now(timezone.utc) - timedelta(hours=1)
         stats = _gather_db_stats(db_session, since)
         assert stats["waitlist_joined"] == 1
+
+    def test_bug_reports_counted(self, db_session, test_user):
+        db_session.add(BugReport(user_id=test_user.id, title="Something broke"))
+        db_session.commit()
+
+        since = datetime.now(timezone.utc) - timedelta(hours=1)
+        stats = _gather_db_stats(db_session, since)
+        assert stats["bug_reports"] == 1
 
 
 class TestGatherAxiomStats:

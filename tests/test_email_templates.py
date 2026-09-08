@@ -73,7 +73,7 @@ class TestRender:
             "daily_admin_digest",
             date="September 6, 2026",
             new_users=3, new_conversations=10, messages_sent=42,
-            fallback_triggered=1, waitlist_joined=2,
+            fallback_triggered=1, waitlist_joined=2, bug_reports=1,
             axiom_section="<p>ok</p>",
         )
         assert "September 6, 2026" in subject

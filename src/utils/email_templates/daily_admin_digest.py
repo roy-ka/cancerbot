@@ -44,6 +44,7 @@ HTML = """<!DOCTYPE html>
                 <tr><td style="padding:4px 0;">Messages sent</td><td align="right" style="padding:4px 0; font-weight:bold;">{messages_sent}</td></tr>
                 <tr><td style="padding:4px 0;">Fallback searches triggered</td><td align="right" style="padding:4px 0; font-weight:bold;">{fallback_triggered}</td></tr>
                 <tr><td style="padding:4px 0;">New waitlist signups</td><td align="right" style="padding:4px 0; font-weight:bold;">{waitlist_joined}</td></tr>
+                <tr><td style="padding:4px 0;">Bug reports</td><td align="right" style="padding:4px 0; font-weight:bold;">{bug_reports}</td></tr>
               </table>
             </td>
           </tr>
