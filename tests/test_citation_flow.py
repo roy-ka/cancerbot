@@ -263,6 +263,18 @@ class TestPostProcess:
         assert "[doi:10.1/x]" in result
         assert "【" not in result and "】" not in result
 
+    def test_replaces_alias_with_internal_whitespace(self):
+        # The prompt instructs [source1] with no internal spaces, but a model
+        # can emit "[ source1 ]" anyway — observed on prod. Left unhandled,
+        # " source1 " never matches the un-padded alias_to_id key, so the raw
+        # alias reaches the user instead of the real source ID.
+        result = OllamaConnector._post_process(
+            "CLL is a low-grade B-cell lymphoma [ source3 ].",
+            {"source3": "pmid:12345"},
+        )
+        assert "[pmid:12345]" in result
+        assert "source3" not in result
+
     def test_unrecognized_bracket_token_left_untouched(self):
         # Only known aliases are substituted — arbitrary bracketed text (e.g. the
         # model citing something outside alias_to_id) must pass through as-is

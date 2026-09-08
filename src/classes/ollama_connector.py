@@ -432,7 +432,11 @@ PREVIOUS ANSWER (cut off — continue from exactly here):
   def _post_process(cls, raw_answer: str, alias_to_id: dict[str, str]) -> str:
     """Replace short aliases with stable source IDs and strip empty brackets."""
     def _sub(match: re.Match) -> str:
-      alias = match.group(1)
+      # Prompt instructs [source1] with no internal spaces, but models
+      # occasionally emit "[ source1 ]" anyway — stripping here keeps that
+      # variant matching alias_to_id's un-padded keys instead of silently
+      # leaving the raw alias in the answer shown to the user.
+      alias = match.group(1).strip()
       return f"[{alias_to_id[alias]}]" if alias in alias_to_id else match.group(0)
 
     answer = cls._CITATION_TOKEN_RE.sub(_sub, raw_answer)
