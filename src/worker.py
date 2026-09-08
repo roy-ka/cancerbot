@@ -97,8 +97,8 @@ class WorkerSettings:
         # Every 5 minutes — matches the old worker's REAP_INTERVAL_SECONDS.
         cron(reap_and_requeue_stale_url_classification_jobs, minute=set(range(0, 60, 5))),
         # Admin-only usage/health digests — see src/jobs/admin_digest.py.
-        cron(daily_admin_digest, hour=8, minute=0),
-        cron(weekly_admin_digest, weekday=0, hour=8, minute=0),  # Monday
+        cron(daily_admin_digest, hour=1, minute=0),
+        cron(weekly_admin_digest, weekday='sun', hour=2, minute=0),
     ]
     on_startup = startup
     on_shutdown = shutdown

@@ -81,15 +81,15 @@ class TestWorkerSettings:
         assert job.minute == 0
         assert job.run_at_startup is True
 
-    def test_daily_admin_digest_runs_at_8am(self):
+    def test_daily_admin_digest_runs_at_0100_utc(self):
         job = next(j for j in WorkerSettings.cron_jobs if j.coroutine is daily_admin_digest)
-        assert job.hour == 8
+        assert job.hour == 1
         assert job.minute == 0
 
-    def test_weekly_admin_digest_runs_monday_8am(self):
+    def test_weekly_admin_digest_runs_sunday_0200_utc(self):
         job = next(j for j in WorkerSettings.cron_jobs if j.coroutine is weekly_admin_digest)
-        assert job.weekday == 0
-        assert job.hour == 8
+        assert job.weekday == 'sun'
+        assert job.hour == 2
         assert job.minute == 0
 
     def test_lifecycle_hooks_are_set(self):
