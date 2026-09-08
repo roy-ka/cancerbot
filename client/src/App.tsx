@@ -31,7 +31,12 @@ function App() {
         <Route
           path="/onboarding"
           element={
-            <ProtectedRoute>
+            // key forces a full remount when navigating to/from /chat (also
+            // wrapped in ProtectedRoute) — same component type at the same
+            // tree position otherwise gets reused across the route change,
+            // carrying over stale auth-check state from whichever page was
+            // mounted first instead of re-checking for the new one.
+            <ProtectedRoute key="onboarding">
               <Onboarding />
             </ProtectedRoute>
           }
@@ -47,7 +52,7 @@ function App() {
         <Route
           path="/chat"
           element={
-            <ProtectedRoute>
+            <ProtectedRoute key="chat">
               <Chat />
             </ProtectedRoute>
           }
