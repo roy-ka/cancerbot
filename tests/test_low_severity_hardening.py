@@ -293,6 +293,30 @@ class TestEvidenceFence:
 
 
 # ---------------------------------------------------------------------------
+# Multi-part question citation rule
+# ---------------------------------------------------------------------------
+# A blunt "fewer than 2 sources support the answer -> decline entirely" rule
+# let a multi-part question (e.g. "what drugs block each of these pathways?")
+# get discarded wholesale just because some of its parts lacked evidence,
+# even when others were well-supported. The prompt now tells the model to
+# answer each part on its own merits instead.
+
+class TestMultiPartCitationRule:
+    def test_prompt_instructs_per_part_answers(self):
+        from src.classes.ollama_connector import OllamaConnector, NO_DATA_RESPONSE
+
+        prompt, _, _ = OllamaConnector._build_prompt(
+            [{"id": "s1", "content_for_embedding": "Gabapentin blocks thrombospondin-1."}],
+            "what drugs block each of these pathways?",
+            [],
+        )
+        assert "multiple distinct parts" in prompt
+        assert "identified in the available sources" in prompt
+        assert "NONE of the question's parts have at least 2" in prompt
+        assert NO_DATA_RESPONSE in prompt
+
+
+# ---------------------------------------------------------------------------
 # Stale auth row cleanup
 # ---------------------------------------------------------------------------
 

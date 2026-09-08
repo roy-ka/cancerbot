@@ -299,7 +299,12 @@ CRITICAL — CITATION RULES (you MUST follow these):
 - Multiple citations allowed: [source1][source2].
 - Do NOT invent IDs. Do NOT write sentences without citations.
 - If the evidence conflicts, summarize both sides and cite both.
-- If fewer than 2 sources support the answer, write only: "{NO_DATA_RESPONSE}"
+- If the question has multiple distinct parts (e.g., asks about several items separately),
+  answer each part on its own merits — use whatever evidence supports it, and say "not
+  identified in the available sources" for any part that lacks support. Do not discard an
+  entire answer just because some of its parts lack evidence.
+- Write only: "{NO_DATA_RESPONSE}" when NONE of the question's parts have at least 2
+  supporting sources.
 {language_block}{profile_block}
 Scientific Evidence:
 {_EVIDENCE_BEGIN}
