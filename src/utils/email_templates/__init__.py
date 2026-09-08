@@ -32,6 +32,9 @@ from . import (
     waitlist_invited,
     daily_admin_digest,
     weekly_admin_digest,
+    email_change_request,
+    email_change_verification,
+    email_changed_notice,
 )
 
 TEMPLATES = {
@@ -78,6 +81,18 @@ TEMPLATES = {
   "weekly_admin_digest": {
     "subject": weekly_admin_digest.SUBJECT,
     "html": weekly_admin_digest.HTML,
+  },
+  "email_change_request": {
+    "subject": email_change_request.SUBJECT,
+    "html": email_change_request.HTML,
+  },
+  "email_change_verification": {
+    "subject": email_change_verification.SUBJECT,
+    "html": email_change_verification.HTML,
+  },
+  "email_changed_notice": {
+    "subject": email_changed_notice.SUBJECT,
+    "html": email_changed_notice.HTML,
   },
 }
 

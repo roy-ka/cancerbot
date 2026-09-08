@@ -240,6 +240,10 @@ class Token(Base):
     )
     token_type = Column(String(32), nullable=False, index=True)
     token_hash = Column(String(64), unique=True, index=True, nullable=False)
+    # Whichever address this token will set on the account once confirmed —
+    # used by email_change (the new address) and email_revert (the old one
+    # again). Null for every other token type.
+    target_email = Column(String(320), nullable=True)
     expires_at = Column(DateTime(timezone=True), nullable=False)
     used_at = Column(DateTime(timezone=True), nullable=True)
     use_count = Column(Integer, default=0, nullable=False)

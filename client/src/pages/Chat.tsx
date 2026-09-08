@@ -284,6 +284,22 @@ export default function Chat() {
     }
   }
 
+  const handleChangeEmail = async (): Promise<string | null> => {
+    try {
+      const res = await fetch(`${BASE_URL}/auth/request-email-change/`, {
+        method: 'POST',
+        credentials: 'include',
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => null)
+        return data?.detail ?? 'Something went wrong. Please try again.'
+      }
+      return null
+    } catch {
+      return 'Connection error. Please try again.'
+    }
+  }
+
   const sendViaWebSocket = (conversationId: string, message: Message) => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const wsHost = BASE_URL ? new URL(BASE_URL).host : window.location.host
@@ -536,6 +552,7 @@ export default function Chat() {
             conversations={conversations}
             onLogout={handleLogout}
             onDeleteAccount={handleDeleteAccount}
+            onChangeEmail={handleChangeEmail}
             onDeleteConversation={handleDeleteConversation}
             onCloseSidebar={() => setSidebarOpen(false)}
             onOpenGuide={() => setGuideManuallyOpen(true)}

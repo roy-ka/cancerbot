@@ -29,6 +29,9 @@ TOKEN_TYPE_PASSWORD_RESET = "password_reset"
 TOKEN_TYPE_EMAIL_VERIFICATION = "email_verification"
 TOKEN_TYPE_ACCOUNT_DELETION = "account_deletion"
 TOKEN_TYPE_WAITLIST_INVITE = "waitlist_invite"
+TOKEN_TYPE_EMAIL_CHANGE_REQUEST = "email_change_request"
+TOKEN_TYPE_EMAIL_CHANGE = "email_change"
+TOKEN_TYPE_EMAIL_REVERT = "email_revert"
 
 _PASSWORD_RESET_TTL_MINUTES = 60
 _PASSWORD_RESET_MAX_USES = 5
@@ -36,13 +39,16 @@ _EMAIL_VERIFICATION_TTL_HOURS = 24
 _ACCOUNT_DELETION_TTL_HOURS = 24
 _ACCOUNT_DELETION_GRACE_PERIOD_DAYS = 7
 _WAITLIST_INVITE_TTL_HOURS = 48
+_EMAIL_CHANGE_REQUEST_TTL_HOURS = 24
+_EMAIL_CHANGE_TTL_HOURS = 24
+_EMAIL_REVERT_TTL_HOURS = 72
 
 
 def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
-def _create_token(db, user_id, token_type: str, ttl: timedelta) -> str:
+def _create_token(db, user_id, token_type: str, ttl: timedelta, *, target_email: str | None = None) -> str:
     """Invalidate the user's existing unused tokens of this type, create a
     new one, return the plain token (only the hash is ever stored)."""
     db.query(Token).filter(
@@ -56,6 +62,7 @@ def _create_token(db, user_id, token_type: str, ttl: timedelta) -> str:
         user_id=user_id,
         token_type=token_type,
         token_hash=_hash_token(token),
+        target_email=target_email,
         expires_at=datetime.now(timezone.utc) + ttl,
     )
     db.add(record)
@@ -226,6 +233,102 @@ def get_users_pending_deletion(db) -> list[User]:
     — the normal path is a one-shot job deferred at the moment deletion is
     confirmed, not a periodic scan of this."""
     return db.query(User).filter(User.deletion_scheduled_at.isnot(None)).all()
+
+
+# ---------------------------------------------------------------------------
+# Email change
+# ---------------------------------------------------------------------------
+# Three chained token types, one per step of the flow (src/routers/auth.py):
+#   1. email_change_request — proves control of the CURRENT inbox before the
+#      user is even allowed to type in a new address. Carries no
+#      target_email (not chosen yet).
+#   2. email_change — created once the new address is submitted (with the
+#      current password) on the page the step-1 link leads to; carries the
+#      new address as target_email. Confirming it is what actually swaps
+#      user.email.
+#   3. email_revert — created right after email_change is confirmed, so the
+#      OLD address (as target_email) can undo the swap within its window.
+# All three commit at creation (via _create_token) but do NOT commit on
+# consume — callers commit together with whatever DB write the confirmation
+# itself makes, same as email verification and account deletion above.
+
+def create_email_change_request_token(db, user_id) -> str:
+    return _create_token(db, user_id, TOKEN_TYPE_EMAIL_CHANGE_REQUEST, timedelta(hours=_EMAIL_CHANGE_REQUEST_TTL_HOURS))
+
+
+def verify_email_change_request_token(db, token: str) -> tuple[Token | None, str]:
+    return _verify_token(
+        db, token, TOKEN_TYPE_EMAIL_CHANGE_REQUEST,
+        not_found_msg="Invalid or already used link.",
+        expired_msg="This link has expired. Please request the email change again.",
+    )
+
+
+def consume_email_change_request_token(db, record: Token) -> None:
+    _consume_token(db, record, commit=False)
+
+
+def create_email_change_token(db, user_id, new_email: str) -> str:
+    return _create_token(
+        db, user_id, TOKEN_TYPE_EMAIL_CHANGE, timedelta(hours=_EMAIL_CHANGE_TTL_HOURS),
+        target_email=new_email,
+    )
+
+
+def verify_email_change_token(db, token: str) -> tuple[Token | None, str]:
+    return _verify_token(
+        db, token, TOKEN_TYPE_EMAIL_CHANGE,
+        not_found_msg="Invalid or already used confirmation link.",
+        expired_msg="This confirmation link has expired. Please request the email change again.",
+    )
+
+
+def consume_email_change_token(db, record: Token) -> None:
+    _consume_token(db, record, commit=False)
+
+
+def create_email_revert_token(db, user_id, old_email: str) -> str:
+    return _create_token(
+        db, user_id, TOKEN_TYPE_EMAIL_REVERT, timedelta(hours=_EMAIL_REVERT_TTL_HOURS),
+        target_email=old_email,
+    )
+
+
+def verify_email_revert_token(db, token: str) -> tuple[Token | None, str]:
+    return _verify_token(
+        db, token, TOKEN_TYPE_EMAIL_REVERT,
+        not_found_msg="Invalid or already used revert link.",
+        expired_msg="This revert link has expired.",
+    )
+
+
+def consume_email_revert_token(db, record: Token) -> None:
+    _consume_token(db, record, commit=False)
+
+
+def find_consumed_target_email(db, token: str, token_type: str):
+    """(user_id, target_email) for an already-consumed token of this type,
+    regardless of how long ago it was used. Lets a confirm/revert endpoint
+    treat a duplicate request for an already-applied token as an idempotent
+    success instead of an error — the same problem verify_email's
+    find_token_user_id/already_verified fallback solves for plain email
+    verification. Needed here too: both confirm-email-change and
+    revert-email pages fire their GET from a bare useEffect, which React
+    StrictMode double-invokes in dev, sending the single-use token twice —
+    one request wins, the other must not surface as a failure. Returns
+    (None, None) if the token doesn't exist or was never consumed.
+
+    user_id is returned as the native UUID (not str) — callers pass it
+    straight into get_user_by_id, whose column type needs the real object.
+    """
+    record = (
+        db.query(Token)
+        .filter(Token.token_hash == _hash_token(token), Token.token_type == token_type)
+        .first()
+    )
+    if not record or record.used_at is None:
+        return None, None
+    return record.user_id, record.target_email
 
 
 # ---------------------------------------------------------------------------

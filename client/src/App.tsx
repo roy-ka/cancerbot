@@ -7,6 +7,9 @@ import Onboarding from './pages/Onboarding'
 import VerifyEmail from './pages/VerifyEmail'
 import ResetPassword from './pages/ResetPassword'
 import ConfirmDeleteAccount from './pages/ConfirmDeleteAccount'
+import ChangeEmail from './pages/ChangeEmail'
+import ConfirmEmailChange from './pages/ConfirmEmailChange'
+import RevertEmail from './pages/RevertEmail'
 import Ninja from './pages/Ninja'
 import ProtectedRoute from './components/ProtectedRoute'
 import PublicRoute from './components/PublicRoute'
@@ -29,6 +32,9 @@ function App() {
         <Route path="/verify-email" element={<VerifyEmail />} />
         <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/confirm-delete" element={<ConfirmDeleteAccount />} />
+        <Route path="/change-email" element={<ChangeEmail />} />
+        <Route path="/confirm-email-change" element={<ConfirmEmailChange />} />
+        <Route path="/revert-email" element={<RevertEmail />} />
 
         {/* Protected App */}
         <Route

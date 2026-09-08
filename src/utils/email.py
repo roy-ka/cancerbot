@@ -263,6 +263,30 @@ async def send_waitlist_invited_email(to: str, name: str, link: str) -> bool:
     return await _deliver(to, "waitlist_invited", {"name": name, "link": link})
 
 
+async def send_email_change_request_email(to: str, name: str, link: str) -> bool:
+    """Step 1 — sent to the account's CURRENT address, proving control of
+    it before the user is allowed to pick a new one."""
+    if not is_prod():
+        logger.info("[email] email-change request link for %s: %s", to, _redact_token(link))
+    return await _deliver(to, "email_change_request", {"name": name, "link": link})
+
+
+async def send_email_change_verification_email(to: str, name: str, old_email: str, link: str) -> bool:
+    """Step 2 — sent to the NEW address once it's been submitted, to confirm
+    the user actually controls it before the swap takes effect."""
+    if not is_prod():
+        logger.info("[email] email-change verification link for %s: %s", to, _redact_token(link))
+    return await _deliver(to, "email_change_verification", {"name": name, "old_email": old_email, "link": link})
+
+
+async def send_email_changed_notice_email(to: str, name: str, new_email: str, link: str) -> bool:
+    """Step 3 — sent to the OLD address right after the swap completes,
+    with a time-limited revert link in case it wasn't the account owner."""
+    if not is_prod():
+        logger.info("[email] email-change revert link for %s: %s", to, _redact_token(link))
+    return await _deliver(to, "email_changed_notice", {"name": name, "new_email": new_email, "link": link})
+
+
 async def send_delete_account_cancelled_email(to: str, name: str) -> bool:
     """Sent when a scheduled deletion is cancelled (user logs in during the
     7-day grace period and confirms via the cancel-deletion dialog)."""

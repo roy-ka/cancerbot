@@ -12,6 +12,9 @@ from src.jobs.email_jobs import (
     send_fallback_alert_job,
     send_waitlist_joined_email_job,
     send_waitlist_invited_email_job,
+    send_email_change_request_email_job,
+    send_email_change_verification_email_job,
+    send_email_changed_notice_email_job,
 )
 from src.jobs.url_classification import (
     classify_url_job,
@@ -49,6 +52,9 @@ class TestWorkerSettings:
             send_fallback_alert_job,
             send_waitlist_joined_email_job,
             send_waitlist_invited_email_job,
+            send_email_change_request_email_job,
+            send_email_change_verification_email_job,
+            send_email_changed_notice_email_job,
             classify_url_job,
             delete_scheduled_user_job,
         }

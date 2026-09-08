@@ -36,6 +36,18 @@ from src.db.repositories.tokens import (
     cancel_deletion,
     verify_waitlist_invite_token,
     get_waitlist_invite_entry,
+    create_email_change_request_token,
+    verify_email_change_request_token,
+    consume_email_change_request_token,
+    create_email_change_token,
+    verify_email_change_token,
+    consume_email_change_token,
+    create_email_revert_token,
+    verify_email_revert_token,
+    consume_email_revert_token,
+    find_consumed_target_email,
+    TOKEN_TYPE_EMAIL_CHANGE,
+    TOKEN_TYPE_EMAIL_REVERT,
 )
 from src.db.repositories.login_attempts import (
     increment_failed_attempts,
@@ -50,6 +62,7 @@ from src.db.repositories.rate_limit import (
     MAX_FORGOT_PASSWORD_ATTEMPTS,
     MAX_REQUEST_DELETE_ATTEMPTS,
     MAX_WAITLIST_ATTEMPTS,
+    MAX_EMAIL_CHANGE_ATTEMPTS,
 )
 from src.queue import enqueue
 from src.jobs.account_deletion import job_id_for_user
@@ -464,6 +477,165 @@ async def change_password(
     user.token_version = (user.token_version or 1) + 1
     db.commit()
     return {"ok": True}
+
+
+@router.post("/request-email-change/")
+async def request_email_change(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Step 1 of 3 — no new address chosen yet. Proves control of the
+    CURRENT inbox (by requiring a click there) before the user is even
+    allowed to type in a new one. Throttled per user, same pattern as
+    request-delete."""
+    change_key = f"email-change:{current_user.id}"
+    if is_rate_limited(db, change_key):
+        raise HTTPException(status_code=429, detail="Too many email-change requests. Please try again later.")
+    record_attempt(db, change_key, MAX_EMAIL_CHANGE_ATTEMPTS)
+
+    token = create_email_change_request_token(db=db, user_id=current_user.id)
+    frontend_url = _get_frontend_url()
+    link = f"{frontend_url}/change-email?token={token}"
+    await enqueue(
+        "send_email_change_request_email_job",
+        to=current_user.email,
+        name=current_user.display_name,
+        link=link,
+    )
+    resp: dict = {"ok": True}
+    if not is_prod():
+        resp["email_change_request_token"] = token
+    return resp
+
+
+class SubmitNewEmailRequest(BaseModel):
+    token: str
+    new_email: EmailStr
+    password: str
+
+
+@router.post("/change-email/")
+async def submit_new_email(req: SubmitNewEmailRequest, db: Session = Depends(get_db)):
+    """Step 2 of 3 — the page the step-1 email links to. Public (token-
+    gated, not an authenticated session) since the click may land on a
+    different device than the one that requested the change, same as
+    confirm-delete. The password re-check happens here rather than at
+    step 1, right before the new address is actually chosen."""
+    record, error = verify_email_change_request_token(db=db, token=req.token)
+    if not record:
+        raise HTTPException(status_code=400, detail=error)
+
+    user = get_user_by_id(db=db, user_id=record.user_id)
+    if not user:
+        raise HTTPException(status_code=400, detail="Account not found.")
+
+    if not SecurityUtils.verify_password(req.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Current password is incorrect.")
+
+    if req.new_email == user.email:
+        raise HTTPException(status_code=400, detail="New email must be different from your current one.")
+
+    if get_user_by_email(db=db, email=req.new_email):
+        raise HTTPException(status_code=400, detail="Email already registered")
+
+    consume_email_change_request_token(db=db, record=record)
+    change_token = create_email_change_token(db=db, user_id=user.id, new_email=req.new_email)
+    db.commit()
+
+    frontend_url = _get_frontend_url()
+    link = f"{frontend_url}/confirm-email-change?token={change_token}"
+    await enqueue(
+        "send_email_change_verification_email_job",
+        to=req.new_email,
+        name=user.display_name,
+        old_email=user.email,
+        link=link,
+    )
+    resp: dict = {"ok": True}
+    if not is_prod():
+        resp["email_change_token"] = change_token
+    return resp
+
+
+@router.get("/confirm-email-change/")
+async def confirm_email_change(token: str = Query(...), db: Session = Depends(get_db)):
+    """Step 3 of 3 — clicked from the NEW address. This is what actually
+    swaps user.email; email_verified is set True since this click is
+    itself the proof of ownership. Also starts the revert window by
+    emailing the OLD address a time-limited undo link."""
+    record, error = verify_email_change_token(db=db, token=token)
+    if not record:
+        # A duplicate request for a token another request already consumed
+        # (e.g. React StrictMode double-firing this page's mount effect in
+        # dev) must not surface as a failure when the swap it asked for
+        # already happened — same idempotency verify_email's
+        # already_verified fallback provides for plain email verification.
+        dup_user_id, dup_target_email = find_consumed_target_email(db, token, TOKEN_TYPE_EMAIL_CHANGE)
+        if dup_user_id and dup_target_email:
+            user = get_user_by_id(db=db, user_id=dup_user_id)
+            if user and user.email == dup_target_email:
+                return {"ok": True, "message": "Email updated. Please log in with your new email."}
+        raise HTTPException(status_code=400, detail=error)
+
+    user = get_user_by_id(db=db, user_id=record.user_id)
+    if not user:
+        raise HTTPException(status_code=400, detail="Account not found.")
+
+    new_email = record.target_email
+    if get_user_by_email(db=db, email=new_email):
+        # Someone else registered this exact address in the window between
+        # step 2 and this click — extremely unlikely, but must not silently
+        # steal it or crash on the unique constraint.
+        raise HTTPException(status_code=400, detail="That email is no longer available.")
+
+    old_email = user.email
+    consume_email_change_token(db=db, record=record)
+    user.email = new_email
+    user.email_verified = True
+    user.token_version = (user.token_version or 1) + 1
+    db.commit()
+
+    revert_token = create_email_revert_token(db=db, user_id=user.id, old_email=old_email)
+    frontend_url = _get_frontend_url()
+    revert_link = f"{frontend_url}/revert-email?token={revert_token}"
+    await enqueue(
+        "send_email_changed_notice_email_job",
+        to=old_email,
+        name=user.display_name,
+        new_email=new_email,
+        link=revert_link,
+    )
+    resp: dict = {"ok": True, "message": "Email updated. Please log in with your new email."}
+    if not is_prod():
+        resp["email_revert_token"] = revert_token
+    return resp
+
+
+@router.get("/revert-email/")
+async def revert_email(token: str = Query(...), db: Session = Depends(get_db)):
+    """Undoes a completed email change, restoring the address the
+    email_changed_notice was sent to. email_verified is restored to True
+    (the account already reached that state before the change)."""
+    record, error = verify_email_revert_token(db=db, token=token)
+    if not record:
+        # Same duplicate-request idempotency as confirm-email-change above.
+        dup_user_id, dup_target_email = find_consumed_target_email(db, token, TOKEN_TYPE_EMAIL_REVERT)
+        if dup_user_id and dup_target_email:
+            user = get_user_by_id(db=db, user_id=dup_user_id)
+            if user and user.email == dup_target_email:
+                return {"ok": True, "message": "Your email address has been reverted."}
+        raise HTTPException(status_code=400, detail=error)
+
+    user = get_user_by_id(db=db, user_id=record.user_id)
+    if not user:
+        raise HTTPException(status_code=400, detail="Account not found.")
+
+    consume_email_revert_token(db=db, record=record)
+    user.email = record.target_email
+    user.email_verified = True
+    user.token_version = (user.token_version or 1) + 1
+    db.commit()
+    return {"ok": True, "message": "Your email address has been reverted."}
 
 
 @router.post("/request-delete/")

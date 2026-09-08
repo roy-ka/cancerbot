@@ -22,6 +22,9 @@ from src.utils.email import (
     send_fallback_alert,
     send_waitlist_joined_email,
     send_waitlist_invited_email,
+    send_email_change_request_email,
+    send_email_change_verification_email,
+    send_email_changed_notice_email,
 )
 
 
@@ -55,3 +58,15 @@ async def send_waitlist_joined_email_job(ctx, *, to, name) -> None:
 
 async def send_waitlist_invited_email_job(ctx, *, to, name, link) -> None:
     await send_waitlist_invited_email(to=to, name=name, link=link)
+
+
+async def send_email_change_request_email_job(ctx, *, to, name, link) -> None:
+    await send_email_change_request_email(to=to, name=name, link=link)
+
+
+async def send_email_change_verification_email_job(ctx, *, to, name, old_email, link) -> None:
+    await send_email_change_verification_email(to=to, name=name, old_email=old_email, link=link)
+
+
+async def send_email_changed_notice_email_job(ctx, *, to, name, new_email, link) -> None:
+    await send_email_changed_notice_email(to=to, name=name, new_email=new_email, link=link)

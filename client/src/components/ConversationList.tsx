@@ -21,6 +21,7 @@ import PrivacyTipOutlinedIcon from '@mui/icons-material/PrivacyTipOutlined'
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline'
 import PersonRemoveOutlinedIcon from '@mui/icons-material/PersonRemoveOutlined'
 import MedicalInformationOutlinedIcon from '@mui/icons-material/MedicalInformationOutlined'
+import AlternateEmailOutlinedIcon from '@mui/icons-material/AlternateEmailOutlined'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import cancerbotIcon from '../assets/cancerbot_dark.svg'
@@ -49,6 +50,7 @@ export default function ConversationList({
   setSelectedConversationId,
   onLogout,
   onDeleteAccount,
+  onChangeEmail,
   onDeleteConversation,
   onCloseSidebar,
   onOpenGuide,
@@ -58,6 +60,7 @@ export default function ConversationList({
   setSelectedConversationId: React.Dispatch<React.SetStateAction<string>>
   onLogout?: () => void
   onDeleteAccount?: () => Promise<string | null>
+  onChangeEmail?: () => Promise<string | null>
   onDeleteConversation?: (id: string) => Promise<void>
   onCloseSidebar?: () => void
   onOpenGuide?: () => void
@@ -69,6 +72,10 @@ export default function ConversationList({
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [deleteLoading, setDeleteLoading] = useState(false)
   const [deleteRequested, setDeleteRequested] = useState(false)
+  const [changeEmailOpen, setChangeEmailOpen] = useState(false)
+  const [changeEmailError, setChangeEmailError] = useState<string | null>(null)
+  const [changeEmailLoading, setChangeEmailLoading] = useState(false)
+  const [changeEmailRequested, setChangeEmailRequested] = useState(false)
   const [menuAnchor, setMenuAnchor] = useState<null | HTMLElement>(null)
   const [deleteConvTarget, setDeleteConvTarget] = useState<{
     id: string
@@ -93,6 +100,19 @@ export default function ConversationList({
       setDeleteError(err)
     } else {
       setDeleteRequested(true)
+    }
+  }
+
+  const handleChangeEmailSubmit = async () => {
+    if (!onChangeEmail) return
+    setChangeEmailLoading(true)
+    setChangeEmailError(null)
+    const err = await onChangeEmail()
+    setChangeEmailLoading(false)
+    if (err) {
+      setChangeEmailError(err)
+    } else {
+      setChangeEmailRequested(true)
     }
   }
 
@@ -161,6 +181,20 @@ export default function ConversationList({
                   <MedicalInformationOutlinedIcon fontSize="small" />
                 </ListItemIcon>
                 <ListItemText primary="Health Profile" />
+              </MenuItem>
+              <MenuItem
+                onClick={() => {
+                  closeMenu()
+                  setChangeEmailOpen(true)
+                }}
+                sx={{ color: 'rgba(255,255,255,0.8)', gap: 1 }}
+              >
+                <ListItemIcon
+                  sx={{ color: 'rgba(255,255,255,0.6)', minWidth: 32 }}
+                >
+                  <AlternateEmailOutlinedIcon fontSize="small" />
+                </ListItemIcon>
+                <ListItemText primary="Change Email" />
               </MenuItem>
               <MenuItem
                 onClick={() => {
@@ -420,6 +454,79 @@ export default function ConversationList({
               disabled={deleteLoading}
             >
               {deleteLoading ? 'Sending…' : 'Send Confirmation Email'}
+            </Button>
+          )}
+        </DialogActions>
+      </Dialog>
+
+      {/* Change email confirmation */}
+      <Dialog
+        open={changeEmailOpen}
+        onClose={() => {
+          setChangeEmailOpen(false)
+          setChangeEmailError(null)
+          setChangeEmailRequested(false)
+        }}
+        slotProps={{
+          backdrop: { sx: { backgroundColor: 'rgba(0,0,0,0.3)' } },
+          paper: { sx: DIALOG_PAPER_SX },
+        }}
+      >
+        <DialogTitle sx={{ color: 'rgba(255,255,255,0.92)' }}>
+          Change Email
+        </DialogTitle>
+        <DialogContent
+          sx={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 2,
+            pt: '12px !important',
+          }}
+        >
+          {changeEmailRequested ? (
+            <Typography
+              sx={{ color: 'rgba(255,255,255,0.66)', fontSize: '0.9rem' }}
+            >
+              We've sent a link to your current email. Open it to continue —
+              you'll be asked to enter your new address there.
+            </Typography>
+          ) : (
+            <>
+              <Typography
+                sx={{ color: 'rgba(255,255,255,0.66)', fontSize: '0.9rem' }}
+              >
+                We'll email a confirmation link to your current address.
+                Opening it lets you enter the new email, which then needs its
+                own confirmation before the change takes effect.
+              </Typography>
+              {changeEmailError && (
+                <Typography sx={{ color: '#f44336', fontSize: '0.85rem' }}>
+                  {changeEmailError}
+                </Typography>
+              )}
+            </>
+          )}
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2, gap: 1 }}>
+          <Button
+            onClick={() => {
+              setChangeEmailOpen(false)
+              setChangeEmailError(null)
+              setChangeEmailRequested(false)
+            }}
+            sx={{ textTransform: 'none', color: 'rgba(255,255,255,0.6)' }}
+            disabled={changeEmailLoading}
+          >
+            {changeEmailRequested ? 'Close' : 'Cancel'}
+          </Button>
+          {!changeEmailRequested && (
+            <Button
+              onClick={handleChangeEmailSubmit}
+              variant="contained"
+              sx={{ textTransform: 'none' }}
+              disabled={changeEmailLoading}
+            >
+              {changeEmailLoading ? 'Sending…' : 'Send Confirmation Email'}
             </Button>
           )}
         </DialogActions>

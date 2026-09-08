@@ -2,7 +2,7 @@ from src.utils.email_templates import TEMPLATES, render
 
 
 class TestTemplatesShape:
-    def test_eleven_templates_present(self):
+    def test_fourteen_templates_present(self):
         assert set(TEMPLATES) == {
             "verification",
             "password_reset",
@@ -15,6 +15,9 @@ class TestTemplatesShape:
             "waitlist_invited",
             "daily_admin_digest",
             "weekly_admin_digest",
+            "email_change_request",
+            "email_change_verification",
+            "email_changed_notice",
         }
 
     def test_every_template_has_a_subject_and_html_body(self):
@@ -76,6 +79,27 @@ class TestRender:
         assert "September 6, 2026" in subject
         assert "42" in html
         assert "<p>ok</p>" in html
+
+    def test_email_change_request_renders(self):
+        subject, html = render("email_change_request", name="Ada", link="https://x/change-email?token=a")
+        assert "Ada" in html
+        assert "https://x/change-email?token=a" in html
+
+    def test_email_change_verification_renders(self):
+        subject, html = render(
+            "email_change_verification",
+            name="Ada", old_email="old@example.com", link="https://x/confirm-email-change?token=a",
+        )
+        assert "old@example.com" in html
+        assert "https://x/confirm-email-change?token=a" in html
+
+    def test_email_changed_notice_renders(self):
+        subject, html = render(
+            "email_changed_notice",
+            name="Ada", new_email="new@example.com", link="https://x/revert-email?token=a",
+        )
+        assert "new@example.com" in html
+        assert "https://x/revert-email?token=a" in html
 
     def test_weekly_admin_digest_renders(self):
         subject, html = render(
