@@ -1,3 +1,4 @@
+from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
@@ -16,6 +17,7 @@ class BugReportRequest(BaseModel):
     title: str = Field(..., max_length=255)
     description: str | None = Field(default=None, max_length=5000)
     how_to_reproduce: str | None = Field(default=None, max_length=5000)
+    report_type: Literal["bug", "feedback"] = "bug"
 
 
 @router.post("/")
@@ -32,9 +34,10 @@ def create_bug_report(
         title=req.title.strip(),
         description=req.description,
         how_to_reproduce=req.how_to_reproduce,
+        report_type=req.report_type,
     )
     db.add(report)
     db.commit()
     db.refresh(report)
-    logger.info("Bug report created by user %s: %s", current_user.id, req.title)
+    logger.info("%s created by user %s: %s", req.report_type, current_user.id, req.title)
     return {"ok": True, "id": str(report.id)}

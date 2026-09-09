@@ -316,6 +316,7 @@ class BugReport(Base):
     title = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
     how_to_reproduce = Column(Text, nullable=True)
+    report_type = Column(String(20), nullable=False, default="bug")  # 'bug' or 'feedback'
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
 
 

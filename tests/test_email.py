@@ -232,7 +232,7 @@ class TestAdminDigestEmails:
     _daily_fields = {
         "date": "September 6, 2026", "new_users": 1, "new_conversations": 2,
         "messages_sent": 3, "fallback_triggered": 0, "waitlist_joined": 0,
-        "bug_reports": 0, "axiom_section": "<p>ok</p>",
+        "bug_reports": 0, "feedback": 0, "axiom_section": "<p>ok</p>",
     }
     _weekly_fields = {
         "date": "September 6, 2026", "new_users": 1, "new_conversations": 2,

@@ -32,7 +32,12 @@ def _gather_db_stats(db, since: datetime) -> dict:
             SearchAnalytic.created_at >= since, SearchAnalytic.fallback_triggered == 1,
         ).count(),
         "waitlist_joined": db.query(WaitlistEntry).filter(WaitlistEntry.created_at >= since).count(),
-        "bug_reports": db.query(BugReport).filter(BugReport.created_at >= since).count(),
+        "bug_reports": db.query(BugReport).filter(
+            BugReport.created_at >= since, BugReport.report_type == "bug",
+        ).count(),
+        "feedback": db.query(BugReport).filter(
+            BugReport.created_at >= since, BugReport.report_type == "feedback",
+        ).count(),
     }
 
 

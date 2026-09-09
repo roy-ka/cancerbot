@@ -68,6 +68,17 @@ class TestGatherDbStats:
         since = datetime.now(timezone.utc) - timedelta(hours=1)
         stats = _gather_db_stats(db_session, since)
         assert stats["bug_reports"] == 1
+        assert stats["feedback"] == 0
+
+    def test_feedback_counted_separately_from_bug_reports(self, db_session, test_user):
+        db_session.add(BugReport(user_id=test_user.id, title="Something broke", report_type="bug"))
+        db_session.add(BugReport(user_id=test_user.id, title="Love the app", report_type="feedback"))
+        db_session.commit()
+
+        since = datetime.now(timezone.utc) - timedelta(hours=1)
+        stats = _gather_db_stats(db_session, since)
+        assert stats["bug_reports"] == 1
+        assert stats["feedback"] == 1
 
 
 class TestGatherAxiomStats:

@@ -9,11 +9,16 @@ import {
   TextField,
   Tooltip,
   Alert,
+  ToggleButtonGroup,
+  ToggleButton,
 } from '@mui/material'
 import BugReportIcon from '@mui/icons-material/BugReport'
 
+type ReportType = 'bug' | 'feedback'
+
 export default function BugReportDialog({ compact = false }: { compact?: boolean }) {
   const [open, setOpen] = useState(false)
+  const [reportType, setReportType] = useState<ReportType>('bug')
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [howToReproduce, setHowToReproduce] = useState('')
@@ -25,6 +30,7 @@ export default function BugReportDialog({ compact = false }: { compact?: boolean
 
   const handleClose = () => {
     setOpen(false)
+    setReportType('bug')
     setTitle('')
     setDescription('')
     setHowToReproduce('')
@@ -44,7 +50,12 @@ export default function BugReportDialog({ compact = false }: { compact?: boolean
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title, description, how_to_reproduce: howToReproduce }),
+        body: JSON.stringify({
+          title,
+          description,
+          how_to_reproduce: reportType === 'bug' ? howToReproduce : undefined,
+          report_type: reportType,
+        }),
       })
       if (!res.ok) throw new Error(await res.text())
       setSuccess(true)
@@ -57,7 +68,7 @@ export default function BugReportDialog({ compact = false }: { compact?: boolean
   }
 
   const trigger = compact ? (
-    <Tooltip title="Report a bug">
+    <Tooltip title="Report a bug or send feedback">
       <IconButton size="small" onClick={() => setOpen(true)} sx={{ color: 'rgba(255,255,255,0.6)' }}>
         <BugReportIcon fontSize="small" />
       </IconButton>
@@ -69,7 +80,7 @@ export default function BugReportDialog({ compact = false }: { compact?: boolean
       onClick={() => setOpen(true)}
       sx={{ textTransform: 'none', opacity: 0.7 }}
     >
-      Report a bug
+      Feedback
     </Button>
   )
 
@@ -87,36 +98,48 @@ export default function BugReportDialog({ compact = false }: { compact?: boolean
           paper: { sx: { backgroundColor: 'rgba(18,25,45,0.55)', backdropFilter: 'blur(18px)', boxShadow: '0 20px 60px rgba(0,0,0,0.4)', border: '1px solid rgba(255,255,255,0.1)' } },
         }}
       >
-        <DialogTitle>Report a Bug</DialogTitle>
+        <DialogTitle>{reportType === 'bug' ? 'Report a Bug' : 'Send Feedback'}</DialogTitle>
         <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 1 }}>
-          {success && <Alert severity="success">Thank you! Your report was submitted.</Alert>}
+          {success && <Alert severity="success">Thank you! Your {reportType === 'bug' ? 'report' : 'feedback'} was submitted.</Alert>}
           {error && <Alert severity="error">{error}</Alert>}
+          <ToggleButtonGroup
+            value={reportType}
+            exclusive
+            onChange={(_, value: ReportType | null) => value && setReportType(value)}
+            size="small"
+            fullWidth
+          >
+            <ToggleButton value="bug">Bug</ToggleButton>
+            <ToggleButton value="feedback">Feedback</ToggleButton>
+          </ToggleButtonGroup>
           <TextField
             label="Title"
             required
             fullWidth
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            placeholder="Short summary of the issue"
+            placeholder={reportType === 'bug' ? 'Short summary of the issue' : 'Short summary of your feedback'}
           />
           <TextField
-            label="Description"
+            label={reportType === 'bug' ? 'Description' : 'Your feedback'}
             fullWidth
             multiline
             rows={3}
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            placeholder="What went wrong?"
+            placeholder={reportType === 'bug' ? 'What went wrong?' : 'What do you think about CancerBot? Ideas, suggestions, anything on your mind.'}
           />
-          <TextField
-            label="How to reproduce"
-            fullWidth
-            multiline
-            rows={3}
-            value={howToReproduce}
-            onChange={(e) => setHowToReproduce(e.target.value)}
-            placeholder="Steps to reproduce the issue"
-          />
+          {reportType === 'bug' && (
+            <TextField
+              label="How to reproduce"
+              fullWidth
+              multiline
+              rows={3}
+              value={howToReproduce}
+              onChange={(e) => setHowToReproduce(e.target.value)}
+              placeholder="Steps to reproduce the issue"
+            />
+          )}
         </DialogContent>
         <DialogActions>
           <Button onClick={handleClose} disabled={submitting}>Cancel</Button>
