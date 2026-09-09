@@ -438,4 +438,4 @@ class TestAnswerLanguageInstruction:
             ))
         sent_prompt = instance.chat.completions.create.call_args.kwargs["messages"][0]["content"]
         assert NO_DATA_RESPONSE in sent_prompt
-        assert "write it exactly as shown, in English" in sent_prompt
+        assert "written exactly as shown, in English" in sent_prompt

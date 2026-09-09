@@ -315,6 +315,20 @@ class TestMultiPartCitationRule:
         assert "NONE of the question's parts have at least 2" in prompt
         assert NO_DATA_RESPONSE in prompt
 
+    def test_prompt_instructs_search_guidance_after_no_data_response(self):
+        # The no-data fallback used to be a dead end ("write only the fallback
+        # line") — the prompt now tells the model to follow it with guidance on
+        # how to search better plus a concrete example question.
+        from src.classes.ollama_connector import OllamaConnector
+
+        prompt, _, _ = OllamaConnector._build_prompt(
+            [{"id": "s1", "content_for_embedding": "Gabapentin blocks thrombospondin-1."}],
+            "what drugs block each of these pathways?",
+            [],
+        )
+        assert "Try asking:" in prompt
+        assert "drug/treatment name" in prompt
+
 
 # ---------------------------------------------------------------------------
 # Stale auth row cleanup

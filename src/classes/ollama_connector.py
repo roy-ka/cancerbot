@@ -265,7 +265,7 @@ class OllamaConnector:
 LANGUAGE:
 Respond in the same language as the conversation's first message below (English if that message is in English).
 First message: "{_truncate(first_message, 200)}"
-Exception: if you must write the no-evidence fallback line below, write it exactly as shown, in English, regardless of the conversation's language.
+Exception: the no-evidence fallback line itself must be written exactly as shown, in English, regardless of the conversation's language. The follow-up guidance that comes after it (see the citation rules below) should still follow the conversation's language like the rest of your response.
 """
 
     profile_block = ""
@@ -303,8 +303,14 @@ CRITICAL — CITATION RULES (you MUST follow these):
   answer each part on its own merits — use whatever evidence supports it, and say "not
   identified in the available sources" for any part that lacks support. Do not discard an
   entire answer just because some of its parts lack evidence.
-- Write only: "{NO_DATA_RESPONSE}" when NONE of the question's parts have at least 2
-  supporting sources.
+- When NONE of the question's parts have at least 2 supporting sources, respond with
+  exactly two parts and nothing else:
+  1. The line "{NO_DATA_RESPONSE}" by itself, verbatim, no citation.
+  2. A short paragraph (no citation) explaining how to get a better answer — mention
+     using specific medical terms (a drug/treatment name, cancer type or subtype,
+     biomarker, or trial phase) — followed by one concrete example question prefixed
+     with "Try asking:". Base the example on what this question was already about,
+     phrased more specifically, not a generic example.
 {language_block}{profile_block}
 Scientific Evidence:
 {_EVIDENCE_BEGIN}
