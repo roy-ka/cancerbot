@@ -17,6 +17,10 @@ import HelpOutlineIcon from '@mui/icons-material/HelpOutline'
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline'
 import TranslateIcon from '@mui/icons-material/Translate'
 import BiotechIcon from '@mui/icons-material/Biotech'
+import MedicalInformationOutlinedIcon from '@mui/icons-material/MedicalInformationOutlined'
+import AlternateEmailOutlinedIcon from '@mui/icons-material/AlternateEmailOutlined'
+import PrivacyTipOutlinedIcon from '@mui/icons-material/PrivacyTipOutlined'
+import FeedbackOutlinedIcon from '@mui/icons-material/FeedbackOutlined'
 import {
   GUIDE_AREAS,
   entriesForArea,
@@ -33,10 +37,14 @@ import {
 const ICONS: Record<IconKey, ReactNode> = {
   account: <PersonOutlineIcon fontSize="small" />,
   logout: <LogoutIcon fontSize="small" />,
+  healthProfile: <MedicalInformationOutlinedIcon fontSize="small" />,
+  changeEmail: <AlternateEmailOutlinedIcon fontSize="small" />,
   deleteAccount: <PersonRemoveOutlinedIcon fontSize="small" />,
   findTrials: <TravelExploreIcon fontSize="small" />,
+  privacy: <PrivacyTipOutlinedIcon fontSize="small" />,
   about: <InfoOutlinedIcon fontSize="small" />,
   guide: <HelpOutlineIcon fontSize="small" />,
+  feedback: <FeedbackOutlinedIcon fontSize="small" />,
   closeSidebar: null,
   toggleSidebar: null,
   deleteConversation: <DeleteOutlineIcon fontSize="small" />,

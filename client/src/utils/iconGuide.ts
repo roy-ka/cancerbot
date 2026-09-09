@@ -10,10 +10,14 @@
 export type IconKey =
   | 'account'
   | 'logout'
+  | 'healthProfile'
+  | 'changeEmail'
   | 'deleteAccount'
   | 'findTrials'
+  | 'privacy'
   | 'about'
   | 'guide'
+  | 'feedback'
   | 'closeSidebar'
   | 'toggleSidebar'
   | 'deleteConversation'
@@ -58,6 +62,19 @@ export const GUIDE_ENTRIES: GuideEntry[] = [
     area: 'Sidebar',
   },
   {
+    key: 'healthProfile',
+    label: 'Health Profile',
+    description:
+      'Optional details (cancer type, stage, biomarkers) to tailor answers. Inside the account menu.',
+    area: 'Sidebar',
+  },
+  {
+    key: 'changeEmail',
+    label: 'Change Email',
+    description: 'Update your login email. Inside the account menu.',
+    area: 'Sidebar',
+  },
+  {
     key: 'deleteAccount',
     label: 'Delete account',
     description:
@@ -72,6 +89,12 @@ export const GUIDE_ENTRIES: GuideEntry[] = [
     area: 'Sidebar',
   },
   {
+    key: 'privacy',
+    label: 'Privacy',
+    description: 'Opens the privacy policy in a new tab.',
+    area: 'Sidebar',
+  },
+  {
     key: 'about',
     label: 'About',
     description: 'What CancerBot is and what it can do.',
@@ -81,6 +104,12 @@ export const GUIDE_ENTRIES: GuideEntry[] = [
     key: 'guide',
     label: 'This guide',
     description: 'Reopen this icon guide at any time.',
+    area: 'Sidebar',
+  },
+  {
+    key: 'feedback',
+    label: 'Report a bug or send feedback',
+    description: 'Report something broken, or share your thoughts on CancerBot.',
     area: 'Sidebar',
   },
   {

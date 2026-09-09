@@ -35,9 +35,13 @@ describe('GUIDE_ENTRIES', () => {
     const keys = GUIDE_ENTRIES.map((e) => e.key)
     for (const expected of [
       'account',
+      'healthProfile',
+      'changeEmail',
       'findTrials',
+      'privacy',
       'about',
       'guide',
+      'feedback',
       'deleteConversation',
       'translate',
       'trialBadge',
