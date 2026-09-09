@@ -12,7 +12,7 @@ import {
   ToggleButtonGroup,
   ToggleButton,
 } from '@mui/material'
-import BugReportIcon from '@mui/icons-material/BugReport'
+import FeedbackOutlinedIcon from '@mui/icons-material/FeedbackOutlined'
 
 type ReportType = 'bug' | 'feedback'
 
@@ -70,13 +70,13 @@ export default function BugReportDialog({ compact = false }: { compact?: boolean
   const trigger = compact ? (
     <Tooltip title="Report a bug or send feedback">
       <IconButton size="small" onClick={() => setOpen(true)} sx={{ color: 'rgba(255,255,255,0.6)' }}>
-        <BugReportIcon fontSize="small" />
+        <FeedbackOutlinedIcon fontSize="small" />
       </IconButton>
     </Tooltip>
   ) : (
     <Button
       size="small"
-      startIcon={<BugReportIcon />}
+      startIcon={<FeedbackOutlinedIcon />}
       onClick={() => setOpen(true)}
       sx={{ textTransform: 'none', opacity: 0.7 }}
     >
