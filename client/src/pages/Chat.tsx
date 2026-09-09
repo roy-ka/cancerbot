@@ -12,6 +12,7 @@ import {
   Tooltip,
 } from '@mui/material'
 import FileDownloadOutlinedIcon from '@mui/icons-material/FileDownloadOutlined'
+import TranslateIcon from '@mui/icons-material/Translate'
 import { useNavigate } from 'react-router-dom'
 import ConversationList from '../components/ConversationList'
 import MessageList from '../components/MessageList'
@@ -21,6 +22,7 @@ import IconGuideDialog from '../components/IconGuideDialog'
 import { extractUrls } from '../utils/urls'
 import { isPendingDeletionResponse, loginPathForAuthFailure } from '../utils/authRedirect'
 import { conversationToMarkdown, downloadMarkdown, printConversationAsPdf } from '../utils/conversationExport'
+import { openConversationInGoogleTranslate } from '../utils/googleTranslate'
 export default function Chat() {
   const BASE_URL = import.meta.env.VITE_BASE_URL || ''
   const navigate = useNavigate()
@@ -454,6 +456,10 @@ export default function Chat() {
     )
   }
 
+  const handleTranslateConversation = () => {
+    openConversationInGoogleTranslate(messages)
+  }
+
   const handleExportPdf = () => {
     setExportMenuAnchor(null)
     printConversationAsPdf(currentConversationTitle, messages)
@@ -593,6 +599,14 @@ export default function Chat() {
                 <MenuItem onClick={handleExportMarkdown}>Download as Markdown</MenuItem>
                 <MenuItem onClick={handleExportPdf}>Download as PDF</MenuItem>
               </Menu>
+              <Tooltip title="Translate conversation">
+                <IconButton
+                  onClick={handleTranslateConversation}
+                  sx={{ color: 'rgba(255,255,255,0.6)' }}
+                >
+                  <TranslateIcon fontSize="medium" />
+                </IconButton>
+              </Tooltip>
             </Box>
           )}
           <Box className="chat-message-list">

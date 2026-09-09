@@ -9,21 +9,13 @@ import React, { useMemo, useState } from 'react'
 import type { Message, Source } from '../types'
 import MessageSourceItem from './MessageSourceItem'
 import GroupedMessageSourceItem from './GroupedMessageSourceItem'
+import { openInGoogleTranslate } from '../utils/googleTranslate'
 // Fresh regex per call — avoids shared lastIndex state across concurrent renders
 const URL_LOCAL_RE = () => /https?:\/\/[^\s<>"'()[\]{}]+/g
 // Trailing punctuation that commonly appears after a URL in prose but isn't part of it
 const TRAILING_PUNCT = /[.,;:!?)]+$/
 
 const BASE_URL = import.meta.env.VITE_BASE_URL || ''
-
-function openInGoogleTranslate(text: string) {
-  // Strip [source1]/[pmid:...]/[doi:...] citation tokens — Google Translate
-  // would otherwise try (and mangle) translating them too.
-  const plainText = text.replace(/\[[^\]\s]+\]/g, '').trim()
-  const targetLang = (navigator.language || 'en').split('-')[0]
-  const url = `https://translate.google.com/?sl=auto&tl=${encodeURIComponent(targetLang)}&text=${encodeURIComponent(plainText)}&op=translate`
-  window.open(url, '_blank', 'noopener,noreferrer')
-}
 
 function renderTextWithLinks(
   text: string,
