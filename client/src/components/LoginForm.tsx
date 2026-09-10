@@ -154,14 +154,6 @@ export default function LoginForm({
         onClose={() => setPendingDeletion(null)}
         slotProps={{
           backdrop: { sx: { backgroundColor: 'rgba(0,0,0,0.3)' } },
-          paper: {
-            sx: {
-              backgroundColor: 'rgba(18,25,45,0.75)',
-              backdropFilter: 'blur(18px)',
-              border: '1px solid rgba(255,255,255,0.1)',
-              borderRadius: 3,
-            },
-          },
         }}
       >
         <DialogTitle sx={{ color: 'rgba(255,255,255,0.92)' }}>Account scheduled for deletion</DialogTitle>

@@ -1,5 +1,27 @@
 import { createTheme } from '@mui/material/styles'
 
+// Design rule: every popup, menu, and dialog gets a fully OPAQUE surface —
+// no rgba(...) alpha, no relying on backdropFilter blur to hide what's
+// bleeding through underneath. A translucent dialog/menu paper (rgba alpha
+// < 1) lets the page content behind it show through and become unreadable
+// once it's anything more than a couple of short lines — this bit a Dialog
+// added without realizing the app-wide default (`background.paper`) is a 6%
+// opacity overlay, not a solid color. Set once here so every MuiDialog/
+// MuiMenu/MuiPopover paper is solid by default; don't override with an rgba
+// background on an individual component.
+const DIALOG_SURFACE_DARK = {
+  backgroundColor: 'rgb(18,25,45)',
+  backgroundImage: 'none',
+  border: '1px solid rgba(255,255,255,0.1)',
+  boxShadow: '0 20px 60px rgba(0,0,0,0.4)',
+}
+const DIALOG_SURFACE_LIGHT = {
+  backgroundColor: 'rgb(255,255,255)',
+  backgroundImage: 'none',
+  border: '1px solid rgba(0,0,0,0.12)',
+  boxShadow: '0 20px 60px rgba(0,0,0,0.15)',
+}
+
 const commonConfig = {
   shape: { borderRadius: 18 },
   typography: {
@@ -54,6 +76,21 @@ export const darkTheme = createTheme({
         },
       },
     },
+    MuiDialog: {
+      styleOverrides: {
+        paper: DIALOG_SURFACE_DARK,
+      },
+    },
+    MuiMenu: {
+      styleOverrides: {
+        paper: DIALOG_SURFACE_DARK,
+      },
+    },
+    MuiPopover: {
+      styleOverrides: {
+        paper: DIALOG_SURFACE_DARK,
+      },
+    },
   },
 })
 
@@ -81,6 +118,21 @@ export const lightTheme = createTheme({
           border: '1px solid rgba(0,0,0,0.12)',
           backdropFilter: 'blur(10px)',
         },
+      },
+    },
+    MuiDialog: {
+      styleOverrides: {
+        paper: DIALOG_SURFACE_LIGHT,
+      },
+    },
+    MuiMenu: {
+      styleOverrides: {
+        paper: DIALOG_SURFACE_LIGHT,
+      },
+    },
+    MuiPopover: {
+      styleOverrides: {
+        paper: DIALOG_SURFACE_LIGHT,
       },
     },
   },

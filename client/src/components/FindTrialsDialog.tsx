@@ -209,14 +209,6 @@ export default function FindTrialsDialog({
         maxWidth="sm"
         slotProps={{
           backdrop: { sx: { backgroundColor: 'rgba(0,0,0,0.3)' } },
-          paper: {
-            sx: {
-              backgroundColor: 'rgba(18,25,45,0.55)',
-              backdropFilter: 'blur(18px)',
-              boxShadow: '0 20px 60px rgba(0,0,0,0.4)',
-              border: '1px solid rgba(255,255,255,0.1)',
-            },
-          },
         }}
       >
         <DialogTitle>Find clinical trials to join</DialogTitle>
