@@ -88,6 +88,10 @@ class Conversation(Base):
     # prompt (see UserProfile below) — a user with a stored profile may still
     # want to ask something unrelated without it coloring the answer.
     use_profile_context = Column(Boolean, default=True, nullable=False)
+    # Public read-only sharing. Null = not shared. A dedicated random token
+    # (not the conversation's own id) so revoking is a plain clear/rotate
+    # rather than needing to change the conversation's primary key.
+    share_token = Column(String(64), nullable=True, unique=True, index=True)
 
     user: Mapped["User"] = relationship("User", back_populates="conversations")
 

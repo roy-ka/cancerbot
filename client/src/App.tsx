@@ -10,6 +10,7 @@ import ConfirmDeleteAccount from './pages/ConfirmDeleteAccount'
 import ChangeEmail from './pages/ChangeEmail'
 import ConfirmEmailChange from './pages/ConfirmEmailChange'
 import RevertEmail from './pages/RevertEmail'
+import SharedConversation from './pages/SharedConversation'
 import Ninja from './pages/Ninja'
 import ProtectedRoute from './components/ProtectedRoute'
 import PublicRoute from './components/PublicRoute'
@@ -47,6 +48,7 @@ function App() {
         <Route path="/change-email" element={<ChangeEmail />} />
         <Route path="/confirm-email-change" element={<ConfirmEmailChange />} />
         <Route path="/revert-email" element={<RevertEmail />} />
+        <Route path="/s/:token" element={<SharedConversation />} />
 
         {/* Protected App */}
         <Route

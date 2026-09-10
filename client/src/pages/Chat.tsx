@@ -16,10 +16,12 @@ import {
   DialogActions,
   Button,
   CircularProgress,
+  TextField,
 } from '@mui/material'
 import FileDownloadOutlinedIcon from '@mui/icons-material/FileDownloadOutlined'
 import TranslateIcon from '@mui/icons-material/Translate'
 import SummarizeOutlinedIcon from '@mui/icons-material/SummarizeOutlined'
+import ShareOutlinedIcon from '@mui/icons-material/ShareOutlined'
 import { useNavigate } from 'react-router-dom'
 import ConversationList from '../components/ConversationList'
 import MessageList from '../components/MessageList'
@@ -55,6 +57,12 @@ export default function Chat() {
   const [summaryLoading, setSummaryLoading] = useState(false)
   const [summaryError, setSummaryError] = useState('')
   const [summaryCopied, setSummaryCopied] = useState(false)
+  const [conversationShared, setConversationShared] = useState(false)
+  const [shareDialogOpen, setShareDialogOpen] = useState(false)
+  const [shareUrl, setShareUrl] = useState('')
+  const [shareLoading, setShareLoading] = useState(false)
+  const [shareError, setShareError] = useState('')
+  const [shareCopied, setShareCopied] = useState(false)
   // Icon tutorial. Shown while the user has no conversations yet; `loaded`
   // gates it on the conversations fetch having actually returned, so an
   // existing user doesn't see it flash during the initial request.
@@ -188,6 +196,9 @@ export default function Chat() {
         }
         if (typeof apiConversation?.use_profile_context === 'boolean') {
           setUseProfileContextEnabled(apiConversation.use_profile_context)
+        }
+        if (typeof apiConversation?.shared === 'boolean') {
+          setConversationShared(apiConversation.shared)
         }
       } catch (e) {
         console.error('messages failed:', e)
@@ -508,6 +519,57 @@ export default function Chat() {
     printConversationAsPdf(currentConversationTitle, messages)
   }
 
+  const handleOpenShareDialog = async () => {
+    if (selectedConversationId === 'new') return
+    setShareDialogOpen(true)
+    setShareLoading(true)
+    setShareError('')
+    setShareCopied(false)
+    try {
+      const res = await fetch(`${BASE_URL}/conversations/${selectedConversationId}/share`, {
+        method: 'POST',
+        credentials: 'include',
+      })
+      if (!res.ok) throw new Error(await res.text())
+      const data = await res.json()
+      setShareUrl(data.share_url)
+      setConversationShared(true)
+    } catch {
+      setShareError('Failed to create a share link. Please try again.')
+    } finally {
+      setShareLoading(false)
+    }
+  }
+
+  const handleCopyShareUrl = async () => {
+    try {
+      await navigator.clipboard.writeText(shareUrl)
+      setShareCopied(true)
+    } catch {
+      setShareCopied(false)
+    }
+  }
+
+  const handleStopSharing = async () => {
+    if (selectedConversationId === 'new') return
+    setShareLoading(true)
+    setShareError('')
+    try {
+      const res = await fetch(`${BASE_URL}/conversations/${selectedConversationId}/share`, {
+        method: 'DELETE',
+        credentials: 'include',
+      })
+      if (!res.ok) throw new Error(await res.text())
+      setConversationShared(false)
+      setShareUrl('')
+      setShareDialogOpen(false)
+    } catch {
+      setShareError('Failed to stop sharing. Please try again.')
+    } finally {
+      setShareLoading(false)
+    }
+  }
+
   const onMessageSubmit = (e: React.SubmitEvent<HTMLFormElement>) => {
     e.preventDefault()
     const messageText = inputValue.trim()
@@ -658,6 +720,14 @@ export default function Chat() {
                   <SummarizeOutlinedIcon fontSize="medium" />
                 </IconButton>
               </Tooltip>
+              <Tooltip title="Share conversation">
+                <IconButton
+                  onClick={handleOpenShareDialog}
+                  sx={{ color: conversationShared ? 'rgba(47, 227, 198, 0.9)' : 'rgba(255,255,255,0.6)' }}
+                >
+                  <ShareOutlinedIcon fontSize="medium" />
+                </IconButton>
+              </Tooltip>
             </Box>
           )}
           <Box className="chat-message-list">
@@ -712,6 +782,46 @@ export default function Chat() {
             <Button onClick={handleCopySummary}>{summaryCopied ? 'Copied!' : 'Copy'}</Button>
           )}
           <Button onClick={() => setSummaryDialogOpen(false)}>Close</Button>
+        </DialogActions>
+      </Dialog>
+      <Dialog
+        open={shareDialogOpen}
+        onClose={() => setShareDialogOpen(false)}
+        fullWidth
+        maxWidth="sm"
+      >
+        <DialogTitle>Share Conversation</DialogTitle>
+        <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 1 }}>
+          <Typography variant="body2" color="textSecondary">
+            Anyone with this link can view a read-only copy of this conversation. They won't need to log in.
+          </Typography>
+          {shareLoading && !shareUrl && (
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, py: 2 }}>
+              <CircularProgress size={20} />
+              <Typography variant="body2">Creating link...</Typography>
+            </Box>
+          )}
+          {shareError && <Alert severity="error">{shareError}</Alert>}
+          {shareUrl && (
+            <TextField
+              value={shareUrl}
+              fullWidth
+              size="small"
+              slotProps={{ input: { readOnly: true } }}
+              onFocus={(e) => e.target.select()}
+            />
+          )}
+        </DialogContent>
+        <DialogActions>
+          {shareUrl && (
+            <Button onClick={handleStopSharing} color="error" disabled={shareLoading}>
+              Stop sharing
+            </Button>
+          )}
+          {shareUrl && (
+            <Button onClick={handleCopyShareUrl}>{shareCopied ? 'Copied!' : 'Copy link'}</Button>
+          )}
+          <Button onClick={() => setShareDialogOpen(false)}>Close</Button>
         </DialogActions>
       </Dialog>
     </Box>

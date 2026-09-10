@@ -2,6 +2,7 @@ from src.db.models import Conversation, Message
 from sqlalchemy import and_, func, select
 from sqlalchemy.orm import aliased
 from datetime import datetime, timezone
+import secrets
 
 
 def format_last_msg_time(dt):
@@ -89,6 +90,55 @@ def set_use_profile_context(db, conversation_id, user_id, use_profile_context: b
   db.commit()
   db.refresh(conversation)
   return conversation
+
+
+def enable_share(db, conversation_id, user_id):
+  """Idempotent: returns the existing token if sharing is already on,
+  otherwise mints a fresh one. Returns None if the conversation doesn't
+  exist / isn't owned by user_id / is deleted."""
+  stmt = select(Conversation).where(
+    Conversation.id == conversation_id,
+    Conversation.user_id == user_id,
+    Conversation.deleted_at.is_(None),
+  )
+  conversation = db.scalars(stmt).one_or_none()
+  if conversation is None:
+    return None
+
+  if not conversation.share_token:
+    conversation.share_token = secrets.token_urlsafe(32)
+    db.commit()
+    db.refresh(conversation)
+
+  return conversation.share_token
+
+
+def disable_share(db, conversation_id, user_id):
+  """Revokes sharing (clears the token) if it was set. Returns False if the
+  conversation doesn't exist / isn't owned by user_id / is deleted."""
+  stmt = select(Conversation).where(
+    Conversation.id == conversation_id,
+    Conversation.user_id == user_id,
+    Conversation.deleted_at.is_(None),
+  )
+  conversation = db.scalars(stmt).one_or_none()
+  if conversation is None:
+    return False
+
+  conversation.share_token = None
+  db.commit()
+  return True
+
+
+def get_conversation_by_share_token(db, share_token):
+  """Public (unauthenticated) lookup — a deleted conversation's link 404s
+  naturally via the deleted_at filter, no separate cleanup needed when a
+  shared conversation gets soft-deleted."""
+  stmt = select(Conversation).where(
+    Conversation.share_token == share_token,
+    Conversation.deleted_at.is_(None),
+  )
+  return db.scalars(stmt).one_or_none()
 
 
 def get_conversations_list_by_user_id(db, user_id, limit=10):

@@ -17,7 +17,10 @@ from src.db.repositories.conversations import (
     format_last_msg_time,
     soft_delete_conversation,
     set_use_profile_context,
+    enable_share,
+    disable_share,
 )
+from src.routers.auth import _get_frontend_url
 from src.db.repositories.profile import get_profile, render_profile_context
 from src.db.repositories.messeges import (
     add_message,
@@ -622,6 +625,7 @@ async def get_conversation_messages(
             "title": conversation.title,
             "updatedAt": conversation.updated_at.isoformat() if conversation.updated_at else None,
             "use_profile_context": conversation.use_profile_context,
+            "shared": bool(conversation.share_token),
         },
         "messages": messages_data,
         "next_before": next_before,
@@ -903,6 +907,33 @@ async def update_conversation(
     if conversation is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
     return {"id": str(conversation.id), "use_profile_context": conversation.use_profile_context}
+
+
+@router.post("/{conversation_id}/share")
+async def share_conversation(
+    conversation_id: UUID,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    token = enable_share(db=db, conversation_id=conversation_id, user_id=current_user.id)
+    if token is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    # /s/ (not /shared/) on purpose — /shared/ is the backend API prefix
+    # (see nginx.conf), and nginx routes that whole prefix straight to the
+    # backend, so a frontend page living there would never actually render.
+    return {"share_token": token, "share_url": f"{_get_frontend_url()}/s/{token}"}
+
+
+@router.delete("/{conversation_id}/share")
+async def unshare_conversation(
+    conversation_id: UUID,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    success = disable_share(db=db, conversation_id=conversation_id, user_id=current_user.id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return {"ok": True}
 
 
 @router.delete("/{conversation_id}")

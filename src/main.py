@@ -3,7 +3,7 @@ import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from src.routers import auth, health, conversations, bug_reports, terms, ninja, profile
+from src.routers import auth, health, conversations, bug_reports, terms, ninja, profile, shared
 from src.retrieval.db_connector import dbConnector
 from src.utils.utils import is_prod
 import axiom_py
@@ -103,3 +103,4 @@ app.include_router(bug_reports.router)
 app.include_router(terms.router)
 app.include_router(ninja.router)
 app.include_router(profile.router)
+app.include_router(shared.router)
