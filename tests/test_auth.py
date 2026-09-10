@@ -623,6 +623,28 @@ class TestRateLimiting:
         response = anon_client.post("/auth/forgot-password/", json={"email": "other@example.com"})
         assert response.status_code == 200
 
+    def test_resend_verification_blocked_after_limit(self, anon_client, test_user):
+        from src.db.repositories.rate_limit import MAX_RESEND_VERIFICATION_ATTEMPTS
+        for _ in range(MAX_RESEND_VERIFICATION_ATTEMPTS):
+            anon_client.post("/auth/resend-verification/", json={"email": test_user.email})
+        response = anon_client.post("/auth/resend-verification/", json={"email": test_user.email})
+        assert response.status_code == 429
+
+    def test_resend_verification_not_blocked_before_limit(self, anon_client, test_user):
+        from src.db.repositories.rate_limit import MAX_RESEND_VERIFICATION_ATTEMPTS
+        for _ in range(MAX_RESEND_VERIFICATION_ATTEMPTS - 1):
+            anon_client.post("/auth/resend-verification/", json={"email": test_user.email})
+        response = anon_client.post("/auth/resend-verification/", json={"email": test_user.email})
+        assert response.status_code == 200
+
+    def test_resend_verification_limit_is_per_email(self, anon_client, test_user):
+        from src.db.repositories.rate_limit import MAX_RESEND_VERIFICATION_ATTEMPTS
+        for _ in range(MAX_RESEND_VERIFICATION_ATTEMPTS):
+            anon_client.post("/auth/resend-verification/", json={"email": test_user.email})
+        # Different email is unaffected
+        response = anon_client.post("/auth/resend-verification/", json={"email": "other@example.com"})
+        assert response.status_code == 200
+
 
 def _make_token(user, tv_override=None):
     expires = datetime.now(timezone.utc) + timedelta(hours=1)

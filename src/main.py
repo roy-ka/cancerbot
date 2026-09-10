@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from src.routers import auth, health, conversations, bug_reports, terms, ninja, profile, shared
 from src.retrieval.db_connector import dbConnector
-from src.utils.utils import is_prod
+from src.utils.utils import is_prod, ENV
 import axiom_py
 from axiom_py.logging import AxiomHandler
 from dotenv import load_dotenv
@@ -18,6 +18,19 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+
+if not ENV:
+    # is_prod() (src/utils/utils.py) treats a missing ENV as non-production —
+    # several endpoints key off "not is_prod()" to return a live single-use
+    # token (email verification, account deletion, email change, waitlist
+    # invite) directly in the API response, for E2E automation convenience.
+    # A deployment that silently ends up on that branch because ENV was never
+    # set is a token-disclosure bug, not a harmless default — refuse to boot
+    # instead, mirroring the CORS_ORIGINS='*' refusal below.
+    raise RuntimeError(
+        "ENV is not set. Every deployment must set ENV explicitly "
+        "(e.g. 'development', 'test', 'staging', 'production') — see example.env."
+    )
 
 
 class _HealthFilter(logging.Filter):

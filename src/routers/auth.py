@@ -63,6 +63,7 @@ from src.db.repositories.rate_limit import (
     MAX_REQUEST_DELETE_ATTEMPTS,
     MAX_WAITLIST_ATTEMPTS,
     MAX_EMAIL_CHANGE_ATTEMPTS,
+    MAX_RESEND_VERIFICATION_ATTEMPTS,
 )
 from src.queue import enqueue
 from src.jobs.account_deletion import job_id_for_user
@@ -772,6 +773,10 @@ class ResendVerificationRequest(BaseModel):
 
 @router.post("/resend-verification/")
 async def resend_verification(req: ResendVerificationRequest, db: Session = Depends(get_db)):
+    if is_rate_limited(db, f"resend-verification:{req.email}"):
+        raise HTTPException(status_code=429, detail="Too many requests. Please try again later.")
+    record_attempt(db, f"resend-verification:{req.email}", MAX_RESEND_VERIFICATION_ATTEMPTS)
+
     user = get_user_by_email(db=db, email=req.email)
     resp: dict = {"ok": True}
     if user and not user.email_verified:

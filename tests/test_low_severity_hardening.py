@@ -241,6 +241,30 @@ class TestCorsWildcardGuard:
 
 
 # ---------------------------------------------------------------------------
+# Missing ENV guard
+# ---------------------------------------------------------------------------
+
+class TestMissingEnvGuard:
+    def test_missing_env_refuses_to_start(self):
+        """is_prod() (src/utils/utils.py) treats a missing ENV as
+        non-production, and several auth endpoints key off "not is_prod()"
+        to return a live single-use token (email verification, account
+        deletion, email change) directly in the API response. A deployment
+        that silently ends up there because ENV was never set is a
+        token-disclosure bug — main.py must refuse to boot instead."""
+        import importlib
+        import src.main
+
+        with patch("src.utils.utils.ENV", None):
+            with pytest.raises(RuntimeError, match="ENV is not set"):
+                importlib.reload(src.main)
+
+        # Restore a clean module for the rest of the session
+        with patch.dict("os.environ", {"CORS_ORIGINS": "http://localhost:5173", "ENV": "test"}):
+            importlib.reload(src.main)
+
+
+# ---------------------------------------------------------------------------
 # Prompt fence
 # ---------------------------------------------------------------------------
 
