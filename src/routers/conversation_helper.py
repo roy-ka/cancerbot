@@ -20,6 +20,7 @@ from src.classes.ollama_connector import OllamaConnector
 logger = logging.getLogger(__name__)
 from src.retrieval.db_connector import dbConnector
 from src.xml_to_source import pubmed_article_xml_to_source
+from src.utils.timing import timed_stage
 
 _RETRY_MAX = 2
 _RETRYABLE_HTTP = frozenset({429, 500, 502, 503, 504})
@@ -1147,6 +1148,14 @@ def _embed_and_index_sources(
     return indexed, skipped
 
 
+async def _timed(coro, stage: str, **extra):
+    """Times one leg of a concurrent asyncio.gather (e.g. one external search
+    source) without losing its concurrency — the coroutine still runs
+    alongside its siblings, this just wraps it in timed_stage."""
+    async with timed_stage(stage, **extra):
+        return await coro
+
+
 async def search_and_embed(
     conversation,
     emit: StageEmitter = _emit_noop,
@@ -1202,14 +1211,16 @@ async def search_and_embed(
             (str(getattr(m, 'role', 'user') or 'user'), str(getattr(m, 'content', '') or ''))
             for m in history_messages
         ]
-        search_text = await OllamaConnector.rewrite_query_with_history(history_pairs, latest_text)
+        async with timed_stage('rewrite_query_with_history'):
+            search_text = await OllamaConnector.rewrite_query_with_history(history_pairs, latest_text)
         if search_text != latest_text:
             logger.info("[search_and_embed] rewrote query for retrieval: %r -> %r", latest_text, search_text)
 
     entity_groups: list[dict] = []
     if search_text:
         await emit("extracting_search_terms", {"source": "nlp"})
-        latest_terms, latest_groups = await _extract_term_groups_from_message(search_text)
+        async with timed_stage('extract_search_terms'):
+            latest_terms, latest_groups = await _extract_term_groups_from_message(search_text)
         entity_groups = _merge_entity_groups([latest_groups])
     else:
         latest_terms = []
@@ -1240,7 +1251,8 @@ async def search_and_embed(
     url_sources: list[dict] = []        # converted shape for indexing
     if message_urls:
         await emit("fetching_urls", {"count": len(message_urls), "urls": message_urls})
-        url_context_items = await fetch_url_contents(message_urls)
+        async with timed_stage('fetch_urls', url_count=len(message_urls)):
+            url_context_items = await fetch_url_contents(message_urls)
         url_sources = [_url_fetch_to_source(r) for r in url_context_items]
 
     # Strip URL-shaped strings so they are not sent as PubMed/CrossRef/Wikipedia queries
@@ -1275,11 +1287,14 @@ async def search_and_embed(
             # a single event reflects the actual state better than four that flip
             # past in a few ms. Per-source counts still arrive in found_sources.
             await emit("searching_the_internet", {"sources": ["pubmed", "crossref", "wikipedia", "clinicaltrials"]})
+            # Each leg is individually timed (via _timed) rather than just
+            # timing the gather as a whole — that would only ever report the
+            # slowest source's duration, hiding the other three entirely.
             pubmed_sources, crossref_sources, wikipedia_sources, clinicaltrials_sources = await asyncio.gather(
-                asyncio.create_task(_search_pubmed_sources(client, terms, max_results=10, entity_groups=entity_groups)),
-                asyncio.create_task(_search_crossref_sources(client, terms, max_results=10, entity_groups=entity_groups)),
-                _search_wikipedia_sources(terms, max_results=3, entity_groups=entity_groups),
-                asyncio.create_task(_search_clinicaltrials_sources(client, terms, max_results=3, entity_groups=entity_groups)),
+                _timed(_search_pubmed_sources(client, terms, max_results=10, entity_groups=entity_groups), 'search_pubmed'),
+                _timed(_search_crossref_sources(client, terms, max_results=10, entity_groups=entity_groups), 'search_crossref'),
+                _timed(_search_wikipedia_sources(terms, max_results=3, entity_groups=entity_groups), 'search_wikipedia'),
+                _timed(_search_clinicaltrials_sources(client, terms, max_results=3, entity_groups=entity_groups), 'search_clinicaltrials'),
             )
 
     await emit(
@@ -1311,7 +1326,8 @@ async def search_and_embed(
 
     merged_sources = [*url_sources, *pubmed_sources, *crossref_sources, *wikipedia_sources, *clinicaltrials_sources]
     await emit("embedding_and_indexing_sources", {"total_sources": len(merged_sources)})
-    indexed, skipped = await asyncio.to_thread(_embed_and_index_sources, merged_sources, terms, entity_groups)
+    async with timed_stage('embed_and_index_sources', total_sources=len(merged_sources)):
+        indexed, skipped = await asyncio.to_thread(_embed_and_index_sources, merged_sources, terms, entity_groups)
     await emit("sources_indexed", {"indexed": indexed, "skipped": skipped})
     logger.info(f"[search] indexed={indexed} skipped={skipped}")
 

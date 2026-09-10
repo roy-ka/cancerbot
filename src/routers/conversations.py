@@ -39,6 +39,7 @@ from src.retrieval import run_retrieval
 from src.retrieval.db_connector import dbConnector
 from src.classes.ollama_connector import OllamaConnector, NO_DATA_RESPONSE, is_truncated_finish_reason
 from src.routers.conversation_helper import _emit_noop, search_and_embed, fetch_url_contents, _representative_terms
+from src.utils.timing import timed_stage
 
 ROLLS = Literal['user', 'assistant']
 
@@ -163,10 +164,11 @@ async def _process_post_message(
     await emit('loading_conversation', {'conversation_id': str(conversation_id)})
 
     if conversation is None:
-        conversation = get_conversation_by_id_no_auth(
-            db=db,
-            conversation_id=conversation_id,
-        )
+        async with timed_stage('load_conversation', conversation_id=str(conversation_id)):
+            conversation = get_conversation_by_id_no_auth(
+                db=db,
+                conversation_id=conversation_id,
+            )
         if conversation is None:
             raise HTTPException(status_code=404, detail="Conversation not found")
         # Ninja intentionally posts into other users' conversations — the
@@ -184,23 +186,25 @@ async def _process_post_message(
     await emit('saving_user_message', {})
 
     try:
-        user_message = add_message(
-            db=db,
-            conversation_id=conversation.id,
-            role="user",
-            content=req.content,
-            urls=req.urls,
-            hidden_from_user=hidden_from_user,
-        )
-        db.commit()
-        db.refresh(user_message)
-        db.refresh(conversation)
+        async with timed_stage('save_user_message', conversation_id=str(conversation_id)):
+            user_message = add_message(
+                db=db,
+                conversation_id=conversation.id,
+                role="user",
+                content=req.content,
+                urls=req.urls,
+                hidden_from_user=hidden_from_user,
+            )
+            db.commit()
+            db.refresh(user_message)
+            db.refresh(conversation)
     except Exception:
         db.rollback()
         raise
 
     await emit('fallback_triggered', {'reason': 'always_search_external'})
-    search_meta = await search_and_embed(conversation, emit=emit)
+    async with timed_stage('search_and_embed', conversation_id=str(conversation_id)):
+        search_meta = await search_and_embed(conversation, emit=emit)
 
     # Persist the terms extracted for this message. search_and_embed already ran
     # spell-correction + entity extraction on this exact text, so its result is
@@ -308,9 +312,10 @@ async def _process_post_message(
         if (g.get('category') or '').strip()
     })
 
-    context = await asyncio.to_thread(
-        run_retrieval, retrieval_query, query_disease_areas, dense_query
-    )
+    async with timed_stage('retrieve_context', conversation_id=str(conversation_id)):
+        context = await asyncio.to_thread(
+            run_retrieval, retrieval_query, query_disease_areas, dense_query
+        )
     logging.info(f"[conversation] retrieved sources={len(context.get('sources_ids', []))} url_ctx={len(url_context_items)}")
 
     # Prepend URL context items (fetched from message content) directly to generation context
@@ -359,18 +364,19 @@ async def _process_post_message(
     try:
         raw_tokens: list[str] = []
         alias_to_id: dict = {}
-        async for chunk in OllamaConnector.stream_text(
-            context=context["generation_context"],
-            question=req.content,
-            history=history,
-            first_message=first_message_content,
-            profile_context=profile_context,
-        ):
-            if isinstance(chunk, dict):
-                alias_to_id = chunk
-            else:
-                raw_tokens.append(chunk)
-                await send_token(chunk)
+        async with timed_stage('generate_answer', conversation_id=str(conversation_id)):
+            async for chunk in OllamaConnector.stream_text(
+                context=context["generation_context"],
+                question=req.content,
+                history=history,
+                first_message=first_message_content,
+                profile_context=profile_context,
+            ):
+                if isinstance(chunk, dict):
+                    alias_to_id = chunk
+                else:
+                    raw_tokens.append(chunk)
+                    await send_token(chunk)
         model_name: str | None = alias_to_id.pop("_model", None)
         truncated = is_truncated_finish_reason(alias_to_id.pop("_finish_reason", None))
         response = OllamaConnector._post_process("".join(raw_tokens), alias_to_id)
@@ -411,19 +417,20 @@ async def _process_post_message(
     await emit('saving_assistant_message', {})
 
     try:
-        assistant_message = add_message(
-            db=db,
-            conversation_id=conversation.id,
-            role="assistant",
-            content=response,
-            sources_ids=context.get('sources_ids'),
-            model_name=model_name,
-            hidden_from_user=hidden_from_user,
-            truncated=truncated,
-        )
+        async with timed_stage('save_assistant_message', conversation_id=str(conversation_id)):
+            assistant_message = add_message(
+                db=db,
+                conversation_id=conversation.id,
+                role="assistant",
+                content=response,
+                sources_ids=context.get('sources_ids'),
+                model_name=model_name,
+                hidden_from_user=hidden_from_user,
+                truncated=truncated,
+            )
 
-        db.commit()
-        db.refresh(assistant_message)
+            db.commit()
+            db.refresh(assistant_message)
     except Exception:
         db.rollback()
         raise
@@ -435,15 +442,20 @@ async def _process_post_message(
     # this, only the trailing 'done'/'final' signal is.
     if is_first_message:
         try:
-            new_title = await OllamaConnector.generate_title(req.content)
-            conversation.title = new_title
-            db.add(conversation)
-            db.commit()
+            async with timed_stage('generate_title', conversation_id=str(conversation_id)):
+                new_title = await OllamaConnector.generate_title(req.content)
+                conversation.title = new_title
+                db.add(conversation)
+                db.commit()
         except Exception:
             logging.exception("[conversation] title generation failed")
             db.rollback()
 
     took_ms = int((time.time() - t0) * 1000)
+    logging.info(
+        "[timing] stage=total_message took_ms=%dms", took_ms,
+        extra={"stage": "total_message", "took_ms": took_ms, "conversation_id": str(conversation_id)},
+    )
     await emit('done', {'took_ms': took_ms})
 
     return {
