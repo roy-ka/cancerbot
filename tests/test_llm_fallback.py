@@ -439,3 +439,41 @@ class TestAnswerLanguageInstruction:
         sent_prompt = instance.chat.completions.create.call_args.kwargs["messages"][0]["content"]
         assert NO_DATA_RESPONSE in sent_prompt
         assert "written exactly as shown, in English" in sent_prompt
+
+
+class TestSummarizeConversation:
+    @pytest.mark.asyncio
+    async def test_returns_joined_tokens(self):
+        factory, _ = _async_groq_mock(tokens=["A short ", "recap."])
+        with patch("groq.AsyncGroq", factory):
+            summary = await OllamaConnector.summarize_conversation("User: hi\n\nCancerBot: hello")
+        assert summary == "A short recap."
+
+    @pytest.mark.asyncio
+    async def test_transcript_is_sent_to_the_llm(self):
+        factory, instance = _async_groq_mock(tokens=["ok"])
+        with patch("groq.AsyncGroq", factory):
+            await OllamaConnector.summarize_conversation("User: What is the Warburg effect?")
+        sent_prompt = instance.chat.completions.create.call_args.kwargs["messages"][0]["content"]
+        assert "User: What is the Warburg effect?" in sent_prompt
+        assert "do not add citations" in sent_prompt
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_gemini_on_groq_error(self):
+        factory, _ = _async_groq_mock(raises=_rate_limit_exc())
+        with (
+            patch("groq.AsyncGroq", factory),
+            patch.object(OllamaConnector, "gemini", _gemini_mock("Gemini summary")),
+        ):
+            summary = await OllamaConnector.summarize_conversation("User: hi")
+        assert summary == "Gemini summary"
+
+    @pytest.mark.asyncio
+    async def test_raises_when_both_providers_fail(self):
+        factory, _ = _async_groq_mock(raises=_rate_limit_exc())
+        with (
+            patch("groq.AsyncGroq", factory),
+            patch.object(OllamaConnector, "gemini", _gemini_mock(raises=RuntimeError("down"))),
+        ):
+            with pytest.raises(ValueError):
+                await OllamaConnector.summarize_conversation("User: hi")

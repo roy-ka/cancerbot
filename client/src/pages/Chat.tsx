@@ -10,9 +10,16 @@ import {
   Menu,
   MenuItem,
   Tooltip,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Button,
+  CircularProgress,
 } from '@mui/material'
 import FileDownloadOutlinedIcon from '@mui/icons-material/FileDownloadOutlined'
 import TranslateIcon from '@mui/icons-material/Translate'
+import SummarizeOutlinedIcon from '@mui/icons-material/SummarizeOutlined'
 import { useNavigate } from 'react-router-dom'
 import ConversationList from '../components/ConversationList'
 import MessageList from '../components/MessageList'
@@ -43,6 +50,11 @@ export default function Chat() {
   const [hasProfile, setHasProfile] = useState(false)
   const [useProfileContextEnabled, setUseProfileContextEnabled] = useState(true)
   const [exportMenuAnchor, setExportMenuAnchor] = useState<HTMLElement | null>(null)
+  const [summaryDialogOpen, setSummaryDialogOpen] = useState(false)
+  const [summaryText, setSummaryText] = useState('')
+  const [summaryLoading, setSummaryLoading] = useState(false)
+  const [summaryError, setSummaryError] = useState('')
+  const [summaryCopied, setSummaryCopied] = useState(false)
   // Icon tutorial. Shown while the user has no conversations yet; `loaded`
   // gates it on the conversations fetch having actually returned, so an
   // existing user doesn't see it flash during the initial request.
@@ -460,6 +472,37 @@ export default function Chat() {
     openConversationInGoogleTranslate(messages)
   }
 
+  const handleSummarizeConversation = async () => {
+    if (selectedConversationId === 'new') return
+    setSummaryDialogOpen(true)
+    setSummaryLoading(true)
+    setSummaryError('')
+    setSummaryText('')
+    setSummaryCopied(false)
+    try {
+      const res = await fetch(`${BASE_URL}/conversations/${selectedConversationId}/summarize`, {
+        method: 'POST',
+        credentials: 'include',
+      })
+      if (!res.ok) throw new Error(await res.text())
+      const data = await res.json()
+      setSummaryText(data.summary)
+    } catch {
+      setSummaryError('Failed to summarize this conversation. Please try again.')
+    } finally {
+      setSummaryLoading(false)
+    }
+  }
+
+  const handleCopySummary = async () => {
+    try {
+      await navigator.clipboard.writeText(summaryText)
+      setSummaryCopied(true)
+    } catch {
+      setSummaryCopied(false)
+    }
+  }
+
   const handleExportPdf = () => {
     setExportMenuAnchor(null)
     printConversationAsPdf(currentConversationTitle, messages)
@@ -607,6 +650,14 @@ export default function Chat() {
                   <TranslateIcon fontSize="medium" />
                 </IconButton>
               </Tooltip>
+              <Tooltip title="Summarize conversation">
+                <IconButton
+                  onClick={handleSummarizeConversation}
+                  sx={{ color: 'rgba(255,255,255,0.6)' }}
+                >
+                  <SummarizeOutlinedIcon fontSize="medium" />
+                </IconButton>
+              </Tooltip>
             </Box>
           )}
           <Box className="chat-message-list">
@@ -635,6 +686,34 @@ export default function Chat() {
         />
       </Box>
       <IconGuideDialog open={guideOpen} onClose={closeGuide} />
+      <Dialog
+        open={summaryDialogOpen}
+        onClose={() => setSummaryDialogOpen(false)}
+        fullWidth
+        maxWidth="sm"
+      >
+        <DialogTitle>Conversation Summary</DialogTitle>
+        <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 1 }}>
+          {summaryLoading && (
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, py: 2 }}>
+              <CircularProgress size={20} />
+              <Typography variant="body2">Summarizing...</Typography>
+            </Box>
+          )}
+          {summaryError && <Alert severity="error">{summaryError}</Alert>}
+          {!summaryLoading && !summaryError && summaryText && (
+            <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
+              {summaryText}
+            </Typography>
+          )}
+        </DialogContent>
+        <DialogActions>
+          {!summaryLoading && summaryText && (
+            <Button onClick={handleCopySummary}>{summaryCopied ? 'Copied!' : 'Copy'}</Button>
+          )}
+          <Button onClick={() => setSummaryDialogOpen(false)}>Close</Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   )
 }

@@ -251,6 +251,22 @@ def get_recent_messages(db, conversation_id, limit=50, include_hidden=False):
   return messages
 
 
+def get_message_texts_for_summary(db, conversation_id, limit=200):
+  """(role, content) pairs for the summarize-conversation feature — plain
+  text only, oldest first. Deliberately skips add_claims_and_sources_bulk
+  (an OpenSearch round trip) since a summary never needs source objects,
+  only what was said. Always excludes hidden_from_user messages, same as
+  every other user-facing read path."""
+  messages = (
+    db.query(Message)
+    .filter(Message.conversation_id == conversation_id, Message.hidden_from_user.is_(False))
+    .order_by(Message.created_at.asc(), Message.id.asc())
+    .limit(limit)
+    .all()
+  )
+  return [(m.role, m.content) for m in messages]
+
+
 def get_messages_by_conversation_id(db, conversation_id, limit=50, before: Optional[str] = None, include_hidden=False):
   q = db.query(Message).filter(Message.conversation_id == conversation_id)
   if not include_hidden:

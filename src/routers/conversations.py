@@ -28,6 +28,7 @@ from src.db.repositories.messeges import (
     get_message_by_id,
     get_messages_up_to,
     copy_messages,
+    get_message_texts_for_summary,
 )
 from src.db.repositories.message_feedback import set_feedback, get_feedback_for_messages
 from uuid import UUID
@@ -625,6 +626,39 @@ async def get_conversation_messages(
         "messages": messages_data,
         "next_before": next_before,
     }
+
+@router.post("/{conversation_id}/summarize")
+async def summarize_conversation(
+    conversation_id: UUID,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    conversation = get_conversation_by_id(
+        db=db,
+        conversation_id=conversation_id,
+        current_user=current_user,
+    )
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    pairs = get_message_texts_for_summary(db, conversation_id)
+    if not pairs:
+        raise HTTPException(status_code=422, detail="Conversation has no messages to summarize")
+
+    transcript = "\n\n".join(
+        f"{'User' if role == 'user' else 'CancerBot'}: {content}" for role, content in pairs
+    )
+
+    try:
+        summary = await OllamaConnector.summarize_conversation(transcript)
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+    if not summary:
+        raise HTTPException(status_code=502, detail="Failed to generate a summary")
+
+    return {"summary": summary}
+
 
 class FeedbackRequest(BaseModel):
     vote: Literal[1, -1]

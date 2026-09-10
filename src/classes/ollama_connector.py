@@ -425,6 +425,30 @@ PREVIOUS ANSWER (cut off — continue from exactly here):
     async for chunk in cls._stream_completion(full_prompt, max_tokens):
       yield chunk
 
+  @classmethod
+  async def summarize_conversation(cls, transcript: str) -> str:
+    """Plain-language summary of a conversation that already happened.
+    Not a new answer — the transcript already carries whatever citations
+    the original answers had, so this recaps in prose rather than
+    re-grounding in evidence. Raises ValueError (via _stream_completion)
+    if both Groq and Gemini are unavailable, same as stream_text."""
+    prompt = f"""
+Summarize the conversation below in plain, clear language, in 3-6 sentences.
+This is a recap of a conversation that already happened — do not add new
+medical claims beyond what's in the conversation, do not add citations, and
+do not repeat it verbatim.
+
+CONVERSATION:
+{transcript[:8000]}
+
+SUMMARY:
+""".strip()
+    raw_tokens: list[str] = []
+    async for chunk in cls._stream_completion(prompt, max_tokens=300):
+      if isinstance(chunk, str):
+        raw_tokens.append(chunk)
+    return "".join(raw_tokens).strip()
+
   # Citation tokens as the LLM actually emits them. The prompt instructs ASCII
   # brackets ([source1]), but models occasionally emit full-width/CJK brackets
   # (【source1】) instead despite that instruction — observed with
