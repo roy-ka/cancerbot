@@ -449,9 +449,14 @@ async def reset_password(req: ResetPasswordRequest, db: Session = Depends(get_db
     if not user:
         raise HTTPException(status_code=400, detail="User not found.")
 
+    if not consume_reset_token(db=db, record=record):
+        # Another request already consumed this exact token between our
+        # verify above and this point — same outcome as "already used".
+        raise HTTPException(status_code=400, detail="Invalid or already used reset link.")
+
     user.password_hash = SecurityUtils.hash_password(req.new_password)
     user.token_version = (user.token_version or 1) + 1
-    consume_reset_token(db=db, record=record)
+    db.commit()
     return {"ok": True}
 
 
@@ -539,7 +544,10 @@ async def submit_new_email(req: SubmitNewEmailRequest, db: Session = Depends(get
     if get_user_by_email(db=db, email=req.new_email):
         raise HTTPException(status_code=400, detail="Email already registered")
 
-    consume_email_change_request_token(db=db, record=record)
+    if not consume_email_change_request_token(db=db, record=record):
+        # Another request already consumed this exact token — same outcome
+        # as "already used". Must not also mint a second change_token below.
+        raise HTTPException(status_code=400, detail="Invalid or already used link.")
     change_token = create_email_change_token(db=db, user_id=user.id, new_email=req.new_email)
     db.commit()
 
@@ -590,7 +598,15 @@ async def confirm_email_change(token: str = Query(...), db: Session = Depends(ge
         raise HTTPException(status_code=400, detail="That email is no longer available.")
 
     old_email = user.email
-    consume_email_change_token(db=db, record=record)
+    if not consume_email_change_token(db=db, record=record):
+        # Another request already consumed this exact token — treat as a
+        # duplicate the same way the "not found" branch above does.
+        dup_user_id, dup_target_email = find_consumed_target_email(db, token, TOKEN_TYPE_EMAIL_CHANGE)
+        if dup_user_id and dup_target_email:
+            dup_user = get_user_by_id(db=db, user_id=dup_user_id)
+            if dup_user and dup_user.email == dup_target_email:
+                return {"ok": True, "message": "Email updated. Please log in with your new email."}
+        raise HTTPException(status_code=400, detail="Invalid or already used confirmation link.")
     user.email = new_email
     user.email_verified = True
     user.token_version = (user.token_version or 1) + 1
@@ -631,8 +647,17 @@ async def revert_email(token: str = Query(...), db: Session = Depends(get_db)):
     if not user:
         raise HTTPException(status_code=400, detail="Account not found.")
 
-    consume_email_revert_token(db=db, record=record)
-    user.email = record.target_email
+    target_email = record.target_email
+    if not consume_email_revert_token(db=db, record=record):
+        # Another request already consumed this exact token — treat as a
+        # duplicate the same way the "not found" branch above does.
+        dup_user_id, dup_target_email = find_consumed_target_email(db, token, TOKEN_TYPE_EMAIL_REVERT)
+        if dup_user_id and dup_target_email:
+            dup_user = get_user_by_id(db=db, user_id=dup_user_id)
+            if dup_user and dup_user.email == dup_target_email:
+                return {"ok": True, "message": "Your email address has been reverted."}
+        raise HTTPException(status_code=400, detail="Invalid or already used revert link.")
+    user.email = target_email
     user.email_verified = True
     user.token_version = (user.token_version or 1) + 1
     db.commit()
@@ -701,7 +726,12 @@ async def confirm_delete_account(
         raise HTTPException(status_code=401, detail="Password is incorrect.")
     reset_failed_attempts(db, user.email)
 
-    consume_deletion_token(db=db, record=record)
+    if not consume_deletion_token(db=db, record=record):
+        # Another request already consumed this exact token — reset_failed_
+        # attempts above commits, which drops the row lock from
+        # verify_deletion_token's for_update=True before we get here, so
+        # this atomic check is what actually closes the race, not that lock.
+        raise HTTPException(status_code=400, detail="Invalid or already used deletion link.")
     deletion_date = schedule_deletion(db=db, user=user)
     await enqueue(
         "send_delete_account_scheduled_email_job",

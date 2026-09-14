@@ -9,18 +9,24 @@ create/verify/consume core so the shared behavior (hash the token, never
 store it plain; invalidate a user's prior unused tokens of that type before
 issuing a new one; check expires_at) lives in one place.
 
-Commit timing differs by flow and is preserved exactly:
-- password reset's consume_reset_token commits itself.
-- email verification's verify_and_consume_token does NOT commit — the
-  caller (auth.py's /verify-email/) commits together with setting
-  user.email_verified, so both land in one transaction.
-- account deletion's consume_deletion_token does NOT commit — the caller
-  commits together with schedule_deletion's deletion_scheduled_at write,
-  so a token is never consumed without deletion actually being scheduled.
+Every consume_*_token function defers its commit to the caller (commit=False
+on the underlying _consume_token call) — the caller commits token
+consumption together with whatever DB write the confirmation itself makes
+(setting user.email_verified, scheduling deletion, changing the password,
+swapping the email), so a token is never consumed without its associated
+action actually happening in the same transaction.
+
+_consume_token itself is an atomic UPDATE ... WHERE used_at IS NULL, not a
+Python-side attribute assignment — see its docstring. Every caller MUST
+check its (and every consume_*_token wrapper's) boolean return value and
+abort — raise, don't apply the associated change, don't commit — on False,
+which means a concurrent request already consumed that exact token first.
 """
 import hashlib
 import secrets
 from datetime import datetime, timedelta, timezone
+
+from sqlalchemy import update
 
 from src.db.models import Token, User, WaitlistEntry
 from src.utils.email_normalize import normalize_email_for_dedup
@@ -80,13 +86,18 @@ def _verify_token(
     (None, error) on failure. Does NOT consume it — callers call
     _consume_token after the associated action succeeds.
 
-    for_update=True locks the matching row (SELECT ... FOR UPDATE) so a
-    second concurrent call for the same token blocks until the first
-    transaction commits, then re-evaluates used_at IS NULL against the now-
-    committed row instead of racing past this check on stale data. Only
-    account deletion opts in — it's the one flow here with a real side
-    effect (scheduling deletion + firing a deferred job) that must not run
-    twice for one token."""
+    for_update=True locks the matching row (SELECT ... FOR UPDATE) for the
+    rest of the transaction — a modest extra narrowing of the race window
+    (blocks a concurrent verify from even reading a "still valid" row while
+    this transaction is open) for account deletion, the one flow here with
+    real side effects. It is NOT what actually prevents two concurrent
+    requests from both completing: any intermediate `db.commit()` between
+    this call and _consume_token (e.g. login_attempts' reset_failed_attempts
+    in the deletion flow) ends the transaction and releases the lock early.
+    The real guard is _consume_token's own atomic UPDATE ... WHERE
+    used_at IS NULL — every caller must check its return value and abort
+    (no side effect, no commit) on False, regardless of whether for_update
+    was used here."""
     query = db.query(Token).filter(
         Token.token_hash == _hash_token(token),
         Token.token_type == token_type,
@@ -113,12 +124,38 @@ def _verify_token(
     return record, ""
 
 
-def _consume_token(db, record: Token, *, track_use_count: bool = False, commit: bool = True) -> None:
+def _consume_token(db, record: Token, *, track_use_count: bool = False, commit: bool = True) -> bool:
+    """Atomically marks the token used — an UPDATE ... WHERE used_at IS NULL,
+    not a Python-side attribute assignment, so two concurrent requests for
+    the same token can't both observe it as unconsumed and both proceed.
+    SQL UPDATE takes a row lock the instant it runs, even without an
+    explicit SELECT ... FOR UPDATE: whichever request's UPDATE executes
+    first wins outright (rowcount 1); the second blocks until the first's
+    transaction ends, then re-evaluates used_at IS NULL against the
+    now-committed row and affects 0 rows. This is the actual race-closing
+    step regardless of anything (verify, an unrelated intermediate commit
+    elsewhere in the request) that happened before it — callers MUST check
+    the return value and abort their side effect (raise, don't commit) on
+    False, exactly like a failed verify.
+
+    Returns True if this call consumed it, False if another request already
+    had (caller should treat that the same as "invalid or already used")."""
+    values = {"used_at": datetime.now(timezone.utc)}
     if track_use_count:
-        record.use_count += 1
-    record.used_at = datetime.now(timezone.utc)
+        values["use_count"] = Token.use_count + 1
+    result = db.execute(
+        update(Token).where(Token.id == record.id, Token.used_at.is_(None)).values(**values)
+    )
+    consumed = result.rowcount == 1
+    if consumed:
+        # Keep the in-memory object consistent for any caller that reads
+        # record.used_at/use_count after this (e.g. logging, response data).
+        record.used_at = values["used_at"]
+        if track_use_count:
+            record.use_count += 1
     if commit:
         db.commit()
+    return consumed
 
 
 def _find_token_user_id(db, token: str, token_type: str) -> str | None:
@@ -149,9 +186,11 @@ def verify_reset_token(db, token: str) -> tuple[Token | None, str]:
     )
 
 
-def consume_reset_token(db, record: Token) -> None:
-    """Increment use_count and mark the token as used after a successful password change."""
-    _consume_token(db, record, track_use_count=True, commit=True)
+def consume_reset_token(db, record: Token) -> bool:
+    """Increment use_count and mark the token as used. Does NOT commit —
+    caller commits together with the password change itself, and must not
+    apply that change at all if this returns False (see _consume_token)."""
+    return _consume_token(db, record, track_use_count=True, commit=False)
 
 
 # ---------------------------------------------------------------------------
@@ -177,7 +216,13 @@ def verify_and_consume_token(db, token: str) -> tuple[str | None, str]:
     )
     if not record:
         return None, error
-    _consume_token(db, record, commit=False)
+    if not _consume_token(db, record, commit=False):
+        # Lost the race to a concurrent request for the same token (e.g. a
+        # double-fire from the frontend). The router's caller already has a
+        # fallback for "not found" that checks whether the account ended up
+        # verified anyway — reuse the same not-found message so that path
+        # handles this identically instead of surfacing a raw failure.
+        return None, "Invalid or already used verification link."
     return str(record.user_id), ""
 
 
@@ -198,9 +243,9 @@ def verify_deletion_token(db, token: str) -> tuple[Token | None, str]:
     )
 
 
-def consume_deletion_token(db, record: Token) -> None:
+def consume_deletion_token(db, record: Token) -> bool:
     """Marks the token used but does NOT commit — see module docstring."""
-    _consume_token(db, record, commit=False)
+    return _consume_token(db, record, commit=False)
 
 
 def schedule_deletion(db, user: User) -> datetime:
@@ -264,8 +309,8 @@ def verify_email_change_request_token(db, token: str) -> tuple[Token | None, str
     )
 
 
-def consume_email_change_request_token(db, record: Token) -> None:
-    _consume_token(db, record, commit=False)
+def consume_email_change_request_token(db, record: Token) -> bool:
+    return _consume_token(db, record, commit=False)
 
 
 def create_email_change_token(db, user_id, new_email: str) -> str:
@@ -283,8 +328,8 @@ def verify_email_change_token(db, token: str) -> tuple[Token | None, str]:
     )
 
 
-def consume_email_change_token(db, record: Token) -> None:
-    _consume_token(db, record, commit=False)
+def consume_email_change_token(db, record: Token) -> bool:
+    return _consume_token(db, record, commit=False)
 
 
 def create_email_revert_token(db, user_id, old_email: str) -> str:
@@ -302,8 +347,8 @@ def verify_email_revert_token(db, token: str) -> tuple[Token | None, str]:
     )
 
 
-def consume_email_revert_token(db, record: Token) -> None:
-    _consume_token(db, record, commit=False)
+def consume_email_revert_token(db, record: Token) -> bool:
+    return _consume_token(db, record, commit=False)
 
 
 def find_consumed_target_email(db, token: str, token_type: str):
