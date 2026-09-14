@@ -11,6 +11,11 @@ secrets/
 
 venv/
 venv_test/
+.venv/
+.venv-nlp/
+env/
+ENV/
+pyvenv.cfg
 __pycache__/
 *.pyc
 *.pyo
