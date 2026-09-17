@@ -81,6 +81,16 @@ def _check_message_rate(user_id: str) -> bool:
 _active_ws: dict[str, int] = defaultdict(int)
 _WS_MAX_PER_USER = 3
 
+# Outer safety net around the generate_answer stage. The Groq/Gemini clients
+# (ollama_connector.py) already carry their own network-level timeouts that
+# trigger the Groq->Gemini fallback; this catches anything that slips past
+# that — so a message can never hang the websocket forever with zero
+# logging and zero client-visible error, the way the 2026-09-16 incident did
+# (traced via Axiom: search_and_embed and one retrieval query completed,
+# then total silence — no timing log, no exception, no WS frame, because
+# nothing was ever raised for anything to catch).
+_GENERATE_ANSWER_TIMEOUT_SECONDS = 120.0
+
 class Message(BaseModel):
     content: str = Field(..., max_length=4000)
     conversation_id: UUID | None = None
@@ -361,27 +371,38 @@ async def _process_post_message(
     await emit('building_prompt', {'history_messages': len(history)})
     await emit('generating_answer', {})
 
+    raw_tokens: list[str] = []
+    alias_to_id: dict = {}
+
+    async def _run_generation() -> None:
+        nonlocal alias_to_id
+        async for chunk in OllamaConnector.stream_text(
+            context=context["generation_context"],
+            question=req.content,
+            history=history,
+            first_message=first_message_content,
+            profile_context=profile_context,
+        ):
+            if isinstance(chunk, dict):
+                alias_to_id = chunk
+            else:
+                raw_tokens.append(chunk)
+                await send_token(chunk)
+
     try:
-        raw_tokens: list[str] = []
-        alias_to_id: dict = {}
         async with timed_stage('generate_answer', conversation_id=str(conversation_id)):
-            async for chunk in OllamaConnector.stream_text(
-                context=context["generation_context"],
-                question=req.content,
-                history=history,
-                first_message=first_message_content,
-                profile_context=profile_context,
-            ):
-                if isinstance(chunk, dict):
-                    alias_to_id = chunk
-                else:
-                    raw_tokens.append(chunk)
-                    await send_token(chunk)
+            await asyncio.wait_for(_run_generation(), timeout=_GENERATE_ANSWER_TIMEOUT_SECONDS)
         model_name: str | None = alias_to_id.pop("_model", None)
         truncated = is_truncated_finish_reason(alias_to_id.pop("_finish_reason", None))
         response = OllamaConnector._post_process("".join(raw_tokens), alias_to_id)
     except ValueError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
+    except asyncio.TimeoutError:
+        logging.error(
+            "[conversation] generate_answer timed out after %ss conversation_id=%s",
+            _GENERATE_ANSWER_TIMEOUT_SECONDS, conversation_id,
+        )
+        raise HTTPException(status_code=504, detail="Answer generation timed out. Please try again.")
     logging.info(f"[conversation] answer generated took={int((time.time()-t0)*1000)}ms")
 
     # If the LLM found no relevant data, still surface the retrieved sources so the
@@ -512,10 +533,12 @@ async def _process_continue_message(
 
     await emit('generating_answer', {})
 
-    try:
-        raw_tokens: list[str] = []
-        finish_reason: str | None = None
-        model_name: str | None = None
+    raw_tokens: list[str] = []
+    finish_reason: str | None = None
+    model_name: str | None = None
+
+    async def _run_continuation() -> None:
+        nonlocal finish_reason, model_name
         async for chunk in OllamaConnector.stream_continuation(
             sources=getattr(message, 'sources', None) or [],
             original_question=original_question,
@@ -528,10 +551,21 @@ async def _process_continue_message(
             else:
                 raw_tokens.append(chunk)
                 await send_token(chunk)
+
+    try:
+        # Same outer deadline as the fresh-answer path (_process_post_message)
+        # — see _GENERATE_ANSWER_TIMEOUT_SECONDS for why this exists.
+        await asyncio.wait_for(_run_continuation(), timeout=_GENERATE_ANSWER_TIMEOUT_SECONDS)
         extra_content = "".join(raw_tokens)
         truncated = is_truncated_finish_reason(finish_reason)
     except ValueError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
+    except asyncio.TimeoutError:
+        logging.error(
+            "[conversation] generate_answer (continue) timed out after %ss message_id=%s",
+            _GENERATE_ANSWER_TIMEOUT_SECONDS, message_id,
+        )
+        raise HTTPException(status_code=504, detail="Answer generation timed out. Please try again.")
 
     message = append_to_message(db, message, extra_content, truncated)
     if model_name:

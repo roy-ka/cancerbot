@@ -26,6 +26,21 @@ _TRUNCATED_FINISH_REASONS = {"length", "MAX_TOKENS"}
 def is_truncated_finish_reason(reason: str | None) -> bool:
   return reason in _TRUNCATED_FINISH_REASONS
 
+# Network timeouts for the two LLM providers. Without these, a connection
+# that's accepted but never sends data (or a stalled stream) hangs the
+# awaiting coroutine forever — no exception is raised, so `except
+# groq.GroqError` below never fires, the Gemini fallback never triggers,
+# and nothing gets logged (timed_stage's `finally` only runs once its
+# `async with` block exits, which a true hang never does). Groq's own SDK
+# raises `groq.APITimeoutError` on this timeout, which subclasses
+# `GroqError` (APITimeoutError -> APIConnectionError -> APIError ->
+# GroqError), so the existing `except groq.GroqError` already catches it
+# once the client is configured with a timeout — no need to broaden it.
+# Plain constants rather than env vars: these aren't expected to need
+# per-environment tuning the way GROQ_MAX_TOKENS etc. do.
+_GROQ_TIMEOUT_SECONDS = 60.0
+_GEMINI_TIMEOUT_SECONDS = 30.0
+
 # The literal delimiters wrapping retrieved evidence in the prompt. They carry
 # the `=====` decoration so they stay distinguishable from the instruction text
 # that *describes* them a few lines earlier — otherwise "exactly one closing
@@ -66,7 +81,7 @@ class _GroqClientProxy:
       api_key = os.getenv('GROQ_API_KEY')
       if not api_key:
         raise ValueError("GROQ_API_KEY is not set.")
-      _GroqClientProxy._client = Groq(api_key=api_key)
+      _GroqClientProxy._client = Groq(api_key=api_key, timeout=_GROQ_TIMEOUT_SECONDS)
     return _GroqClientProxy._client
 
   def __getattr__(self, name):
@@ -83,7 +98,11 @@ class _GeminiClientProxy:
       api_key = os.getenv('GEMINI_API_KEY')
       if not api_key:
         raise ValueError("GEMINI_API_KEY is not set — Gemini fallback unavailable.")
-      _GeminiClientProxy._client = google_genai.Client(api_key=api_key)
+      _GeminiClientProxy._client = google_genai.Client(
+        api_key=api_key,
+        # HttpOptions.timeout is in milliseconds.
+        http_options=google_genai.types.HttpOptions(timeout=int(_GEMINI_TIMEOUT_SECONDS * 1000)),
+      )
     return _GeminiClientProxy._client
 
   def __getattr__(self, name):
@@ -112,7 +131,7 @@ class OllamaConnector:
     """
     if cls._async_groq is None:
       from groq import AsyncGroq
-      cls._async_groq = AsyncGroq(api_key=os.getenv("GROQ_API_KEY"))
+      cls._async_groq = AsyncGroq(api_key=os.getenv("GROQ_API_KEY"), timeout=_GROQ_TIMEOUT_SECONDS)
     return cls._async_groq
 
   @classmethod
@@ -580,11 +599,15 @@ SUMMARY:
       yield {"_model": cls.groq_model, "_finish_reason": finish_reason}
       return
 
-    # Gemini fallback — no streaming SDK support; yield full response as one chunk
+    # Gemini fallback — no streaming SDK support; yield full response as one chunk.
+    # Uses the async client surface (.aio), not the sync one: the sync call
+    # would block the entire event loop (every request on the process, not
+    # just this one) for as long as it took, which is strictly worse than
+    # the single-request hang this timeout work is meant to fix.
     gemini_exc = None
     try:
       gemini_model = os.getenv("GEMINI_FALLBACK_MODEL", "gemini-2.5-flash")
-      response = cls.gemini.models.generate_content(
+      response = await cls.gemini.aio.models.generate_content(
         model=gemini_model,
         contents=full_prompt,
         config=google_genai.types.GenerateContentConfig(max_output_tokens=max_tokens),

@@ -806,6 +806,80 @@ class TestFallbackPath:
             assert "Related sources:" in assistant_msg["content"]
 
 
+class TestGenerateAnswerTimeout:
+    """A stalled LLM stream must never hang the request forever — it should
+    time out, log an error, and surface as a 504 / websocket error frame.
+    See src.routers.conversations._GENERATE_ANSWER_TIMEOUT_SECONDS and the
+    2026-09-16 incident this guards against (Groq stalled with no timeout
+    configured; nothing was ever raised, so nothing was ever caught or
+    logged, and the websocket hung indefinitely)."""
+
+    def test_add_message_times_out_with_504_when_stream_hangs(self, client, test_conversation, caplog):
+        import asyncio
+        import logging
+
+        async def _hanging_stream(*args, **kwargs):
+            await asyncio.sleep(10)
+            yield "unreachable"  # pragma: no cover
+
+        with (
+            patch("src.routers.conversations._GENERATE_ANSWER_TIMEOUT_SECONDS", 0.05),
+            patch("src.routers.conversations.OllamaConnector.stream_text", new=_hanging_stream),
+            caplog.at_level(logging.INFO),
+        ):
+            response = client.post(
+                f"/conversations/{test_conversation.id}/add_message",
+                json={"content": "Any question"},
+            )
+
+        assert response.status_code == 504
+        assert "timed out" in response.json()["detail"].lower()
+        assert any(
+            "generate_answer timed out" in r.message for r in caplog.records if r.levelname == "ERROR"
+        )
+        # Unlike a true hang (nothing ever raised, so timed_stage's `finally`
+        # never runs), a caught TimeoutError still lets the `async with
+        # timed_stage(...)` block exit — so this now gets logged too, where
+        # a genuine unbounded hang previously produced neither this nor the
+        # ERROR line above.
+        assert any(
+            getattr(r, "stage", None) == "generate_answer"
+            for r in caplog.records if r.name == "src.utils.timing"
+        )
+
+    def test_continue_message_times_out_with_error_frame_when_stream_hangs(
+        self, client, test_conversation, db_session,
+    ):
+        import asyncio
+        from src.db.repositories.messeges import add_message
+
+        msg = add_message(
+            db_session, conversation_id=test_conversation.id, role="assistant",
+            content="Cancer cells favor glycolysis [src-001]",
+            sources_ids=["src-001"], truncated=True,
+        )
+        db_session.commit()
+
+        async def _hanging_stream(*args, **kwargs):
+            await asyncio.sleep(10)
+            yield "unreachable"  # pragma: no cover
+
+        with (
+            patch("src.routers.conversations._GENERATE_ANSWER_TIMEOUT_SECONDS", 0.05),
+            patch("src.routers.conversations.OllamaConnector.stream_continuation", new=_hanging_stream),
+        ):
+            with client.websocket_connect(f"/conversations/{test_conversation.id}/add_message/ws") as ws:
+                ws.send_json({"continue_message_id": str(msg.id)})
+                messages = []
+                while True:
+                    m = ws.receive_json()
+                    messages.append(m)
+                    if m.get("type") in ("final", "error"):
+                        break
+
+        assert any(m.get("type") == "error" for m in messages)
+
+
 class TestWebSocket:
     def test_websocket_add_message_sends_stages_and_final(self, client, test_conversation):
         conv_id = str(test_conversation.id)

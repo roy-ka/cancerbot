@@ -24,11 +24,17 @@ def _make_gemini_response(content, finish_reason=None):
 
 
 def _gemini_mock(content=None, raises=None, finish_reason=None):
+    """Mock for OllamaConnector.gemini. The fallback call goes through the
+    async client surface (.aio.models.generate_content), not the sync one
+    (.models.generate_content) — the sync call would block the whole event
+    loop for as long as it took, not just the one request, while stalled."""
     m = MagicMock()
     if raises is not None:
-        m.models.generate_content.side_effect = raises
+        m.aio.models.generate_content = AsyncMock(side_effect=raises)
     else:
-        m.models.generate_content.return_value = _make_gemini_response(content, finish_reason=finish_reason)
+        m.aio.models.generate_content = AsyncMock(
+            return_value=_make_gemini_response(content, finish_reason=finish_reason)
+        )
     return m
 
 
@@ -125,7 +131,7 @@ class TestGroqGeminiFallback:
             chunks = await _collect(OllamaConnector.stream_text(CONTEXT, "What is cancer?", []))
         text_chunks = [c for c in chunks if isinstance(c, str)]
         assert "Gemini fallback answer" in "".join(text_chunks)
-        mock_gemini.models.generate_content.assert_called_once()
+        mock_gemini.aio.models.generate_content.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_groq_failure_enqueues_fallback_alert(self, mock_enqueue):
@@ -153,7 +159,7 @@ class TestGroqGeminiFallback:
         with patch("groq.AsyncGroq", factory), \
              patch.object(OllamaConnector, "gemini", mock_gemini):
             await _collect(OllamaConnector.stream_text(CONTEXT, "What is cancer?", []))
-        mock_gemini.models.generate_content.assert_not_called()
+        mock_gemini.aio.models.generate_content.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_both_providers_fail_raises_value_error(self):
