@@ -515,6 +515,117 @@ class TestProfileContextReachesThePrompt:
         assert captured["profile_context"] is None
 
 
+class TestPersonalQuestionFastPath:
+    """A question asking CancerBot to recall the user's own saved profile
+    data (e.g. "what's my cancer type?") is answered directly from the
+    profile, deliberately skipping literature search/generation entirely —
+    see render_profile_recall and OllamaConnector.classify_personal_question.
+    """
+
+    def test_personal_only_question_skips_search_and_generation(self, client, test_conversation, db_session):
+        from src.db.repositories.profile import upsert_profile
+
+        upsert_profile(db_session, test_conversation.user_id, cancer_type="Glioblastoma")
+
+        async def _classify(*args, **kwargs):
+            return {"personal_fields": ["cancer_type"], "has_untracked_personal_ask": False, "has_general_question": False}
+
+        async def _should_not_run(*args, **kwargs):
+            raise AssertionError("literature pipeline must not run for a personal-only question")
+
+        with (
+            patch("src.routers.conversations.OllamaConnector.classify_personal_question", new=_classify),
+            patch("src.routers.conversations.search_and_embed", new=_should_not_run),
+            patch("src.routers.conversations.OllamaConnector.stream_text", new=_should_not_run),
+        ):
+            response = client.post(
+                f"/conversations/{test_conversation.id}/add_message",
+                json={"content": "What's my cancer type?"},
+            )
+        assert response.status_code == 200
+        assistant_msg = response.json()["messages"][-1]
+        assert assistant_msg["role"] == "assistant"
+        assert "Glioblastoma" in assistant_msg["content"]
+
+    def test_mixed_question_prepends_recall_to_generated_answer(self, client, test_conversation, db_session):
+        from src.db.repositories.profile import upsert_profile
+
+        upsert_profile(db_session, test_conversation.user_id, stage="IV")
+
+        async def _classify(*args, **kwargs):
+            return {"personal_fields": ["stage"], "has_untracked_personal_ask": False, "has_general_question": True}
+
+        async def _gen(*args, **kwargs):
+            yield "Glycolysis is a metabolic pathway."
+            yield {}
+
+        with (
+            patch("src.routers.conversations.OllamaConnector.classify_personal_question", new=_classify),
+            patch("src.routers.conversations.run_retrieval") as mock_retrieval,
+            patch("src.routers.conversations.OllamaConnector.stream_text", new=_gen),
+        ):
+            mock_retrieval.return_value = {"generation_context": "info", "sources_ids": []}
+            response = client.post(
+                f"/conversations/{test_conversation.id}/add_message",
+                json={"content": "What stage am I, and what is glycolysis?"},
+            )
+        assert response.status_code == 200
+        assistant_msg = response.json()["messages"][-1]
+        assert "IV" in assistant_msg["content"]
+        assert "Glycolysis is a metabolic pathway." in assistant_msg["content"]
+
+    @patch("src.routers.conversations.run_retrieval")
+    def test_no_profile_never_classifies(self, mock_retrieval, client, test_conversation):
+        mock_retrieval.return_value = {"generation_context": "info", "sources_ids": []}
+
+        with patch("src.routers.conversations.OllamaConnector.classify_personal_question") as mock_classify:
+            response = client.post(
+                f"/conversations/{test_conversation.id}/add_message",
+                json={"content": "What is glycolysis?"},
+            )
+        assert response.status_code == 200
+        mock_classify.assert_not_called()
+
+    @patch("src.routers.conversations.run_retrieval")
+    def test_toggle_off_never_classifies_even_with_profile(self, mock_retrieval, client, test_conversation, db_session):
+        from src.db.repositories.profile import upsert_profile
+        from src.db.repositories.conversations import set_use_profile_context
+
+        upsert_profile(db_session, test_conversation.user_id, cancer_type="Glioblastoma")
+        set_use_profile_context(db_session, test_conversation.id, test_conversation.user_id, False)
+        mock_retrieval.return_value = {"generation_context": "info", "sources_ids": []}
+
+        with patch("src.routers.conversations.OllamaConnector.classify_personal_question") as mock_classify:
+            response = client.post(
+                f"/conversations/{test_conversation.id}/add_message",
+                json={"content": "What's my cancer type?"},
+            )
+        assert response.status_code == 200
+        mock_classify.assert_not_called()
+
+    def test_websocket_emits_answering_from_profile_stage(self, client, test_conversation, db_session):
+        from src.db.repositories.profile import upsert_profile
+
+        upsert_profile(db_session, test_conversation.user_id, cancer_type="Glioblastoma")
+
+        async def _classify(*args, **kwargs):
+            return {"personal_fields": ["cancer_type"], "has_untracked_personal_ask": False, "has_general_question": False}
+
+        conv_id = str(test_conversation.id)
+        with patch("src.routers.conversations.OllamaConnector.classify_personal_question", new=_classify):
+            with client.websocket_connect(f"/conversations/{conv_id}/add_message/ws") as ws:
+                ws.send_json({"content": "What's my cancer type?"})
+                stages = []
+                while True:
+                    msg = ws.receive_json()
+                    if msg.get("type") == "stage":
+                        stages.append(msg.get("stage"))
+                    if msg.get("type") in ("final", "error"):
+                        break
+        assert "answering_from_profile" in stages
+        assert "generating_answer" not in stages
+
+
 class TestTruncatedFlag:
     def test_assistant_message_persists_truncated_true(self, client, test_conversation):
         async def _gen(*a, **k):

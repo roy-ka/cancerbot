@@ -335,6 +335,17 @@ class TestGenerateTitle:
             title = await OllamaConnector.generate_title("what is apoptosis?")
         assert title == "What is apoptosis"
 
+    @pytest.mark.asyncio
+    async def test_requests_low_reasoning_effort(self):
+        # cls.groq_model is a reasoning model whose chain-of-thought counts
+        # against max_tokens — this call's budget (20) is the tightest of
+        # any Groq call in this file, so it's the most exposed to reasoning
+        # tokens silently eating the whole thing before any title is written.
+        factory, instance = _async_groq_completion_mock(content="Some Title")
+        with patch("groq.AsyncGroq", factory):
+            await OllamaConnector.generate_title("what is apoptosis?")
+        assert instance.chat.completions.create.call_args.kwargs["reasoning_effort"] == "low"
+
 
 class TestRewriteQueryWithHistory:
     """rewrite_query_with_history resolves a context-dependent follow-up
@@ -400,6 +411,17 @@ class TestRewriteQueryWithHistory:
         with patch("groq.AsyncGroq", factory):
             rewritten = await OllamaConnector.rewrite_query_with_history(history, "what can block these pathways?")
         assert rewritten == "what can block these pathways?"
+
+    @pytest.mark.asyncio
+    async def test_requests_low_reasoning_effort(self):
+        # cls.groq_model is a reasoning model whose chain-of-thought counts
+        # against max_tokens — same defensive fix as generate_title/
+        # classify_personal_question (see their test comments).
+        factory, instance = _async_groq_completion_mock(content="Rewritten question")
+        history = [("user", "what are the Glioma pathways")]
+        with patch("groq.AsyncGroq", factory):
+            await OllamaConnector.rewrite_query_with_history(history, "what can block these pathways?")
+        assert instance.chat.completions.create.call_args.kwargs["reasoning_effort"] == "low"
 
     @pytest.mark.asyncio
     async def test_history_entries_with_blank_content_are_skipped(self):
@@ -511,4 +533,111 @@ class TestSummarizeConversation:
 
         # Exactly one real closing marker — the injected one is neutralised
         assert sent_prompt.count(_EVIDENCE_END) == 1
-        assert "[filtered]" in sent_prompt
+
+
+class TestClassifyPersonalQuestion:
+    """classify_personal_question decides whether a message is asking
+    CancerBot to recall the user's OWN saved profile data (a deterministic
+    recite-back, see render_profile_recall) rather than a general medical
+    question that needs the literature-search pipeline. See
+    conversations.py's personal-question fast path."""
+
+    @pytest.mark.asyncio
+    async def test_parses_personal_fields(self):
+        factory, _ = _async_groq_completion_mock(
+            content='{"personal_fields": ["cancer_type", "stage"], '
+                    '"has_untracked_personal_ask": false, "has_general_question": false}'
+        )
+        with patch("groq.AsyncGroq", factory):
+            result = await OllamaConnector.classify_personal_question("What's my cancer type and stage?")
+        assert result == {
+            "personal_fields": ["cancer_type", "stage"],
+            "has_untracked_personal_ask": False,
+            "has_general_question": False,
+        }
+
+    @pytest.mark.asyncio
+    async def test_general_question_has_no_personal_fields(self):
+        factory, _ = _async_groq_completion_mock(
+            content='{"personal_fields": [], "has_untracked_personal_ask": false, "has_general_question": true}'
+        )
+        with patch("groq.AsyncGroq", factory):
+            result = await OllamaConnector.classify_personal_question("What is the Warburg effect?")
+        assert result["personal_fields"] == []
+        assert result["has_general_question"] is True
+
+    @pytest.mark.asyncio
+    async def test_untracked_personal_ask_detected(self):
+        factory, _ = _async_groq_completion_mock(
+            content='{"personal_fields": [], "has_untracked_personal_ask": true, "has_general_question": false}'
+        )
+        with patch("groq.AsyncGroq", factory):
+            result = await OllamaConnector.classify_personal_question("How many treatment lines have I had?")
+        assert result["has_untracked_personal_ask"] is True
+
+    @pytest.mark.asyncio
+    async def test_strips_markdown_code_fence_around_json(self):
+        factory, _ = _async_groq_completion_mock(
+            content='```json\n{"personal_fields": ["stage"], "has_untracked_personal_ask": false, '
+                    '"has_general_question": false}\n```'
+        )
+        with patch("groq.AsyncGroq", factory):
+            result = await OllamaConnector.classify_personal_question("What stage am I?")
+        assert result["personal_fields"] == ["stage"]
+
+    @pytest.mark.asyncio
+    async def test_unknown_field_name_is_dropped(self):
+        factory, _ = _async_groq_completion_mock(
+            content='{"personal_fields": ["cancer_type", "not_a_real_field"], '
+                    '"has_untracked_personal_ask": false, "has_general_question": false}'
+        )
+        with patch("groq.AsyncGroq", factory):
+            result = await OllamaConnector.classify_personal_question("What's my cancer type?")
+        assert result["personal_fields"] == ["cancer_type"]
+
+    @pytest.mark.asyncio
+    async def test_empty_text_short_circuits_without_calling_groq(self):
+        factory, instance = _async_groq_completion_mock(content="should not be used")
+        with patch("groq.AsyncGroq", factory):
+            result = await OllamaConnector.classify_personal_question("   ")
+        assert result == {"personal_fields": [], "has_untracked_personal_ask": False, "has_general_question": True}
+        instance.chat.completions.create.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_malformed_json_fails_safe_to_general_question(self):
+        factory, _ = _async_groq_completion_mock(content="not valid json at all")
+        with patch("groq.AsyncGroq", factory):
+            result = await OllamaConnector.classify_personal_question("What's my cancer type?")
+        assert result == {"personal_fields": [], "has_untracked_personal_ask": False, "has_general_question": True}
+
+    @pytest.mark.asyncio
+    async def test_groq_error_fails_safe_to_general_question(self):
+        factory, _ = _async_groq_completion_mock(raises=_rate_limit_exc())
+        with patch("groq.AsyncGroq", factory):
+            result = await OllamaConnector.classify_personal_question("What's my cancer type?")
+        assert result == {"personal_fields": [], "has_untracked_personal_ask": False, "has_general_question": True}
+
+    @pytest.mark.asyncio
+    async def test_empty_content_fails_safe_to_general_question(self):
+        # cls.groq_model is a reasoning model whose chain-of-thought counts
+        # against max_tokens — found live: a multi-step classification
+        # prompt burned the entire budget on reasoning, leaving `content`
+        # empty (finish_reason="length") before any JSON was ever written.
+        # Must degrade to the safe default, not crash on the empty string.
+        factory, _ = _async_groq_completion_mock(content="")
+        with patch("groq.AsyncGroq", factory):
+            result = await OllamaConnector.classify_personal_question("What's my cancer type?")
+        assert result == {"personal_fields": [], "has_untracked_personal_ask": False, "has_general_question": True}
+
+    @pytest.mark.asyncio
+    async def test_requests_low_reasoning_effort(self):
+        # The fix for the failure mode above — keeps the model's reasoning
+        # short enough that it actually reaches the JSON before running out
+        # of budget (verified against the real API, see the comment at the
+        # call site in ollama_connector.py).
+        factory, instance = _async_groq_completion_mock(
+            content='{"personal_fields": [], "has_untracked_personal_ask": false, "has_general_question": true}'
+        )
+        with patch("groq.AsyncGroq", factory):
+            await OllamaConnector.classify_personal_question("What's my cancer type?")
+        assert instance.chat.completions.create.call_args.kwargs["reasoning_effort"] == "low"

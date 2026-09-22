@@ -670,6 +670,10 @@ SUMMARY:
         model=cls.groq_model,
         messages=[{"role": "user", "content": prompt}],
         max_tokens=120,
+        # See classify_personal_question's comment: cls.groq_model's reasoning
+        # tokens count against max_tokens and can exhaust a small budget
+        # before any real output is written. Same defensive fix here.
+        reasoning_effort="low",
       )
       if not completion.choices:
         return text
@@ -681,6 +685,95 @@ SUMMARY:
     except Exception as exc:
       logger.warning("[query_rewrite] unexpected error (%s: %s), using original text", type(exc).__name__, exc)
       return text
+
+  # The exact profile field names this classifier is allowed to name —
+  # kept in lockstep with src.db.repositories.profile.PROFILE_FIELDS (not
+  # imported directly to avoid a backend-repository import inside this
+  # LLM-client class; a mismatch here would only ever under-match, never
+  # leak an invalid field name, since the caller filters against the real
+  # list too).
+  _PERSONAL_QUESTION_FIELDS = ("cancer_type", "stage", "biomarkers", "age_band", "treatment_status")
+
+  @classmethod
+  async def classify_personal_question(cls, text: str) -> dict:
+    """Cheap single-call classification: is this message asking CancerBot
+    to recall the user's OWN saved profile data, rather than asking a
+    general medical question answerable from literature?
+
+    Returns {"personal_fields": [...], "has_untracked_personal_ask": bool,
+    "has_general_question": bool}. Fails safe toward the *existing*
+    behavior on any error or malformed output — has_general_question=True,
+    nothing personal detected — so a classification failure only ever
+    costs a wasted call, never skips a literature search that was needed.
+    Only called when the caller already knows a populated profile exists
+    (see conversations.py) — no point spending this call otherwise.
+    """
+    from groq import GroqError
+
+    text = (text or '').strip()
+    fallback = {"personal_fields": [], "has_untracked_personal_ask": False, "has_general_question": True}
+    if not text:
+      return fallback
+
+    fields_list = ", ".join(cls._PERSONAL_QUESTION_FIELDS)
+    prompt = (
+      "You are classifying one chat message sent to a cancer-information chatbot. "
+      "The user may have a saved profile with these fields: "
+      f"{fields_list}.\n\n"
+      "Decide:\n"
+      "1. Does the message ask the assistant to recall/tell the user THEIR OWN saved "
+      "value for one or more of those exact fields (not a general medical question)?\n"
+      "2. Does the message separately ask about their own personal history/details that "
+      "is NOT one of those five fields (e.g. how many treatment lines they've had, when "
+      "they were diagnosed, who their doctor is)?\n"
+      "3. Does the message also contain a general medical/informational question, "
+      "answerable from medical literature rather than from personal data?\n\n"
+      f'Message: "{text[:500]}"\n\n'
+      "Respond with ONLY a JSON object, no other text, in exactly this shape:\n"
+      '{"personal_fields": [...], "has_untracked_personal_ask": true|false, '
+      '"has_general_question": true|false}\n'
+      "personal_fields must be a subset of "
+      f"{list(cls._PERSONAL_QUESTION_FIELDS)} — empty list if none apply."
+    )
+    try:
+      completion = await cls._get_async_groq().chat.completions.create(
+        model=cls.groq_model,
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=200,
+        # cls.groq_model (openai/gpt-oss-120b) is a reasoning model: its
+        # chain-of-thought lands in a separate `reasoning` field, still
+        # counted against max_tokens, and a multi-step prompt like this
+        # one ("Decide: 1... 2... 3...") can burn the entire budget on
+        # reasoning before ever emitting the JSON into `content` — found
+        # live (empty content, finish_reason="length", 148/150 tokens
+        # spent on reasoning) when this shipped without it.
+        # reasoning_effort="low" keeps reasoning short enough that content
+        # actually gets written; verified against the real API on several
+        # real messages including the one that surfaced this.
+        reasoning_effort="low",
+      )
+      if not completion.choices:
+        return fallback
+      raw = (completion.choices[0].message.content or '').strip()
+      raw = raw.strip('`')
+      if raw.lower().startswith('json'):
+        raw = raw[4:].strip()
+      parsed = json.loads(raw)
+      personal_fields = [
+        f for f in (parsed.get("personal_fields") or [])
+        if f in cls._PERSONAL_QUESTION_FIELDS
+      ]
+      return {
+        "personal_fields": personal_fields,
+        "has_untracked_personal_ask": bool(parsed.get("has_untracked_personal_ask")),
+        "has_general_question": bool(parsed.get("has_general_question", True)),
+      }
+    except GroqError as exc:
+      logger.warning("[personal_question] Groq error (%s: %s), assuming general question", type(exc).__name__, exc)
+      return fallback
+    except Exception as exc:
+      logger.warning("[personal_question] unexpected error (%s: %s), assuming general question", type(exc).__name__, exc)
+      return fallback
 
   @staticmethod
   def _heuristic_title(text: str) -> str:
@@ -714,6 +807,10 @@ SUMMARY:
         model=cls.groq_model,
         messages=[{"role": "user", "content": prompt}],
         max_tokens=20,
+        # See classify_personal_question's comment — this budget is the
+        # tightest of any call here, so it's the most exposed to reasoning
+        # tokens silently eating the whole thing before any title is written.
+        reasoning_effort="low",
       )
       if not completion.choices:
         return fallback

@@ -133,3 +133,57 @@ class TestCascadeOnAccountDeletion:
         delete_user(db_session, test_user.id)
 
         assert db_session.query(UserProfile).filter(UserProfile.user_id == test_user.id).first() is None
+
+
+class TestRenderProfileRecall:
+    """render_profile_recall builds the personal-question fast-path answer
+    directly from saved profile fields — deliberately NOT LLM-generated, so
+    it can never blend a factual recall of "what you told us" with a
+    generated medical claim. See OllamaConnector.classify_personal_question
+    and its use in conversations.py."""
+
+    def test_populated_field_is_recited(self, db_session, test_user):
+        from src.db.repositories.profile import upsert_profile, render_profile_recall
+
+        profile = upsert_profile(db_session, test_user.id, cancer_type="Glioblastoma")
+        text = render_profile_recall(profile, ["cancer_type"])
+        assert "Glioblastoma" in text
+        assert "saved cancer type" in text
+
+    def test_categorical_fields_use_display_labels(self, db_session, test_user):
+        from src.db.repositories.profile import upsert_profile, render_profile_recall
+
+        profile = upsert_profile(
+            db_session, test_user.id, age_band="40_64", treatment_status="in_active_treatment",
+        )
+        text = render_profile_recall(profile, ["age_band", "treatment_status"])
+        assert "40-64" in text
+        assert "in active treatment" in text
+
+    def test_empty_field_says_not_saved(self, db_session, test_user):
+        from src.db.repositories.profile import upsert_profile, render_profile_recall
+
+        profile = upsert_profile(db_session, test_user.id, cancer_type="Glioblastoma")
+        text = render_profile_recall(profile, ["stage"])
+        assert "haven't saved your stage" in text
+        assert "account menu" in text
+
+    def test_none_profile_treated_as_all_empty(self):
+        from src.db.repositories.profile import render_profile_recall
+
+        text = render_profile_recall(None, ["cancer_type"])
+        assert "haven't saved" in text
+
+    def test_untracked_ask_appends_honest_gap_note(self, db_session, test_user):
+        from src.db.repositories.profile import upsert_profile, render_profile_recall
+
+        profile = upsert_profile(db_session, test_user.id, cancer_type="Glioblastoma")
+        text = render_profile_recall(profile, [], has_untracked_ask=True)
+        assert "doesn't track that specific detail" in text
+
+    def test_unknown_field_name_is_ignored(self, db_session, test_user):
+        from src.db.repositories.profile import upsert_profile, render_profile_recall
+
+        profile = upsert_profile(db_session, test_user.id, cancer_type="Glioblastoma")
+        text = render_profile_recall(profile, ["cancer_type", "not_a_real_field"])
+        assert text.count("saved") == 1

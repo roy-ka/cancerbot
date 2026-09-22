@@ -21,7 +21,7 @@ from src.db.repositories.conversations import (
     disable_share,
 )
 from src.routers.auth import _get_frontend_url
-from src.db.repositories.profile import get_profile, render_profile_context
+from src.db.repositories.profile import get_profile, render_profile_context, render_profile_recall, PROFILE_FIELDS
 from src.db.repositories.messeges import (
     add_message,
     add_claims_and_sources,
@@ -156,62 +156,27 @@ def _msg_to_dict(m):
     }
 
 
-async def _process_post_message(
+async def _answer_via_retrieval(
     *,
+    conversation,
     conversation_id: UUID,
     req: Message,
     db: Session,
-    current_user,
-    conversation=None,
-    emit: StageEmitter = _emit_stage_noop,
-    send_token: SendToken = _send_token_noop,
-    hidden_from_user: bool = False,
-):
-    t0 = time.time()
-
-    logging.info(f"[conversation] msg conversation_id={conversation_id} user={current_user.id}")
-
-    await emit('loading_conversation', {'conversation_id': str(conversation_id)})
-
-    if conversation is None:
-        async with timed_stage('load_conversation', conversation_id=str(conversation_id)):
-            conversation = get_conversation_by_id_no_auth(
-                db=db,
-                conversation_id=conversation_id,
-            )
-        if conversation is None:
-            raise HTTPException(status_code=404, detail="Conversation not found")
-        # Ninja intentionally posts into other users' conversations — the
-        # hidden_from_user flag is only ever set by the ninja-only router,
-        # which has already authorized the caller via get_current_ninja_user.
-        if not hidden_from_user and str(conversation.user_id) != str(current_user.id):
-            raise HTTPException(status_code=403, detail="Forbidden")
-
-    # Capture before adding this message — used later to decide whether to
-    # auto-generate a title. A hidden ninja message never counts as "first"
-    # (and never triggers title generation), so ninja activity can't change
-    # what the real user sees in their conversation list.
-    is_first_message = not hidden_from_user and len(conversation.messages) == 0
-
-    await emit('saving_user_message', {})
-
-    try:
-        async with timed_stage('save_user_message', conversation_id=str(conversation_id)):
-            user_message = add_message(
-                db=db,
-                conversation_id=conversation.id,
-                role="user",
-                content=req.content,
-                urls=req.urls,
-                hidden_from_user=hidden_from_user,
-            )
-            db.commit()
-            db.refresh(user_message)
-            db.refresh(conversation)
-    except Exception:
-        db.rollback()
-        raise
-
+    user_message,
+    hidden_from_user: bool,
+    is_first_message: bool,
+    profile_context: str | None,
+    emit: StageEmitter,
+    send_token: SendToken,
+    t0: float,
+) -> tuple[str, str | None, bool, dict]:
+    """The literature-search-and-generate pipeline: search_and_embed ->
+    retrieve_context -> build_prompt/generate_answer. Split out of
+    _process_post_message (body unchanged, just relocated) so the
+    personal-question fast path there can skip this whole thing — a
+    profile-data recall must never share a generation call with a
+    citation-grounded literature answer. Returns (response, model_name,
+    truncated, context) for the caller's shared save/title/done tail."""
     await emit('fallback_triggered', {'reason': 'always_search_external'})
     async with timed_stage('search_and_embed', conversation_id=str(conversation_id)):
         search_meta = await search_and_embed(conversation, emit=emit)
@@ -361,13 +326,6 @@ async def _process_post_message(
             req.content,
         )
 
-    # Ninja's own turn never gets the real user's profile context — it's a
-    # debugging tool, not a stand-in for the conversation owner, and the
-    # ninja principal has no profile row of its own to look up anyway.
-    profile_context = None
-    if not hidden_from_user and conversation.use_profile_context:
-        profile_context = render_profile_context(get_profile(db, current_user.id))
-
     await emit('building_prompt', {'history_messages': len(history)})
     await emit('generating_answer', {})
 
@@ -435,6 +393,115 @@ async def _process_post_message(
     except Exception:
         logging.exception("[analytics] failed to record")
         db.rollback()
+
+    return response, model_name, truncated, context
+
+
+async def _process_post_message(
+    *,
+    conversation_id: UUID,
+    req: Message,
+    db: Session,
+    current_user,
+    conversation=None,
+    emit: StageEmitter = _emit_stage_noop,
+    send_token: SendToken = _send_token_noop,
+    hidden_from_user: bool = False,
+):
+    t0 = time.time()
+
+    logging.info(f"[conversation] msg conversation_id={conversation_id} user={current_user.id}")
+
+    await emit('loading_conversation', {'conversation_id': str(conversation_id)})
+
+    if conversation is None:
+        async with timed_stage('load_conversation', conversation_id=str(conversation_id)):
+            conversation = get_conversation_by_id_no_auth(
+                db=db,
+                conversation_id=conversation_id,
+            )
+        if conversation is None:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        # Ninja intentionally posts into other users' conversations — the
+        # hidden_from_user flag is only ever set by the ninja-only router,
+        # which has already authorized the caller via get_current_ninja_user.
+        if not hidden_from_user and str(conversation.user_id) != str(current_user.id):
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+    # Capture before adding this message — used later to decide whether to
+    # auto-generate a title. A hidden ninja message never counts as "first"
+    # (and never triggers title generation), so ninja activity can't change
+    # what the real user sees in their conversation list.
+    is_first_message = not hidden_from_user and len(conversation.messages) == 0
+
+    await emit('saving_user_message', {})
+
+    try:
+        async with timed_stage('save_user_message', conversation_id=str(conversation_id)):
+            user_message = add_message(
+                db=db,
+                conversation_id=conversation.id,
+                role="user",
+                content=req.content,
+                urls=req.urls,
+                hidden_from_user=hidden_from_user,
+            )
+            db.commit()
+            db.refresh(user_message)
+            db.refresh(conversation)
+    except Exception:
+        db.rollback()
+        raise
+
+    # Personal-question fast path: only worth the extra classification call
+    # when there's a populated profile that could actually answer something
+    # (ninja's own turn never gets this — a debugging tool with no profile
+    # row of its own, same reasoning _answer_via_retrieval's profile_context
+    # already followed). A factual recall of saved profile data is kept
+    # entirely separate from the literature-search/generation pipeline —
+    # see render_profile_recall and OllamaConnector.classify_personal_question
+    # — since blending "what you told us" into the same generation call as a
+    # cited medical answer is exactly the ambiguity that must not happen.
+    profile = None
+    personal_recall_text: str | None = None
+    skip_literature_search = False
+    if not hidden_from_user and conversation.use_profile_context:
+        profile = get_profile(db, current_user.id)
+        if profile and any(getattr(profile, f) for f in PROFILE_FIELDS):
+            async with timed_stage('classify_personal_question', conversation_id=str(conversation_id)):
+                classification = await OllamaConnector.classify_personal_question(req.content)
+            personal_fields = classification.get('personal_fields', [])
+            has_untracked_personal_ask = classification.get('has_untracked_personal_ask', False)
+            has_general_question = classification.get('has_general_question', True)
+            if personal_fields or has_untracked_personal_ask:
+                personal_recall_text = render_profile_recall(profile, personal_fields, has_untracked_personal_ask)
+                skip_literature_search = not has_general_question
+
+    profile_context = render_profile_context(profile) if profile else None
+
+    if skip_literature_search:
+        await emit('answering_from_profile', {})
+        response = personal_recall_text
+        model_name = None
+        truncated = False
+        context = {'sources_ids': []}
+    else:
+        response, model_name, truncated, context = await _answer_via_retrieval(
+            conversation=conversation,
+            conversation_id=conversation_id,
+            req=req,
+            db=db,
+            user_message=user_message,
+            hidden_from_user=hidden_from_user,
+            is_first_message=is_first_message,
+            profile_context=profile_context,
+            emit=emit,
+            send_token=send_token,
+            t0=t0,
+        )
+        if personal_recall_text:
+            response = f"{personal_recall_text}\n\n{response}"
+
     await emit('saving_assistant_message', {})
 
     try:

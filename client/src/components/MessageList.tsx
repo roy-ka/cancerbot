@@ -24,6 +24,7 @@ const getStageMessage = (stage: string): string => {
     found_sources: 'Found sources...',
     embedding_and_indexing_sources: 'Indexing sources...',
     sources_indexed: 'Sources indexed...',
+    answering_from_profile: 'Checking your saved profile...',
   }
   return messages[stage] || stage
 }
