@@ -1,0 +1,10 @@
+# Test-only dependencies for extraction.py — deliberately NOT the full
+# requirements.txt (sentence-transformers/torch, fastapi, axiom-py): those
+# are only needed by app.py's FastAPI shell and the reranker, neither of
+# which extraction.py imports. Keeping this separate keeps CI light for
+# what's actually being tested here.
+pytest
+spacy>=3.7.5,<3.8.0
+numpy>=1.24.0,<2.0.0
+pyspellchecker>=0.8.2
+https://s3-us-west-2.amazonaws.com/ai2-s2-scispacy/releases/v0.5.4/en_core_sci_sm-0.5.4.tar.gz

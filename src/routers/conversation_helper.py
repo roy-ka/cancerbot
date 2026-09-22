@@ -382,7 +382,7 @@ def _url_fetch_to_source(result: dict) -> dict:
 
 
 # Stop words that must never be used as search terms even if NLP mis-tags them.
-# Mirrors STOP_ENTS in nlp_service/app.py plus the fallback extraction stop list.
+# Mirrors STOP_ENTS in nlp_service/extraction.py plus the fallback extraction stop list.
 _TERM_STOP_WORDS: frozenset[str] = frozenset({
     # Common English function words / fallback stop list
     'the', 'and', 'or', 'is', 'are', 'was', 'were', 'be', 'been',

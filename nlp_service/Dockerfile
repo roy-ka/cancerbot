@@ -26,7 +26,7 @@ RUN pip install --no-cache-dir --no-deps scispacy==0.5.5 \
 # start_period, or fail outright with no egress).
 RUN python -c "from sentence_transformers import CrossEncoder; CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')"
 
-COPY app.py synonyms.py .
+COPY app.py extraction.py synonyms.py .
 
 RUN adduser --disabled-password --gecos "" appuser \
  && chown -R appuser:appuser /app
