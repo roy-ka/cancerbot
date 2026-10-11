@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from src.deps.db import get_db
 from src.auth.security import SecurityUtils
 from src.deps.auth import get_current_user, NINJA_SUBJECT_ID
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, Field
 from datetime import timedelta, datetime, timezone
 import re
 import logging
@@ -21,7 +21,7 @@ from src.db.repositories.users import (
     email_variation_is_registered,
 )
 from src.db.repositories.waitlist import create_waitlist_entry
-from src.utils.email_normalize import normalize_email_for_dedup
+from src.utils.email_normalize import LowercaseEmail, normalize_email_for_dedup
 from src.db.repositories.tokens import (
     create_reset_token,
     verify_reset_token,
@@ -106,18 +106,18 @@ PASSWORD_REGEX_PATTERNS = {
 class CreateUserRequest(BaseModel):
     first_name: str = Field(..., min_length=1, max_length=150)
     last_name: str = Field(..., min_length=1, max_length=150)
-    email: EmailStr
+    email: LowercaseEmail
     password: str
     invite_token: str | None = None
 
 class LoginRequest(BaseModel):
-    email: EmailStr
+    email: LowercaseEmail
     password: str
     rememberMe: bool = False
 
 
 class WaitlistRequest(BaseModel):
-    email: EmailStr
+    email: LowercaseEmail
     name: str = Field(..., min_length=1, max_length=150)
 
 
@@ -407,7 +407,7 @@ async def logout(response: Response):
 
 
 class ForgotPasswordRequest(BaseModel):
-    email: EmailStr
+    email: LowercaseEmail
 
 
 class ResetPasswordRequest(BaseModel):
@@ -516,7 +516,7 @@ async def request_email_change(
 
 class SubmitNewEmailRequest(BaseModel):
     token: str
-    new_email: EmailStr
+    new_email: LowercaseEmail
     password: str
 
 
@@ -798,7 +798,7 @@ async def verify_email(token: str = Query(...), db: Session = Depends(get_db)):
 
 
 class ResendVerificationRequest(BaseModel):
-    email: EmailStr
+    email: LowercaseEmail
 
 
 @router.post("/resend-verification/")

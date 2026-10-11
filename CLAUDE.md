@@ -26,7 +26,9 @@ loads pandas + numpy into every backend and worker process.
 
 ## Email Templates
 
-The active provider is Brevo. Email bodies are version-controlled HTML in this repo, not opaque provider-dashboard IDs: `src/utils/email_templates.py`'s `TEMPLATES` dict holds `{subject, html}` per key, rendered via `render(template_key, **fields)` (`str.format()` placeholders — `name` is HTML-escaped since it's the only field that ever carries user text). `src/utils/email_brevo.py` calls `render()` and POSTs the result to Brevo's API. Add a new email by adding a `_..._HTML` template string and a `TEMPLATES[...]` entry there — never hardcode HTML inline elsewhere.
+The active provider is Brevo. Email bodies are version-controlled HTML in this repo, not opaque provider-dashboard IDs: the `src/utils/email_templates/` package has one module per email, and its `__init__.py`'s `TEMPLATES` dict maps each key to `{subject, html}`, rendered via `render(template_key, **fields)` (`str.format()` placeholders — `name` is HTML-escaped since it's the only field that ever carries user text). `src/utils/email_brevo.py` calls `render()` and POSTs the result to Brevo's API. Add a new email by adding a template module and a `TEMPLATES[...]` entry there — never hardcode HTML inline elsewhere.
+
+Admin-facing mail (the daily/weekly digests and the Groq→Gemini fallback alert) goes to every address in `ADMIN_DIGEST_EMAILS`; unset means those are skipped. Never hardcode a recipient address in code.
 
 SendGrid is dormant (kept only in case it's ever reinstated): `_send_sendgrid`/`SENDGRID_EMAIL_TEMPLATES` in `src/utils/email.py` are commented out and unused by any live sender.
 
@@ -37,27 +39,15 @@ Every new `.env` entry must also be added to:
 - `tests/conftest.py` — add a `os.environ.setdefault("VAR", "test-value")` line so tests don't fail in CI due to missing env vars; use a safe dummy value (never a real secret)
 - `.github/workflows/test.yml` — add the var under the `env:` section of the `test` job; use the same safe dummy value as conftest
 
-After committing, explicitly remind the user to update their `.env` with the new variable.
-
-## Planning Before Coding
-
-Before editing any file or writing any code, present the user with a clear plan:
-- Which files will change and why
-- The approach / key decisions
-- Any trade-offs or open questions
-
-Wait for the user to confirm the plan before proceeding. Do not start coding until approval is given.
-
 ## Code Review Workflow
 
 **Before committing changes, always:**
 
-1. **Ask** - Ask the user for explicit confirmation before creating any commit. Wait for a clear "yes" or "commit". This is a ground rule — it cannot be relaxed or skipped without the user's explicit written approval including a timestamp of when the exception was granted.
-2. **Review** - Examine all changed code for correctness, then improve it (remove dead code, simplify logic, fix style)
-3. **Fix Security** - Check for vulnerabilities (SQL injection, XSS, command injection, etc.)
-4. **Test** - Run the test suite and confirm it passes before committing
-5. **Verify** - Test changes work as intended (TypeScript/Python compilation, runtime behavior)
-6. **Ask before push** - After committing, ask the user before pushing to remote (`git push`)
+1. **Review** - Examine all changed code for correctness, then improve it (remove dead code, simplify logic, fix style)
+2. **Fix Security** - Check for vulnerabilities (SQL injection, XSS, command injection, etc.)
+3. **Test** - Run the test suite and confirm it passes before committing
+4. **Verify** - Test changes work as intended (TypeScript/Python compilation, runtime behavior)
+5. **Docs** - If the change affects setup, env vars, commands, services, ports, or architecture, update `README.md` (and this file) in the same change
 
 ```bash
 # Run tests
@@ -66,6 +56,8 @@ pytest tests/test_auth.py     # single file
 ```
 
 This applies to all commits: features, bug fixes, refactoring, migrations, etc.
+
+Contributors may keep personal workflow rules in an untracked `CLAUDE.local.md` (gitignored).
 
 ## Test Coverage Requirements
 
@@ -104,19 +96,17 @@ npm run lint      # ESLint
 ```bash
 docker-compose up --build
 # Default profile starts: OpenSearch cluster (2 nodes on 9200), Dashboards (5601),
-#   Ollama (11434), PostgreSQL (5432)
-# The FastAPI backend is only included in the 'prod' profile:
+#   PostgreSQL (5432), NLP service (8100)
+# The backend, arq worker and Redis are only included in the 'prod' profile:
 docker-compose --profile prod up --build
-# The Vite frontend is always run separately (not in Docker)
+# Ollama is NOT in docker-compose — it runs natively on the host (Metal GPU on
+# Mac); containers reach it via the host. The Vite frontend always runs separately.
 ```
 
 ### Data Pipeline
-```bash
-python -m src.embedding      # Embed documents into OpenSearch via Ollama
-```
+The corpus builds itself: every chat message fetches fresh PubMed/CrossRef/Wikipedia/ClinicalTrials.gov results live (`src/routers/conversation_helper.py`) and indexes them, so a new deployment starts with an empty index and grows with use. There is no offline enrichment step.
 
-Abstract fetching (PubMed/CrossRef/Wikipedia/ClinicalTrials.gov) happens live per-query via `src/routers/conversation_helper.py`
-during the chat flow — there is no longer a standalone offline enrichment script.
+`python -m src.embedding` is a legacy bulk loader for the original curated corpus; it reads `data/*.jsonl` files that are not part of this repository.
 
 ### Backup / Restore
 ```bash
@@ -180,9 +170,9 @@ find nothing to do; run it by hand if the corpus has grown since.
 | OpenSearch node 2 | Docker | — | Same cluster |
 | OpenSearch Dashboards | Docker | 5601 | |
 | PostgreSQL | Docker | 5432 | |
-| Ollama | Docker | 11434 | |
-| NLP microservice | `nlp_service/` | 8100 | Docker only with `prod` profile |
-| Redis | Docker | 6379 | arq job queue — see Background Jobs below |
+| Ollama | Native on host | 11434 | Embeddings only; not in docker-compose |
+| NLP microservice | `nlp_service/` | 8100 | Docker, default profile |
+| Redis | Docker | 6379 | `prod` profile only; arq job queue — see Background Jobs below |
 | arq worker | `src/worker.py` | — | Docker only with `prod` profile, no exposed port |
 
 **Port binding**: only the backend (8000) is published on `0.0.0.0`. OpenSearch
@@ -204,7 +194,7 @@ Frontend first calls `POST /conversations/create/` (lightweight DB-only, returns
 4. **External search** runs in parallel: PubMed (10 results), CrossRef (10 results), Wikipedia (3 results), ClinicalTrials.gov (3 results) queried using NLP-extracted terms (`src/routers/conversation_helper.py`). Wikipedia uses the search API first and picks the most oncology-relevant page from candidates. ClinicalTrials.gov hits the v2 REST API directly (not `pytrials`) and is filtered to `overallStatus=COMPLETED` — this is the *evidence* use case (grounding answers in trial findings); the opt-in *participation* feature (recruiting trials by country/city) is separate and client-side only, see `client/src/components/FindTrialsDialog.tsx`. PubMed and ClinicalTrials share the AND-of-OR-groups boolean query builder (`_build_boolean_term_query`).
 5. New external sources are embedded via Ollama (`nomic-embed-text`) and indexed into OpenSearch `sources_index` as **150-word chunks with 40-word overlap**. Each chunk gets `id={base_id}:c{n}`, `source_id={base_id}`, `chunk_index`, `full_text` (original), and `tags` (search terms that retrieved it). Dedup is by `source_id` — if any chunk of a base ID exists, the whole source is skipped. Every chunk in the batch is embedded via `OllamaConnector.embed_texts` (batched, `_EMBED_BATCH_SIZE` per request) and written with a single `dbConnector.bulk_index_to_db` call that refreshes **once** at the end. Do not go back to `embed_text` + `index_to_db(refresh=True)` per chunk here: that was one Ollama round trip and one forced Lucene segment flush per chunk, i.e. dozens of each per chat message. The trailing refresh is what keeps the freshly indexed chunks visible to the retrieval query that runs immediately after.
 6. External search results are recorded in `external_search_results` table
-7. `src/retrieval/__init__.py:run_retrieval` runs the hybrid search in `search.py:search_sources` on `sources_index`. The dense and lexical halves are issued as **two separate ranked lists in one `msearch`** and combined with **Reciprocal Rank Fusion**; each list is deduped to one chunk per `source_id`, and the fused list is deduped again across sources by DOI. Rather than a fixed top-5, it returns **every fused source whose best chunk clears a cosine-similarity floor (`MIN_COSINE`), capped at `MAX_RESULTS`** — so the count tracks how much the corpus actually covers the query (see the Retrieval section). `run_retrieval` embeds the **natural question** for the dense half while passing the **representative terms** as the lexical query. It runs inline in the caller's worker thread — no separate executor
+7. `src/retrieval/__init__.py:run_retrieval` runs the hybrid search in `search.py:search_sources` on `sources_index`. The dense and lexical halves are issued as **two separate ranked lists in one `msearch`** and combined with **Reciprocal Rank Fusion**; each list is deduped to one chunk per `source_id`, and the fused list is deduped again across sources by DOI. Rather than a fixed top-5, it returns **every fused source whose best chunk clears a cosine-similarity floor (`MIN_COSINE`), capped at `MAX_RESULTS`** — so the count tracks how much the corpus actually covers the query (see the Retrieval section). `run_retrieval` embeds the **natural question** for the dense half while passing the **representative terms** as the lexical query. The gated list is then reordered (never filtered) by a cross-encoder via the NLP service's `/rerank` (`_rerank_sources`; `RERANK_ENABLED=false` turns it off, and any reranker error falls back to RRF order). It runs inline in the caller's worker thread — no separate executor
 8. Search analytics recorded in `search_analytics` table
 9. `src/classes/ollama_connector.py` builds a prompt with history + context (cited as `[source1]`, `[source2]`, ...) and calls Groq chat completions (`GROQ_MODEL_NAME`). On `groq.GroqError`, falls back to Gemini (`GEMINI_FALLBACK_MODEL`).
 10. Post-processing replaces `[source1]` aliases with stable base IDs (`pmid:xxx`, `doi:xxx`, `nct:NCTxxx`, `url:<sha1>`) — the `:cN` chunk suffix is stripped before aliases are built
@@ -290,16 +280,16 @@ puts one query per assistant message on every conversation open.
 Deliberate current state and where it's weak, roughly highest-impact first.
 
 1. **No `nomic-embed-text` task prefixes.** `OllamaConnector.embed_text`/`embed_texts` send raw text; nomic is trained to expect `search_document:` on indexed chunks and `search_query:` on queries, and omitting them measurably hurts retrieval. Adopting this means **re-embedding the whole corpus** (doc/query prefixes must match) — do it as a versioned reindex, not in place. This is the largest remaining win and the only one gated on a reindex.
-2. **No reranking.** The cosine-gated fused sources (up to `MAX_RESULTS`) go straight to the LLM. Retrieving wider then reranking is the standard precision upgrade, but both routes have a cost here: a cross-encoder pulls a torch-sized dependency into an image the Dependencies section deliberately keeps lean, and an LLM-judge pass adds a Groq round trip to every message. Note the cosine floor is a *relevance gate*, not a reranker — it prunes off-topic sources but doesn't reorder the ones it keeps.
+2. **Reranking only reorders what the cosine gate already kept.** A cross-encoder (`cross-encoder/ms-marco-MiniLM-L-6-v2`, hosted in `nlp-service` so torch stays out of the backend image) reorders the gated sources, but retrieval doesn't yet fetch *wider* than `MAX_RESULTS` before reranking — the standard precision upgrade. Doing so means more candidates per cross-encoder call, so measure latency first.
 3. **No offline evaluation set.** Boost weights, `RRF_K`, and the question-vs-terms split are all unmeasured heuristics — there is no golden query set, so retrieval changes are argued rather than measured. `search_analytics` now records usable scores (see Retrieval), which is the raw material for building one.
 4. **`claims_index` is created + embedded on every startup but never queried.** Either use claims in retrieval or stop maintaining the index.
 5. **Chunking is blind fixed-window (150w/40w overlap).** Fine for abstracts (which rarely chunk), but splits trial records and OA full-text mid-sentence; sentence/section-aware chunking would help the longer sources.
 
 **Addressed** (kept here so the reasoning isn't rediscovered): score normalization in `calculate_search_metrics`, additive score blending replaced by RRF, the dense clause now embedding the natural question rather than the joined terms, and cross-source `pmid:`/`doi:` duplicates — all four are described in the Retrieval section. Note the DOI dedup is **preventive**: when it landed, a scan of the live index found 371 sources, 299 distinct DOIs, and *zero* DOIs reachable under more than one `source_id`, so PubMed and CrossRef had not in fact overlapped yet at that corpus size. This is a *retrieval-time* dedup (never hand the LLM the same paper twice) — it doesn't stop the same paper from being *indexed* twice in the first place. That's a separate, later fix: `existing_doi_base_ids` (`db_connector.py`), called from `_embed_and_index_sources` (`conversation_helper.py`) — see the "Data Migrations" section above for the one-off cleanup script (`remove_duplicate_doi_sources.py`) for anything indexed twice before this landed.
 
-### Data Files (`data/`)
+### Data Files (`data/`, not in the repository)
+Used only by the legacy `src/embedding.py` loader; the live chat flow never reads them.
 - `sources_canonical.jsonl` — deduplicated sources (merged by PMID > DOI > URL > title)
-- `sources_for_embedding.jsonl` — derived from canonical, includes `content_for_embedding` field
 - `claims_canonical.jsonl` — structured protocol claims with scoring
 
 ### Database Models (`src/db/models.py`)
@@ -318,66 +308,24 @@ Deliberate current state and where it's weak, roughly highest-impact first.
 | `WaitlistEntry` | `waitlist_entries` | Emails collected when registration is full (`MAX_USERS`) — see Auth section |
 
 ### Key Environment Variables (`.env`)
-```
-# OpenSearch
-OPENSEARCH_URL=https://localhost:9200
-OPENSEARCH_INITIAL_ADMIN_PASSWORD=...
-
-# Ollama (embeddings only)
-OLLAMA_URL=http://localhost:11434       # dev; set to http://ollama:11434 in Docker prod
-EMBED_MODEL_NAME=nomic-embed-text
-OLLAMA_CONTEXT_ITEMS=10                # max context sources sent to LLM (matches MAX_RESULTS in search.py)
-
-# NLP microservice
-NLP_SERVICE_URL=http://localhost:8100  # http://nlp-service:8100 in Docker prod
-OLLAMA_EVIDENCE_CHARS=900              # max chars per evidence chunk
-
-# Groq (text generation)
-GROQ_API_KEY=...
-GROQ_MODEL_NAME=openai/gpt-oss-120b    # required — do NOT wrap in quotes
-GROQ_MAX_TOKENS=1024                   # max tokens to generate
-
-# PostgreSQL
-POSTGRES_USER=cancerbot
-POSTGRES_DB=cancerbot
-POSTGRES_PASSWORD=...
-POSTGRES_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:5432/${POSTGRES_DB}
-DOCKER_POSTGRES_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-
-# App
-JWT_SECRET=...
-JWT_ALGORITHM=HS256
-ACCESS_TOKEN_EXPIRE_MINUTES=60000
-CORS_ORIGINS=http://localhost:5173     # comma-separated for multiple origins
-PROMPT_MAX_HISTORY=12                  # Conversation turns included in prompt
-MAX_USERS=                             # Cap on total registered users; blank/unset = no cap (see Auth section)
-ENV=development                        # set to 'production' in prod
-
-# Ninja (privileged admin account — see "Ninja account" below; unset = no ninja user created)
-NINJA_EMAIL=...
-NINJA_PASSWORD=...
-
-# Email (SendGrid) — required for password reset
-SENDGRID_API_KEY=...
-EMAIL_FROM=noreply@example.com
-EMAIL_FROM_NAME=CancerBot
-
-# Backups — optional S3 upload
-BACKUP_S3_BUCKET=...
-
-# Gemini (fallback LLM when Groq is unavailable)
-GEMINI_API_KEY=...
-GEMINI_FALLBACK_MODEL=gemini-2.5-flash
-
-# Optional integrations
-UNPAYWALL_EMAIL=
-```
+`example.env` is the source of truth — every variable, with a comment and a safe placeholder. The non-obvious ones:
+- `ENV` — **required**; `src/main.py` refuses to start without it. Anything other than `production` makes token-issuing endpoints return the raw token in the response (for E2E automation), so a real deployment must set `ENV=production`.
+- `JWT_SECRET` — required, ≥ 32 characters (checked at import in `src/auth/security.py`). The algorithm is hardcoded to HS256.
+- `GROQ_MODEL_NAME` — do **not** wrap in quotes. `openai/gpt-oss-120b` is a reasoning model whose hidden reasoning counts against `max_tokens`; short utility calls pass `reasoning_effort="low"` for that reason (see `ollama_connector.py`).
+- `OLLAMA_CONTEXT_ITEMS` — must stay ≥ `MAX_RESULTS` in `search.py` (see Retrieval).
+- `FRONTEND_URL` — origin used in every emailed link; falls back to the production domain when unset.
+- `CORS_ORIGINS` — comma-separated; `*` refuses to start in production.
+- `ADMIN_DIGEST_EMAILS` — comma-separated recipients for admin digests and the LLM fallback alert; unset = those emails are skipped.
+- `NINJA_EMAIL` / `NINJA_PASSWORD` — the admin principal (see "Ninja account" below); unset = no admin login.
+- `BREVO_API_KEY` — outbound email. Outside production nothing is sent; emails are only logged.
+- `RERANK_ENABLED` — `false` skips the cross-encoder rerank without a redeploy.
 
 ### Auth
 JWT tokens (HS256) accepted via `Authorization: Bearer <token>` header or `access_token` cookie. Dependency: `Depends(get_current_user)` in `src/deps/auth.py`.
 - **JWT revocation**: tokens carry a `tv` (token version) claim. `User.token_version` is incremented on password reset; tokens with a mismatched `tv` are rejected with 401.
-- **Rate limiting**: login uses `LoginAttempt` (5 failures → 15 min lockout); register uses per-IP limit (10/h); forgot-password uses per-email limit (5/h) — both via `RateLimitEntry`.
-- **Password reset**: time-limited codes via SendGrid email.
+- **Rate limiting**: login uses `LoginAttempt` (5 failures → 30 min lockout); register uses per-IP limit (10/h); forgot-password uses per-email limit (5/h) — both via `RateLimitEntry`.
+- **Emails are case-insensitive**: every auth request model uses `LowercaseEmail` (`src/utils/email_normalize.py`), and `create_user`/`get_user_by_email` lowercase too, so `users.email` is always stored lowercase (migration `lowercase_user_emails_001` converted existing rows). This also matters for lockout: the `LoginAttempt` key is the submitted email, so case variants must not each get their own attempt budget.
+- **Password reset**: time-limited, single-use links (only the token's SHA-256 is stored), emailed via Brevo.
 - **Constant-cost login**: `/auth/login/` always performs one `verify_password`, falling back to `_get_dummy_hash()` when the email is unknown. Do not restore the `not user or not verify_password(...)` short-circuit — skipping a 600k-round pbkdf2 for unregistered addresses makes account existence measurable from response latency.
 - **`/auth/register/` still discloses whether an email is registered** (400 "Email already registered"). Left deliberate: a generic response needs a "someone tried to register" mail flow, loses a genuinely useful error, and `e2e/global-teardown.ts` depends on it.
 - **Stale throttling rows** are pruned every 6h by `src/jobs/auth_cleanup.py`. Both `login_attempts` and `rate_limit_entries` are keyed by attacker-supplied values (any submitted email, any client IP), so they have no natural bound. The sweep never deletes a row whose lock/block is still in the future.
@@ -444,6 +392,9 @@ verification.
 `src/nlp/__init__.py` is a thin HTTP client that calls the **NLP microservice** (`nlp_service/`) over HTTP. The microservice runs scispaCy (`en_core_sci_sm`) + SpellChecker in a separate Docker container (`nlp-service`, port 8100). URL configured via `NLP_SERVICE_URL` env var (default `http://localhost:8100`).
 - `extract_terms(text)` → `POST /extract` — entity extraction + abbreviation expansion + MeSH synonym lookup (`nlp_service/synonyms.py`); returns merged term list
 - `correct_spelling(text)` → `POST /spelling/correct` — spell correction with protected medical terms
+- `rerank(question, documents)` → `POST /rerank` — cross-encoder relevance scores; returns `None` on failure so retrieval keeps RRF order
+
+The spaCy/scispaCy logic lives in `nlp_service/extraction.py` (tested by `nlp_service/test_extraction.py` against the real model); `nlp_service/app.py` is the thin FastAPI shell plus the reranker.
 - `load_models()` — no-op; logs the service URL at startup
 
 ### Background Jobs (arq)
@@ -477,7 +428,7 @@ every `URL_CLASSIFIER_POLL_INTERVAL` seconds) — both are gone.
 - `ninja.py` — admin-only routes gated by `get_current_ninja_user` (`src/deps/auth.py`); see "Ninja account" below
 
 ### Ninja account
-A single privileged `User` row (`is_ninja=True`), created idempotently on startup from `NINJA_EMAIL`/`NINJA_PASSWORD` env vars (`src/main.py:_ensure_ninja_user`) — no-op if either is unset. Logs in through the normal `/auth/login/` endpoint, but its JWT is always capped at 2 hours regardless of `rememberMe` or the dev-only long-expiry override.
+A single privileged admin principal that is **not a `users` row** — its credentials live only in the `NINJA_EMAIL`/`NINJA_PASSWORD` env vars (unset = no ninja login). It logs in through the normal `/auth/login/` endpoint (`_ninja_login` in `src/routers/auth.py`, constant-time password compare, same per-email lockout as real accounts) and gets a JWT carrying `is_ninja: true` and the sentinel subject `NINJA_SUBJECT_ID`, always capped at 2 hours regardless of `rememberMe` or the dev-only long-expiry override. `/ninja/*` routes are gated by `get_current_ninja_user` (`src/deps/auth.py`), which checks that claim without a database lookup; the sentinel subject can never match a real user, so a ninja token is rejected by every regular `get_current_user` route.
 
 Ninja can browse every user (`GET /ninja/users/`), open any of their conversations (`GET /ninja/users/{id}/conversations/`, `GET /ninja/conversations/{id}/messages/` — the latter includes previously-hidden ninja exchanges for continuity), and post a message into someone else's conversation (`POST /ninja/conversations/{id}/add_message`). That message runs through the exact same search/retrieval/LLM pipeline as a real user message, but both the question and answer are persisted with `Message.hidden_from_user=True`.
 

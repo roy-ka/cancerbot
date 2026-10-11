@@ -408,6 +408,22 @@ class TestAddMessage:
         )
         assert response.status_code == 403
 
+    def test_add_message_conversation_query_param_cannot_skip_ownership_check(self, client, db_session):
+        """`conversation` used to be a plain route parameter, which FastAPI
+        exposed as a client-settable query param — any truthy value skipped
+        the lookup and the ownership check entirely."""
+        import uuid
+        from src.db.repositories.conversations import create_conversation
+
+        conv = create_conversation(db_session, user_id=uuid.uuid4(), title="Other user's conv")
+        db_session.commit()
+
+        response = client.post(
+            f"/conversations/{conv.id}/add_message?conversation=anything",
+            json={"content": "Trying to access another user's conversation"},
+        )
+        assert response.status_code == 403
+
     @patch("src.routers.conversations.run_retrieval")
     def test_add_message_returns_conversation_metadata(self, mock_retrieval, client, test_conversation):
         mock_retrieval.return_value = {"generation_context": "apoptosis info", "intent": "concept"}

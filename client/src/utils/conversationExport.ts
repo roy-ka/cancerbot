@@ -14,7 +14,10 @@ function sourceHref(source: Source): string | null {
   if (id.startsWith('doi:')) return `https://doi.org/${id.slice(4)}`
   if (id.startsWith('nct:')) return `https://clinicaltrials.gov/study/${id.slice(4)}`
 
-  return source.url || null
+  // Never fall back to a non-http(s) url: source urls can originate from
+  // user-submitted links, and a javascript: href in the exported document
+  // would run in the app's origin.
+  return null
 }
 
 /** "pmid:12345 — Paper title" — the bare name/title alone doesn't say which
@@ -83,7 +86,12 @@ export function downloadMarkdown(filename: string, content: string): void {
 }
 
 function escapeHtml(text: string): string {
-  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
 }
 
 // Matches a citation token like [pmid:12345] — mirrors MessageItem.tsx's
@@ -101,7 +109,7 @@ function linkifyCitations(escapedContent: string, sources: Source[]): string {
     const source = byId.get(id)
     if (!source) return fullMatch
     const href = sourceHref(source)
-    return href ? `<a href="${href}">${fullMatch}</a>` : fullMatch
+    return href ? `<a href="${escapeHtml(href)}">${fullMatch}</a>` : fullMatch
   })
 }
 
@@ -128,7 +136,7 @@ export function conversationToPrintHtml(title: string, messages: Message[]): str
           .map((source) => {
             const href = sourceHref(source)
             const label = escapeHtml(sourceLabel(source))
-            return href ? `<li><a href="${href}">${label}</a></li>` : `<li>${label}</li>`
+            return href ? `<li><a href="${escapeHtml(href)}">${label}</a></li>` : `<li>${label}</li>`
           })
           .join('')}</ul>`
 

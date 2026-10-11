@@ -22,7 +22,7 @@ cd cancerbot-private
 ### 2. Configure environment variables
 
 ```bash
-cp .env.example .env
+cp example.env .env
 # Edit .env with your values
 nano .env
 ```

@@ -1,8 +1,6 @@
 # --- Environment / secrets ---
 .env
 .env.*
-!.env.example
-!.example.env
 !example.env
 nlp_service/.env
 client/.env
@@ -57,3 +55,9 @@ Thumbs.db
 
 # --- Local runtime files ---
 pyvenv.cfg
+
+# --- Personal notes / local agent config (not part of the public repo) ---
+TODO.md
+memory/
+CLAUDE.local.md
+*.code-workspace

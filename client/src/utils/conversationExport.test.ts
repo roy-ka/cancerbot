@@ -168,6 +168,31 @@ describe('conversationToPrintHtml', () => {
     expect(html).not.toContain('<a href')
   })
 
+  it('cannot break out of an href attribute via a quote in a source url', () => {
+    const html = conversationToPrintHtml('My Chat', [
+      message({
+        role: 'assistant',
+        content: 'See [url:x].',
+        sources: [source({ id: 'url:x', url: 'https://evil.example/"><img src=x onerror=alert(1)>', name: 'Evil' })],
+      }),
+    ])
+    expect(html).not.toContain('<img src=x')
+    expect(html).not.toContain('onerror=alert(1)>')
+    expect(html).toContain('&quot;&gt;&lt;img')
+  })
+
+  it('never emits a non-http(s) source url as a link', () => {
+    const html = conversationToPrintHtml('My Chat', [
+      message({
+        role: 'assistant',
+        content: 'See [url:y].',
+        sources: [source({ id: 'url:y', url: 'javascript:alert(1)', name: 'Bad' })],
+      }),
+    ])
+    expect(html).not.toContain('javascript:')
+    expect(html).not.toContain('<a href')
+  })
+
   it('produces a full, well-formed HTML document', () => {
     const html = conversationToPrintHtml('My Chat', [message()])
     expect(html).toContain('<!DOCTYPE html>')

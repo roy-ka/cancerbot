@@ -6,7 +6,7 @@ def create_user(db, first_name, last_name, email, password_hash):
   new_user = User(
     first_name=first_name,
     last_name=last_name,
-    email=email,
+    email=email.lower(),
     password_hash=password_hash
   )
   db.add(new_user)
@@ -14,7 +14,8 @@ def create_user(db, first_name, last_name, email, password_hash):
   return new_user
 
 def get_user_by_email(db, email):
-  return db.query(User).filter(User.email == email).first()
+  # Stored emails are always lowercase (see migration lowercase_user_emails_001).
+  return db.query(User).filter(User.email == email.lower()).first()
 
 def get_user_by_id(db, user_id):
   return db.query(User).filter(User.id == user_id).first()

@@ -40,7 +40,7 @@ cd cancerbot
 sudo chown -R $USER:$USER .
 
 # Create .env
-cp .env.example .env
+cp example.env .env
 nano .env  # Fill in all values (see below)
 ```
 

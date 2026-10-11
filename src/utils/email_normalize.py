@@ -1,10 +1,22 @@
-"""Canonical email form used for duplicate detection only.
+"""Email normalization.
 
-Never use the output of this for actually sending mail — a provider may
-treat the un-stripped form as a distinct, real inbox. This exists purely so
-"john.doe+promo@gmail.com" and "johndoe@gmail.com" are recognized as the
-same person when checking for existing waitlist/account entries.
+`LowercaseEmail` is the form every account email is stored and looked up
+in. `normalize_email_for_dedup` is a much more aggressive canonical form used
+for duplicate detection only — never use its output for actually sending
+mail, since a provider may treat the un-stripped form as a distinct, real
+inbox. It exists purely so "john.doe+promo@gmail.com" and
+"johndoe@gmail.com" are recognized as the same person when checking for
+existing waitlist/account entries.
 """
+from typing import Annotated
+
+from pydantic import AfterValidator, EmailStr
+
+# EmailStr only lowercases the domain. Lowercasing the local part too makes
+# "John@x.com" and "john@x.com" one account — and, since login lockout and
+# rate-limit keys are built from the submitted email, stops case variants
+# from each getting their own fresh attempt budget.
+LowercaseEmail = Annotated[EmailStr, AfterValidator(str.lower)]
 
 _GMAIL_DOMAINS = {"gmail.com", "googlemail.com"}
 

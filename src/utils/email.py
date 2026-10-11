@@ -75,8 +75,6 @@ def _redact_payload(template_data: dict) -> dict:
 #     "delete_account_scheduled": "d-336a3518ba8140cd9b5689f1aab52a94",
 # }
 
-_FALLBACK_ALERT_TO = "roykazaz@gmail.com"
-
 
 def _send_sendgrid(
     to: str,
@@ -168,8 +166,15 @@ async def send_fallback_alert(model: str) -> bool:
     src/classes/ollama_connector.py's Groq-failure path) rather than
     called inline — it previously spawned its own background thread here
     to avoid blocking the streaming response; now the queue does that job.
+
+    Goes to the same ADMIN_DIGEST_EMAILS list as the digests; a no-op
+    returning False when that's unset.
     """
-    return await _deliver(_FALLBACK_ALERT_TO, "fallback_alert", {"model": model})
+    delivered = False
+    for to in _admin_digest_recipients():
+        if await _deliver(to, "fallback_alert", {"model": model}):
+            delivered = True
+    return delivered
 
 
 def _admin_digest_recipients() -> list[str]:

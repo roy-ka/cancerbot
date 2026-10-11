@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from src.deps.db import get_db
 from src.db import sql
@@ -40,8 +41,11 @@ async def health_check(db: Session = Depends(get_db)):
         overall_ok = False
 
     status_code = 200 if overall_ok else 503
-    return {
-        "status": "ok" if overall_ok else "degraded",
-        "checks": checks,
-        "status_code": status_code,
-    }
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "status": "ok" if overall_ok else "degraded",
+            "checks": checks,
+            "status_code": status_code,
+        },
+    )

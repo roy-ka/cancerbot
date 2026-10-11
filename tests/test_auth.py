@@ -429,6 +429,49 @@ class TestResendVerification:
         assert unknown.json() == verified.json() == {"ok": True}
 
 
+class TestEmailCaseInsensitivity:
+    """Emails are stored and matched lowercase — the local part included,
+    which EmailStr alone leaves untouched."""
+
+    def test_register_stores_email_lowercase(self, anon_client, db_session):
+        response = anon_client.post(
+            "/auth/register/",
+            json={"first_name": "Mixed", "last_name": "Case",
+                  "email": "Mixed.Case@Example.com", "password": "SecurePass123!"},
+        )
+        assert response.status_code == 201
+        assert response.json()["email"] == "mixed.case@example.com"
+
+    def test_register_rejects_case_variant_of_existing_email(self, anon_client, test_user):
+        response = anon_client.post(
+            "/auth/register/",
+            json={"first_name": "Dup", "last_name": "User",
+                  "email": test_user.email.upper(), "password": "SecurePass123!"},
+        )
+        assert response.status_code == 400
+        assert response.json()["detail"] == "Email already registered"
+
+    def test_login_with_different_case_succeeds(self, anon_client, test_user):
+        response = anon_client.post(
+            "/auth/login/",
+            json={"email": "TestUser@Example.COM", "password": "TestPass123!", "rememberMe": False},
+        )
+        assert response.status_code == 200
+
+    def test_case_variants_share_one_lockout_counter(self, anon_client, test_user):
+        variants = ["testuser@example.com", "TestUser@example.com", "TESTUSER@example.com",
+                    "testUser@example.com", "Testuser@example.com"]
+        for email in variants:
+            response = anon_client.post(
+                "/auth/login/", json={"email": email, "password": "WrongPassword", "rememberMe": False},
+            )
+        assert response.status_code == 429
+
+    def test_repository_lookup_is_case_insensitive(self, db_session, test_user):
+        from src.db.repositories.users import get_user_by_email
+        assert get_user_by_email(db_session, "TESTUSER@EXAMPLE.COM").id == test_user.id
+
+
 class TestLogin:
     def test_login_success_returns_token_and_sets_cookie(self, anon_client, test_user):
         response = anon_client.post(
