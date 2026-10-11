@@ -3,6 +3,10 @@ import os
 os.environ.setdefault("JWT_SECRET", "test-secret-key-not-for-production")
 os.environ.setdefault("EMBED_MODEL_NAME", "nomic-embed-text")
 os.environ.setdefault("GROQ_MODEL_NAME", "openai/gpt-oss-120b")
+# A missing key makes OllamaConnector skip Groq entirely; tests mock
+# groq.AsyncGroq, so any non-empty dummy works (and keeps a real key from a
+# local .env out of the test run).
+os.environ.setdefault("GROQ_API_KEY", "test-groq-key-not-real")
 os.environ["ENV"] = "test"
 os.environ["AXIOM_TOKEN_WRITE"] = ""  # disable Axiom logging during tests
 os.environ["AXIOM_TOKEN_READ"] = ""
@@ -19,6 +23,10 @@ os.environ.setdefault("MAX_USERS", "")  # blank = no registration cap, matching 
 # Forced, not setdefault: a developer's local .env may enable it, and the
 # suite exercises the real verification/reset email flows.
 os.environ["DEV_EMAIL_SHORTCUTS"] = "false"
+# Forced blank for the same reason: a local .env may point generation at a
+# real Ollama model, and tests must never call it. Tests that cover the
+# Ollama path set it themselves.
+os.environ["OLLAMA_GEN_MODEL"] = ""
 # Off by default so existing retrieval tests don't each attempt a doomed
 # HTTP call to a nlp-service that isn't running in unit tests; reranking
 # tests opt in per-test via monkeypatch and mock src.nlp.rerank directly.
@@ -189,8 +197,10 @@ def reset_llm_clients():
     """
     from src.classes.ollama_connector import OllamaConnector
     OllamaConnector._async_groq = None
+    OllamaConnector._async_ollama = None
     yield
     OllamaConnector._async_groq = None
+    OllamaConnector._async_ollama = None
 
 
 @pytest.fixture(autouse=True)

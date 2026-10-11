@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-CancerBot is a Retrieval-Augmented Generation (RAG) chatbot for cancer-related medical information. It uses a hybrid search approach (BM25 + KNN vector search) over a corpus of medical sources and claims in OpenSearch, with Groq (cloud LLM) for generation (Gemini as fallback) and Ollama for embeddings only. On every user message, the system also performs live external search (PubMed, CrossRef, Wikipedia, ClinicalTrials.gov), embeds the results, and indexes them into OpenSearch before retrieval.
+CancerBot is a Retrieval-Augmented Generation (RAG) chatbot for cancer-related medical information. It uses a hybrid search approach (BM25 + KNN vector search) over a corpus of medical sources and claims in OpenSearch, with Groq (cloud LLM) for generation (Gemini as fallback) and Ollama for embeddings — plus, optionally, local generation tried before Groq when `OLLAMA_GEN_MODEL` is set. On every user message, the system also performs live external search (PubMed, CrossRef, Wikipedia, ClinicalTrials.gov), embeds the results, and indexes them into OpenSearch before retrieval.
 
 ## Dependencies
 
@@ -170,7 +170,7 @@ find nothing to do; run it by hand if the corpus has grown since.
 | OpenSearch node 2 | Docker | — | Same cluster |
 | OpenSearch Dashboards | Docker | 5601 | |
 | PostgreSQL | Docker | 5432 | |
-| Ollama | Native on host | 11434 | Embeddings only; not in docker-compose |
+| Ollama | Native on host | 11434 | Embeddings; optional local generation (`OLLAMA_GEN_MODEL`); not in docker-compose |
 | NLP microservice | `nlp_service/` | 8100 | Docker, default profile |
 | Redis | Docker | 6379 | `prod` profile only; arq job queue — see Background Jobs below |
 | arq worker | `src/worker.py` | — | Docker only with `prod` profile, no exposed port |
@@ -196,7 +196,7 @@ Frontend first calls `POST /conversations/create/` (lightweight DB-only, returns
 6. External search results are recorded in `external_search_results` table
 7. `src/retrieval/__init__.py:run_retrieval` runs the hybrid search in `search.py:search_sources` on `sources_index`. The dense and lexical halves are issued as **two separate ranked lists in one `msearch`** and combined with **Reciprocal Rank Fusion**; each list is deduped to one chunk per `source_id`, and the fused list is deduped again across sources by DOI. Rather than a fixed top-5, it returns **every fused source whose best chunk clears a cosine-similarity floor (`MIN_COSINE`), capped at `MAX_RESULTS`** — so the count tracks how much the corpus actually covers the query (see the Retrieval section). `run_retrieval` embeds the **natural question** for the dense half while passing the **representative terms** as the lexical query. The gated list is then reordered (never filtered) by a cross-encoder via the NLP service's `/rerank` (`_rerank_sources`; `RERANK_ENABLED=false` turns it off, and any reranker error falls back to RRF order). It runs inline in the caller's worker thread — no separate executor
 8. Search analytics recorded in `search_analytics` table
-9. `src/classes/ollama_connector.py` builds a prompt with history + context (cited as `[source1]`, `[source2]`, ...) and calls Groq chat completions (`GROQ_MODEL_NAME`). On `groq.GroqError`, falls back to Gemini (`GEMINI_FALLBACK_MODEL`).
+9. `src/classes/ollama_connector.py` builds a prompt with history + context (cited as `[source1]`, `[source2]`, ...) and streams it through a provider chain in `_stream_completion`: local Ollama first when `OLLAMA_GEN_MODEL` is set, then Groq (`GROQ_MODEL_NAME`), then Gemini (`GEMINI_FALLBACK_MODEL`). A provider is abandoned for the next only if it fails *before* emitting any text — once tokens reach the user the stream can't restart cleanly. Ollama gets its own first-chunk deadline (`_OLLAMA_FIRST_CHUNK_TIMEOUT_SECONDS`, 30s) so a local model that never starts can't burn the 120s answer budget and leave no time for the fallback. Ollama failures are logged without the alert email (Ollama simply not running is normal in dev); a Groq→Gemini failover still enqueues `send_fallback_alert_job`. A missing `GROQ_API_KEY` means "skip Groq" (`_get_async_groq()` returns `None`), so a fully local setup works. Every short utility call (query rewrite, personal-question classifier, titles, URL classification) goes through `OllamaConnector.complete`, the non-streaming twin of the same chain, which also treats an *empty* reply as a failure and moves on — reasoning models can spend a small `max_tokens` budget entirely on hidden reasoning.
 10. Post-processing replaces `[source1]` aliases with stable base IDs (`pmid:xxx`, `doi:xxx`, `nct:NCTxxx`, `url:<sha1>`) — the `:cN` chunk suffix is stripped before aliases are built
 11. Assistant message + source IDs stored in PostgreSQL
 12. WebSocket emits staged events throughout (see below)
@@ -311,7 +311,8 @@ Used only by the legacy `src/embedding.py` loader; the live chat flow never read
 `example.env` is the source of truth — every variable, with a comment and a safe placeholder. The non-obvious ones:
 - `ENV` — **required**; `src/main.py` refuses to start without it. Anything other than `production` makes token-issuing endpoints return the raw token in the response (for E2E automation), so a real deployment must set `ENV=production`.
 - `JWT_SECRET` — required, ≥ 32 characters (checked at import in `src/auth/security.py`). The algorithm is hardcoded to HS256.
-- `GROQ_MODEL_NAME` — do **not** wrap in quotes. `openai/gpt-oss-120b` is a reasoning model whose hidden reasoning counts against `max_tokens`; short utility calls pass `reasoning_effort="low"` for that reason (see `ollama_connector.py`).
+- `GROQ_MODEL_NAME` — do **not** wrap in quotes. `openai/gpt-oss-120b` is a reasoning model whose hidden reasoning counts against `max_tokens`; short utility calls pass `reasoning_effort="low"` for that reason (see `OllamaConnector.complete`).
+- `OLLAMA_GEN_MODEL` — optional local generation model (e.g. `llama3.1:8b`), tried before Groq for every LLM call; blank = Ollama does embeddings only. Expect weaker citation-rule adherence than `GROQ_MODEL_NAME` — the prompts are tuned for it. `tests/conftest.py` forces it blank so tests never call a real local model.
 - `OLLAMA_CONTEXT_ITEMS` — must stay ≥ `MAX_RESULTS` in `search.py` (see Retrieval).
 - `FRONTEND_URL` — origin used in every emailed link. **Required in production** (`src/main.py` refuses to start without it); elsewhere it falls back to `http://localhost:5173`.
 - `CORS_ORIGINS` — comma-separated; `*` refuses to start in production.

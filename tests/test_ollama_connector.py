@@ -46,17 +46,6 @@ class TestClientsConstructedWithTimeout:
         _, kwargs = mock_async_groq.call_args
         assert kwargs.get("timeout") == _GROQ_TIMEOUT_SECONDS
 
-    def test_sync_groq_client_constructed_with_timeout(self, monkeypatch):
-        from src.classes.ollama_connector import _GroqClientProxy
-
-        monkeypatch.setattr(_GroqClientProxy, "_client", None)
-        monkeypatch.setenv("GROQ_API_KEY", "dummy-key")
-        with patch("src.classes.ollama_connector.Groq") as mock_groq:
-            OllamaConnector.groq._ensure_client()
-
-        _, kwargs = mock_groq.call_args
-        assert kwargs.get("timeout") == _GROQ_TIMEOUT_SECONDS
-
     def test_gemini_client_constructed_with_timeout(self, monkeypatch):
         monkeypatch.setattr(_GeminiClientProxy, "_client", None)
         monkeypatch.setenv("GEMINI_API_KEY", "dummy-key")

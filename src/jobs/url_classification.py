@@ -36,17 +36,20 @@ Answer (yes/no):"""
 STALE_PROCESSING_MINUTES = 15
 
 
-def _classify(content_text: str) -> tuple[bool, str]:
-    """Call Groq to classify content. Returns (is_cancer_related, raw_response)."""
+async def _classify(content_text: str) -> tuple[bool, str]:
+    """LLM-classify content via the shared provider chain (Ollama if
+    configured, then Groq, then Gemini). Returns (is_cancer_related,
+    raw_response). Raises if no provider answered, so the job is marked
+    failed rather than silently recorded as "not cancer-related"."""
     from src.classes.ollama_connector import OllamaConnector
 
     prompt = CLASSIFICATION_PROMPT.format(text=content_text[:3000])
-    completion = OllamaConnector.groq.chat.completions.create(
-        model=OllamaConnector.groq_model or "openai/gpt-oss-120b",
-        messages=[{"role": "user", "content": prompt}],
-        max_tokens=10,
-    )
-    raw = (completion.choices[0].message.content or "").strip().lower() if completion.choices else ""
+    # Not 10: the budget must leave room for a reasoning model's hidden
+    # reasoning, or the one-word answer is never written at all.
+    raw = await OllamaConnector.complete(prompt, max_tokens=200, label="url_classification")
+    if raw is None:
+        raise RuntimeError("no LLM provider returned a classification")
+    raw = raw.strip().lower()
     return raw.startswith("yes"), raw
 
 
@@ -79,7 +82,7 @@ async def _process_claimed_job(db, job) -> None:
     logger.info(f"[url_classifier] processing job={job.id} url={job.url}")
 
     try:
-        cancer_related, reasoning = await asyncio.to_thread(_classify, job.content_text)
+        cancer_related, reasoning = await _classify(job.content_text)
         job.cancer_related = cancer_related
         job.llm_reasoning = reasoning
         logger.info(f"[url_classifier] job={job.id} cancer_related={cancer_related} reasoning='{reasoning}'")

@@ -1,5 +1,5 @@
-from ollama import Client
-from groq import Groq
+import asyncio
+from ollama import AsyncClient, Client
 import groq
 from google import genai as google_genai
 from dotenv import load_dotenv
@@ -40,6 +40,14 @@ def is_truncated_finish_reason(reason: str | None) -> bool:
 # per-environment tuning the way GROQ_MAX_TOKENS etc. do.
 _GROQ_TIMEOUT_SECONDS = 60.0
 _GEMINI_TIMEOUT_SECONDS = 30.0
+# Local Ollama generation (OLLAMA_GEN_MODEL) is tried first when configured.
+# A local model that never starts must not eat the caller's whole budget
+# (conversations.py's _GENERATE_ANSWER_TIMEOUT_SECONDS, 120s) and leave no
+# time for the Groq/Gemini fallback, so the first streamed chunk gets its own
+# shorter deadline. _OLLAMA_TIMEOUT_SECONDS bounds each read after that, and
+# whole non-streamed calls.
+_OLLAMA_FIRST_CHUNK_TIMEOUT_SECONDS = 30.0
+_OLLAMA_TIMEOUT_SECONDS = 60.0
 
 # The literal delimiters wrapping retrieved evidence in the prompt. They carry
 # the `=====` decoration so they stay distinguishable from the instruction text
@@ -57,7 +65,7 @@ _EVIDENCE_FENCE_RE = re.compile(
 
 
 class _OllamaClientProxy:
-  """Lazy proxy for Ollama client (embeddings only)."""
+  """Lazy proxy for the sync Ollama client (embeddings)."""
   _client = None
 
   def _ensure_client(self):
@@ -66,23 +74,6 @@ class _OllamaClientProxy:
       host = os.getenv('OLLAMA_URL', 'http://localhost:11434')
       _OllamaClientProxy._client = Client(host=host)
     return _OllamaClientProxy._client
-
-  def __getattr__(self, name):
-    return getattr(self._ensure_client(), name)
-
-
-class _GroqClientProxy:
-  """Lazy proxy for Groq client (text generation)."""
-  _client = None
-
-  def _ensure_client(self):
-    if _GroqClientProxy._client is None:
-      load_dotenv()
-      api_key = os.getenv('GROQ_API_KEY')
-      if not api_key:
-        raise ValueError("GROQ_API_KEY is not set.")
-      _GroqClientProxy._client = Groq(api_key=api_key, timeout=_GROQ_TIMEOUT_SECONDS)
-    return _GroqClientProxy._client
 
   def __getattr__(self, name):
     return getattr(self._ensure_client(), name)
@@ -116,23 +107,40 @@ class OllamaConnector:
   embed_model = os.getenv('EMBED_MODEL_NAME', os.getenv('MODEL_NAME'))
   groq_model = os.getenv('GROQ_MODEL_NAME')
   ollama = _OllamaClientProxy()
-  groq = _GroqClientProxy()
   gemini = _GeminiClientProxy()
 
   _async_groq = None
+  _async_ollama = None
 
   @classmethod
   def _get_async_groq(cls):
-    """One shared AsyncGroq client for the process.
+    """One shared AsyncGroq client for the process, or None when
+    GROQ_API_KEY is unset — callers treat that as "skip Groq", so a
+    local-only setup (OLLAMA_GEN_MODEL, no Groq key) works.
 
     Constructing AsyncGroq per call builds a fresh httpx client each time, so
     every message and every title paid for a new TLS handshake instead of
     reusing a pooled connection.
     """
     if cls._async_groq is None:
+      api_key = os.getenv("GROQ_API_KEY")
+      if not api_key:
+        return None
       from groq import AsyncGroq
-      cls._async_groq = AsyncGroq(api_key=os.getenv("GROQ_API_KEY"), timeout=_GROQ_TIMEOUT_SECONDS)
+      cls._async_groq = AsyncGroq(api_key=api_key, timeout=_GROQ_TIMEOUT_SECONDS)
     return cls._async_groq
+
+  @staticmethod
+  def _ollama_gen_model() -> str | None:
+    """OLLAMA_GEN_MODEL, read per call. Unset/blank = skip local generation."""
+    return os.getenv("OLLAMA_GEN_MODEL", "").strip() or None
+
+  @classmethod
+  def _get_async_ollama(cls):
+    if cls._async_ollama is None:
+      host = os.getenv('OLLAMA_URL', 'http://localhost:11434')
+      cls._async_ollama = AsyncClient(host=host, timeout=_OLLAMA_TIMEOUT_SECONDS)
+    return cls._async_ollama
 
   @classmethod
   def embed_text(cls, text):
@@ -556,48 +564,100 @@ SUMMARY:
     full_prompt: str,
     max_tokens: int,
   ) -> AsyncIterator[str | dict]:
-    """Shared Groq-then-Gemini-fallback streaming core, used by both
-    stream_text (a fresh answer) and stream_continuation (extending a
-    truncated one) — the two differ only in how full_prompt is built.
+    """Shared streaming core with a provider chain — local Ollama (only
+    when OLLAMA_GEN_MODEL is set), then Groq, then Gemini. Used by
+    stream_text (a fresh answer), stream_continuation (extending a truncated
+    one) and summarize_conversation — they differ only in how full_prompt is
+    built.
+
+    A provider is abandoned for the next one only if it fails before
+    emitting any text: once tokens have reached the user the stream can't
+    restart cleanly, so a mid-stream failure just closes it.
 
     Yields tokens, then a final {"_model": ..., "_finish_reason": ...} dict
     (no alias_to_id — callers merge in whatever context-specific fields they
     need on top of this)."""
-    logger.debug(
-      "[groq] stream model=%s max_tokens=%d prompt_len=%d",
-      cls.groq_model, max_tokens, len(full_prompt),
-    )
+    ollama_exc = None
+    ollama_model = cls._ollama_gen_model()
+    if ollama_model:
+      logger.debug("[ollama] stream model=%s max_tokens=%d", ollama_model, max_tokens)
+      streaming_started = False
+      finish_reason: str | None = None
+      try:
+        stream = await cls._get_async_ollama().chat(
+          model=ollama_model,
+          messages=[{"role": "user", "content": full_prompt}],
+          stream=True,
+          options={"num_predict": max_tokens},
+        )
+        chunks = stream.__aiter__()
+        first = True
+        while True:
+          try:
+            if first:
+              chunk = await asyncio.wait_for(chunks.__anext__(), timeout=_OLLAMA_FIRST_CHUNK_TIMEOUT_SECONDS)
+              first = False
+            else:
+              chunk = await chunks.__anext__()
+          except StopAsyncIteration:
+            break
+          token = (chunk.message.content or "") if chunk.message else ""
+          if chunk.done:
+            # "length" when num_predict cut it off — the same value Groq
+            # reports, so the Continue button works for local answers too.
+            finish_reason = chunk.done_reason
+          if token:
+            streaming_started = True
+            yield token
+        yield {"_model": ollama_model, "_finish_reason": finish_reason}
+        return
+      except Exception as exc:
+        # Ollama not running, model not pulled, or too slow to start are all
+        # normal in local dev — log and fall through, no alert email.
+        ollama_exc = exc
+        logger.warning("[ollama] stream error (%s: %s), falling back to Groq", type(exc).__name__, exc)
+        if streaming_started:
+          yield {"_model": ollama_model, "_finish_reason": finish_reason}
+          return
 
     groq_exc = None
-    streaming_started = False
-    finish_reason: str | None = None
-
-    try:
-      stream = await cls._get_async_groq().chat.completions.create(
-        model=cls.groq_model,
-        messages=[{"role": "user", "content": full_prompt}],
-        max_tokens=max_tokens,
-        stream=True,
+    groq_client = cls._get_async_groq()
+    if groq_client is None:
+      groq_exc = "GROQ_API_KEY is not set"
+      logger.info("[groq] skipped — GROQ_API_KEY is not set")
+    else:
+      logger.debug(
+        "[groq] stream model=%s max_tokens=%d prompt_len=%d",
+        cls.groq_model, max_tokens, len(full_prompt),
       )
-      async for chunk in stream:
-        choice = chunk.choices[0] if chunk.choices else None
-        token = (choice.delta.content or "") if choice else ""
-        if choice and choice.finish_reason:
-          finish_reason = choice.finish_reason
-        if token:
-          streaming_started = True
-          yield token
-      yield {"_model": cls.groq_model, "_finish_reason": finish_reason}
-      return
-    except groq.GroqError as exc:
-      groq_exc = exc
-      logger.warning("[groq] stream error (%s: %s), falling back to Gemini", type(exc).__name__, exc)
-      await enqueue("send_fallback_alert_job", model=cls.groq_model)
+      streaming_started = False
+      finish_reason = None
+      try:
+        stream = await groq_client.chat.completions.create(
+          model=cls.groq_model,
+          messages=[{"role": "user", "content": full_prompt}],
+          max_tokens=max_tokens,
+          stream=True,
+        )
+        async for chunk in stream:
+          choice = chunk.choices[0] if chunk.choices else None
+          token = (choice.delta.content or "") if choice else ""
+          if choice and choice.finish_reason:
+            finish_reason = choice.finish_reason
+          if token:
+            streaming_started = True
+            yield token
+        yield {"_model": cls.groq_model, "_finish_reason": finish_reason}
+        return
+      except groq.GroqError as exc:
+        groq_exc = exc
+        logger.warning("[groq] stream error (%s: %s), falling back to Gemini", type(exc).__name__, exc)
+        await enqueue("send_fallback_alert_job", model=cls.groq_model)
 
-    if streaming_started:
-      # Already emitted partial tokens; can't restart cleanly — just close the stream
-      yield {"_model": cls.groq_model, "_finish_reason": finish_reason}
-      return
+      if streaming_started:
+        # Already emitted partial tokens; can't restart cleanly — just close the stream
+        yield {"_model": cls.groq_model, "_finish_reason": finish_reason}
+        return
 
     # Gemini fallback — no streaming SDK support; yield full response as one chunk.
     # Uses the async client surface (.aio), not the sync one: the sync call
@@ -628,8 +688,78 @@ SUMMARY:
       logger.warning("[gemini-fallback] API error (%s: %s)", type(exc).__name__, exc)
 
     raise ValueError(
-      f"AI generation unavailable — Groq: {groq_exc}, Gemini: {gemini_exc}"
+      "AI generation unavailable — "
+      f"Ollama: {ollama_exc if ollama_model else 'not configured'}, Groq: {groq_exc}, Gemini: {gemini_exc}"
     )
+
+  @classmethod
+  async def complete(cls, prompt: str, max_tokens: int, *, label: str) -> str | None:
+    """Non-streaming completion for short utility calls (query rewrite,
+    personal-question classification, titles, URL classification), using
+    the same provider chain as _stream_completion: Ollama (if
+    OLLAMA_GEN_MODEL is set), then Groq, then Gemini.
+
+    Returns the first non-empty text, or None if every provider failed or
+    returned nothing — callers apply their own fail-safe default. An empty
+    reply counts as a failure because reasoning models (gpt-oss-120b on Groq,
+    and some local ones) can spend a small max_tokens budget entirely on
+    hidden reasoning and return no content. Never raises.
+    """
+    messages = [{"role": "user", "content": prompt}]
+
+    ollama_model = cls._ollama_gen_model()
+    if ollama_model:
+      try:
+        response = await asyncio.wait_for(
+          cls._get_async_ollama().chat(
+            model=ollama_model, messages=messages, options={"num_predict": max_tokens},
+          ),
+          timeout=_OLLAMA_TIMEOUT_SECONDS,
+        )
+        text = ((response.message.content if response.message else "") or "").strip()
+        if text:
+          return text
+        logger.warning("[%s] Ollama returned no content, trying Groq", label)
+      except Exception as exc:
+        logger.warning("[%s] Ollama error (%s: %s), trying Groq", label, type(exc).__name__, exc)
+
+    groq_client = cls._get_async_groq()
+    if groq_client is not None:
+      try:
+        completion = await groq_client.chat.completions.create(
+          model=cls.groq_model,
+          messages=messages,
+          max_tokens=max_tokens,
+          # cls.groq_model (openai/gpt-oss-120b) is a reasoning model: its
+          # chain-of-thought lands in a separate `reasoning` field but still
+          # counts against max_tokens, and with these small budgets it can
+          # burn all of it before writing any content — found live (empty
+          # content, finish_reason="length", 148/150 tokens spent on
+          # reasoning). "low" keeps reasoning short enough for content to be
+          # written; verified against the real API.
+          reasoning_effort="low",
+        )
+        text = ((completion.choices[0].message.content if completion.choices else "") or "").strip()
+        if text:
+          return text
+        logger.warning("[%s] Groq returned no content, trying Gemini", label)
+      except Exception as exc:
+        logger.warning("[%s] Groq error (%s: %s), trying Gemini", label, type(exc).__name__, exc)
+
+    try:
+      gemini_model = os.getenv("GEMINI_FALLBACK_MODEL", "gemini-2.5-flash")
+      response = await cls.gemini.aio.models.generate_content(
+        model=gemini_model,
+        contents=prompt,
+        config=google_genai.types.GenerateContentConfig(max_output_tokens=max_tokens),
+      )
+      text = (response.text or "").strip()
+      if text:
+        return text
+      logger.warning("[%s] Gemini returned no content", label)
+    except Exception as exc:
+      logger.warning("[%s] Gemini error (%s: %s)", label, type(exc).__name__, exc)
+    return None
 
   @classmethod
   async def rewrite_query_with_history(cls, history: list[tuple[str, str]], text: str) -> str:
@@ -644,8 +774,6 @@ SUMMARY:
     Falls back to the original text on empty history or any error — never
     raises, since retrieval must never block on this.
     """
-    from groq import GroqError
-
     text = (text or '').strip()
     if not text or not history:
       return text
@@ -665,26 +793,9 @@ SUMMARY:
       f"Conversation so far:\n{history_lines}\n\n"
       f"Latest user message: {text[:500]}"
     )
-    try:
-      completion = await cls._get_async_groq().chat.completions.create(
-        model=cls.groq_model,
-        messages=[{"role": "user", "content": prompt}],
-        max_tokens=120,
-        # See classify_personal_question's comment: cls.groq_model's reasoning
-        # tokens count against max_tokens and can exhaust a small budget
-        # before any real output is written. Same defensive fix here.
-        reasoning_effort="low",
-      )
-      if not completion.choices:
-        return text
-      rewritten = (completion.choices[0].message.content or '').strip().strip('"\'')
-      return rewritten if rewritten else text
-    except GroqError as exc:
-      logger.warning("[query_rewrite] Groq error (%s: %s), using original text", type(exc).__name__, exc)
-      return text
-    except Exception as exc:
-      logger.warning("[query_rewrite] unexpected error (%s: %s), using original text", type(exc).__name__, exc)
-      return text
+    raw = await cls.complete(prompt, max_tokens=120, label="query_rewrite")
+    rewritten = (raw or '').strip().strip('"\'')
+    return rewritten if rewritten else text
 
   # The exact profile field names this classifier is allowed to name —
   # kept in lockstep with src.db.repositories.profile.PROFILE_FIELDS (not
@@ -708,8 +819,6 @@ SUMMARY:
     Only called when the caller already knows a populated profile exists
     (see conversations.py) — no point spending this call otherwise.
     """
-    from groq import GroqError
-
     text = (text or '').strip()
     fallback = {"personal_fields": [], "has_untracked_personal_ask": False, "has_general_question": True}
     if not text:
@@ -735,26 +844,10 @@ SUMMARY:
       "personal_fields must be a subset of "
       f"{list(cls._PERSONAL_QUESTION_FIELDS)} — empty list if none apply."
     )
+    raw = await cls.complete(prompt, max_tokens=200, label="personal_question")
+    if not raw:
+      return fallback
     try:
-      completion = await cls._get_async_groq().chat.completions.create(
-        model=cls.groq_model,
-        messages=[{"role": "user", "content": prompt}],
-        max_tokens=200,
-        # cls.groq_model (openai/gpt-oss-120b) is a reasoning model: its
-        # chain-of-thought lands in a separate `reasoning` field, still
-        # counted against max_tokens, and a multi-step prompt like this
-        # one ("Decide: 1... 2... 3...") can burn the entire budget on
-        # reasoning before ever emitting the JSON into `content` — found
-        # live (empty content, finish_reason="length", 148/150 tokens
-        # spent on reasoning) when this shipped without it.
-        # reasoning_effort="low" keeps reasoning short enough that content
-        # actually gets written; verified against the real API on several
-        # real messages including the one that surfaced this.
-        reasoning_effort="low",
-      )
-      if not completion.choices:
-        return fallback
-      raw = (completion.choices[0].message.content or '').strip()
       raw = raw.strip('`')
       if raw.lower().startswith('json'):
         raw = raw[4:].strip()
@@ -768,11 +861,8 @@ SUMMARY:
         "has_untracked_personal_ask": bool(parsed.get("has_untracked_personal_ask")),
         "has_general_question": bool(parsed.get("has_general_question", True)),
       }
-    except GroqError as exc:
-      logger.warning("[personal_question] Groq error (%s: %s), assuming general question", type(exc).__name__, exc)
-      return fallback
     except Exception as exc:
-      logger.warning("[personal_question] unexpected error (%s: %s), assuming general question", type(exc).__name__, exc)
+      logger.warning("[personal_question] unparseable reply (%s: %s), assuming general question", type(exc).__name__, exc)
       return fallback
 
   @staticmethod
@@ -791,8 +881,6 @@ SUMMARY:
     Falls back to a cleaned/truncated version of the message on any error —
     never raises, since a missing title should never break the chat flow.
     """
-    from groq import GroqError
-
     fallback = cls._heuristic_title(text)
     if not (text or '').strip():
       return fallback
@@ -802,24 +890,6 @@ SUMMARY:
       "for a conversation that starts with this message:\n\n"
       f"{text.strip()[:500]}"
     )
-    try:
-      completion = await cls._get_async_groq().chat.completions.create(
-        model=cls.groq_model,
-        messages=[{"role": "user", "content": prompt}],
-        max_tokens=20,
-        # See classify_personal_question's comment — this budget is the
-        # tightest of any call here, so it's the most exposed to reasoning
-        # tokens silently eating the whole thing before any title is written.
-        reasoning_effort="low",
-      )
-      if not completion.choices:
-        return fallback
-      raw_title = (completion.choices[0].message.content or '').strip()
-      title = raw_title.strip('"\' \n').rstrip('.')
-      return title[:60] if title else fallback
-    except GroqError as exc:
-      logger.warning("[title] Groq error (%s: %s), using heuristic fallback", type(exc).__name__, exc)
-      return fallback
-    except Exception as exc:
-      logger.warning("[title] unexpected error (%s: %s), using heuristic fallback", type(exc).__name__, exc)
-      return fallback
+    raw_title = await cls.complete(prompt, max_tokens=20, label="title")
+    title = (raw_title or '').strip('"\' \n').rstrip('.')
+    return title[:60] if title else fallback

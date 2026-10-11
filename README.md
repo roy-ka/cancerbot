@@ -12,7 +12,7 @@ For every message:
 2. **Search live.** PubMed, CrossRef, Wikipedia and ClinicalTrials.gov are queried in parallel with those terms.
 3. **Index.** New results are chunked, embedded with `nomic-embed-text` (Ollama), and added to OpenSearch. The corpus grows with use; there is no offline ingestion step.
 4. **Retrieve.** A hybrid search runs dense (vector) and lexical (BM25) queries, fuses them with Reciprocal Rank Fusion, keeps only sources above a cosine-similarity floor, and reorders them with a cross-encoder.
-5. **Generate.** Groq (`openai/gpt-oss-120b`) writes a streamed answer citing `[source1]`, `[source2]`…, which are rewritten to stable IDs such as `pmid:12345`. Gemini is the fallback if Groq fails.
+5. **Generate.** An LLM writes a streamed answer citing `[source1]`, `[source2]`…, which are rewritten to stable IDs such as `pmid:12345`. Providers are tried in order: a local Ollama model (only if `OLLAMA_GEN_MODEL` is set), then Groq (`openai/gpt-oss-120b`), then Gemini.
 
 Users can optionally save a health profile (cancer type, stage, biomarkers, age band, treatment status) to frame answers. Questions about the profile itself ("what stage did I save?") are answered directly from it, without any model generation.
 
@@ -28,7 +28,7 @@ Other features: email-verified accounts, shareable read-only conversation links,
 | Database | PostgreSQL + Alembic | 5432 |
 | NLP service | scispaCy `en_core_sci_sm` + cross-encoder reranker | 8100 |
 | Embeddings | Ollama `nomic-embed-text` (runs natively) | 11434 |
-| Generation | Groq, Gemini fallback | — |
+| Generation | Optional local Ollama model, then Groq, then Gemini | — |
 | Background jobs | arq + Redis (emails, scheduled deletions, cleanup) | 6379 |
 | Email | Brevo | — |
 
@@ -40,7 +40,7 @@ Other features: email-verified accounts, shareable read-only conversation links,
 - Node.js 20.19+ (Vite 8)
 - Docker + Docker Compose
 - [Ollama](https://ollama.com), installed natively (on a Mac, Docker can't use the Metal GPU)
-- A [Groq API key](https://console.groq.com) (a Gemini key is optional, for fallback)
+- A [Groq API key](https://console.groq.com) (a Gemini key is optional, for fallback) — or a local Ollama model instead (see below)
 
 ### 1. Configure
 
@@ -55,6 +55,8 @@ python3 -c "import secrets; print(secrets.token_hex(32))"
 ```
 
 `example.env` documents every variable. Keep `ENV=development` locally.
+
+**Running without cloud LLMs.** Pull a chat model (`ollama pull llama3.1:8b`) and set `OLLAMA_GEN_MODEL=llama3.1:8b`. Every LLM call then tries it first, falling back to Groq and then Gemini only if it fails; with no `GROQ_API_KEY` set, Groq is simply skipped. Expect weaker answers than with Groq: the prompts and citation rules are tuned for `openai/gpt-oss-120b`, and small local models follow them less reliably.
 
 ### 2. Start services
 
