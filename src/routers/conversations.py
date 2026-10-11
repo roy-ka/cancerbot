@@ -169,6 +169,7 @@ async def _answer_via_retrieval(
     emit: StageEmitter,
     send_token: SendToken,
     t0: float,
+    question_override: str | None = None,
 ) -> tuple[str, str | None, bool, dict]:
     """The literature-search-and-generate pipeline: search_and_embed ->
     retrieve_context -> build_prompt/generate_answer. Split out of
@@ -176,10 +177,17 @@ async def _answer_via_retrieval(
     personal-question fast path there can skip this whole thing — a
     profile-data recall must never share a generation call with a
     citation-grounded literature answer. Returns (response, model_name,
-    truncated, context) for the caller's shared save/title/done tail."""
+    truncated, context) for the caller's shared save/title/done tail.
+
+    question_override, when set, is what gets searched for and answered
+    instead of req.content — the general half of a message that also asked
+    about the user's own profile (answered separately, verbatim). The raw
+    message is then also left out of the prompt history, or the model would
+    see the personal part there and report that the sources don't cover it."""
+    question = question_override or req.content
     await emit('fallback_triggered', {'reason': 'always_search_external'})
     async with timed_stage('search_and_embed', conversation_id=str(conversation_id)):
-        search_meta = await search_and_embed(conversation, emit=emit)
+        search_meta = await search_and_embed(conversation, emit=emit, latest_text_override=question_override)
 
     # Persist the terms extracted for this message. search_and_embed already ran
     # spell-correction + entity extraction on this exact text, so its result is
@@ -263,7 +271,7 @@ async def _answer_via_retrieval(
     # same as req.content when there was nothing to resolve. Falling back to
     # this instead of req.content keeps the KNN query (and the terms/BM25
     # fallback below) from reverting to the unresolved pronoun-laden message.
-    rewritten_query = (search_meta.get('rewritten_query') or '').strip() or req.content
+    rewritten_query = (search_meta.get('rewritten_query') or '').strip() or question
     retrieval_terms = _representative_terms(entity_groups, extracted_query_terms)
     retrieval_query = ' '.join(retrieval_terms) if retrieval_terms else rewritten_query
     if url_context_items:
@@ -309,6 +317,8 @@ async def _answer_via_retrieval(
     # ninja exchanges) for continuity; a real user's turn never includes
     # hidden messages in its prompt context.
     history = get_recent_messages(db, conversation.id, limit=max_history, include_hidden=hidden_from_user)
+    if question_override:
+        history = [m for m in history if m.id != user_message.id]
 
     # The answer should be in whatever language the conversation actually
     # started in — not just the current message's language, which can drift
@@ -336,7 +346,7 @@ async def _answer_via_retrieval(
         nonlocal alias_to_id
         async for chunk in OllamaConnector.stream_text(
             context=context["generation_context"],
-            question=req.content,
+            question=question,
             history=history,
             first_message=first_message_content,
             profile_context=profile_context,
@@ -380,7 +390,7 @@ async def _answer_via_retrieval(
         analytic = SearchAnalytic(
             conversation_id=conversation.id,
             message_id=user_message.id,
-            search_query=req.content[:500],
+            search_query=question[:500],
             result_count=metrics.get('result_count', 0),
             top_score=metrics.get('top_score'),
             avg_score=metrics.get('avg_score'),
@@ -464,6 +474,7 @@ async def _process_post_message(
     # cited medical answer is exactly the ambiguity that must not happen.
     profile = None
     personal_recall_text: str | None = None
+    general_question: str | None = None
     skip_literature_search = False
     if not hidden_from_user and conversation.use_profile_context:
         profile = get_profile(db, current_user.id)
@@ -476,6 +487,10 @@ async def _process_post_message(
             if personal_fields or has_untracked_personal_ask:
                 personal_recall_text = render_profile_recall(profile, personal_fields, has_untracked_personal_ask)
                 skip_literature_search = not has_general_question
+                # Mixed message: search and answer only its general part. If the
+                # classifier didn't supply one, fall back to the full text.
+                if has_general_question:
+                    general_question = classification.get('general_question')
 
     profile_context = render_profile_context(profile) if profile else None
 
@@ -498,6 +513,7 @@ async def _process_post_message(
             emit=emit,
             send_token=send_token,
             t0=t0,
+            question_override=general_question,
         )
         if personal_recall_text:
             response = f"{personal_recall_text}\n\n{response}"

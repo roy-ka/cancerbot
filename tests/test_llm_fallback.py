@@ -554,7 +554,32 @@ class TestClassifyPersonalQuestion:
             "personal_fields": ["cancer_type", "stage"],
             "has_untracked_personal_ask": False,
             "has_general_question": False,
+            "general_question": None,
         }
+
+    @pytest.mark.asyncio
+    async def test_mixed_message_returns_its_general_part(self):
+        factory, _ = _async_groq_completion_mock(
+            content='{"personal_fields": ["stage"], "has_untracked_personal_ask": false, '
+                    '"has_general_question": true, "general_question": "  What is the Warburg effect?  "}'
+        )
+        with patch("groq.AsyncGroq", factory):
+            result = await OllamaConnector.classify_personal_question(
+                "What stage am I, and what is the Warburg effect?"
+            )
+        assert result["personal_fields"] == ["stage"]
+        assert result["general_question"] == "What is the Warburg effect?"
+
+    @pytest.mark.parametrize("value", ['""', "null", "42"])
+    @pytest.mark.asyncio
+    async def test_missing_or_non_string_general_question_becomes_none(self, value):
+        factory, _ = _async_groq_completion_mock(
+            content='{"personal_fields": ["stage"], "has_untracked_personal_ask": false, '
+                    f'"has_general_question": true, "general_question": {value}}}'
+        )
+        with patch("groq.AsyncGroq", factory):
+            result = await OllamaConnector.classify_personal_question("What stage am I, and what is X?")
+        assert result["general_question"] is None
 
     @pytest.mark.asyncio
     async def test_general_question_has_no_personal_fields(self):
@@ -600,7 +625,7 @@ class TestClassifyPersonalQuestion:
         factory, instance = _async_groq_completion_mock(content="should not be used")
         with patch("groq.AsyncGroq", factory):
             result = await OllamaConnector.classify_personal_question("   ")
-        assert result == {"personal_fields": [], "has_untracked_personal_ask": False, "has_general_question": True}
+        assert result == {"personal_fields": [], "has_untracked_personal_ask": False, "has_general_question": True, "general_question": None}
         instance.chat.completions.create.assert_not_called()
 
     @pytest.mark.asyncio
@@ -608,14 +633,14 @@ class TestClassifyPersonalQuestion:
         factory, _ = _async_groq_completion_mock(content="not valid json at all")
         with patch("groq.AsyncGroq", factory):
             result = await OllamaConnector.classify_personal_question("What's my cancer type?")
-        assert result == {"personal_fields": [], "has_untracked_personal_ask": False, "has_general_question": True}
+        assert result == {"personal_fields": [], "has_untracked_personal_ask": False, "has_general_question": True, "general_question": None}
 
     @pytest.mark.asyncio
     async def test_groq_error_fails_safe_to_general_question(self):
         factory, _ = _async_groq_completion_mock(raises=_rate_limit_exc())
         with patch("groq.AsyncGroq", factory):
             result = await OllamaConnector.classify_personal_question("What's my cancer type?")
-        assert result == {"personal_fields": [], "has_untracked_personal_ask": False, "has_general_question": True}
+        assert result == {"personal_fields": [], "has_untracked_personal_ask": False, "has_general_question": True, "general_question": None}
 
     @pytest.mark.asyncio
     async def test_empty_content_fails_safe_to_general_question(self):
@@ -627,7 +652,7 @@ class TestClassifyPersonalQuestion:
         factory, _ = _async_groq_completion_mock(content="")
         with patch("groq.AsyncGroq", factory):
             result = await OllamaConnector.classify_personal_question("What's my cancer type?")
-        assert result == {"personal_fields": [], "has_untracked_personal_ask": False, "has_general_question": True}
+        assert result == {"personal_fields": [], "has_untracked_personal_ask": False, "has_general_question": True, "general_question": None}
 
     @pytest.mark.asyncio
     async def test_requests_low_reasoning_effort(self):

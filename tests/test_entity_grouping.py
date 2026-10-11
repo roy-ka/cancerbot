@@ -331,3 +331,31 @@ class TestSearchAndEmbedRewritesFollowUpQuery:
 
         mock_rewrite.assert_not_called()
         assert result["rewritten_query"] == "what are the Glioma pathways"
+
+
+# ---------------------------------------------------------------------------
+# search_and_embed — latest_text_override replaces the newest message's text
+# for search (the general half of a mixed personal + general question).
+# ---------------------------------------------------------------------------
+
+class TestSearchAndEmbedLatestTextOverride:
+    @pytest.mark.asyncio
+    async def test_extraction_runs_on_override_not_saved_message(self):
+        conversation = _FakeConversation([
+            _FakeMessage("What stage am I, and what is the Warburg effect?", role="user"),
+        ])
+        seen = []
+
+        async def fake_extract_term_groups(text):
+            seen.append(text)
+            return (["Warburg effect"], [{"term": "Warburg effect", "synonyms": []}])
+
+        with patch("src.routers.conversation_helper._extract_term_groups_from_message", side_effect=fake_extract_term_groups), \
+             patch("src.routers.conversation_helper._extract_urls_from_texts", return_value=[]), \
+             patch("src.routers.conversation_helper._search_pubmed_sources", new_callable=AsyncMock, return_value=[]), \
+             patch("src.routers.conversation_helper._search_crossref_sources", new_callable=AsyncMock, return_value=[]), \
+             patch("src.routers.conversation_helper._search_wikipedia_sources", new_callable=AsyncMock, return_value=[]), \
+             patch("src.routers.conversation_helper._embed_and_index_sources", return_value=(0, 0)):
+            await search_and_embed(conversation, latest_text_override="What is the Warburg effect?")
+
+        assert seen == ["What is the Warburg effect?"]

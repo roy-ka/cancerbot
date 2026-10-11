@@ -812,15 +812,23 @@ SUMMARY:
     general medical question answerable from literature?
 
     Returns {"personal_fields": [...], "has_untracked_personal_ask": bool,
-    "has_general_question": bool}. Fails safe toward the *existing*
-    behavior on any error or malformed output — has_general_question=True,
-    nothing personal detected — so a classification failure only ever
-    costs a wasted call, never skips a literature search that was needed.
-    Only called when the caller already knows a populated profile exists
-    (see conversations.py) — no point spending this call otherwise.
+    "has_general_question": bool, "general_question": str | None}.
+    general_question is the general part alone, rephrased as a standalone
+    question — for a mixed message, the caller searches and generates on it
+    instead of the full text, so the answer doesn't also try (and fail) to
+    find the user's own details in the literature. Fails safe toward the
+    *existing* behavior on any error or malformed output —
+    has_general_question=True, nothing personal detected, no
+    general_question — so a classification failure only ever costs a wasted
+    call, never skips a literature search that was needed. Only called when
+    the caller already knows a populated profile exists (see
+    conversations.py) — no point spending this call otherwise.
     """
     text = (text or '').strip()
-    fallback = {"personal_fields": [], "has_untracked_personal_ask": False, "has_general_question": True}
+    fallback = {
+      "personal_fields": [], "has_untracked_personal_ask": False,
+      "has_general_question": True, "general_question": None,
+    }
     if not text:
       return fallback
 
@@ -836,15 +844,18 @@ SUMMARY:
       "is NOT one of those five fields (e.g. how many treatment lines they've had, when "
       "they were diagnosed, who their doctor is)?\n"
       "3. Does the message also contain a general medical/informational question, "
-      "answerable from medical literature rather than from personal data?\n\n"
+      "answerable from medical literature rather than from personal data?\n"
+      "4. If so, write that general question on its own as a standalone question, "
+      "without the personal part, in the message's language.\n\n"
       f'Message: "{text[:500]}"\n\n'
       "Respond with ONLY a JSON object, no other text, in exactly this shape:\n"
       '{"personal_fields": [...], "has_untracked_personal_ask": true|false, '
-      '"has_general_question": true|false}\n'
+      '"has_general_question": true|false, "general_question": "..."}\n'
       "personal_fields must be a subset of "
-      f"{list(cls._PERSONAL_QUESTION_FIELDS)} — empty list if none apply."
+      f"{list(cls._PERSONAL_QUESTION_FIELDS)} — empty list if none apply. "
+      'general_question is "" when there is no general question.'
     )
-    raw = await cls.complete(prompt, max_tokens=200, label="personal_question")
+    raw = await cls.complete(prompt, max_tokens=300, label="personal_question")
     if not raw:
       return fallback
     try:
@@ -856,10 +867,13 @@ SUMMARY:
         f for f in (parsed.get("personal_fields") or [])
         if f in cls._PERSONAL_QUESTION_FIELDS
       ]
+      general_question = parsed.get("general_question")
+      general_question = general_question.strip() if isinstance(general_question, str) else ""
       return {
         "personal_fields": personal_fields,
         "has_untracked_personal_ask": bool(parsed.get("has_untracked_personal_ask")),
         "has_general_question": bool(parsed.get("has_general_question", True)),
+        "general_question": general_question or None,
       }
     except Exception as exc:
       logger.warning("[personal_question] unparseable reply (%s: %s), assuming general question", type(exc).__name__, exc)

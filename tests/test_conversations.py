@@ -590,6 +590,75 @@ class TestPersonalQuestionFastPath:
         assert "IV" in assistant_msg["content"]
         assert "Glycolysis is a metabolic pathway." in assistant_msg["content"]
 
+    def test_mixed_question_searches_and_answers_only_the_general_part(self, client, test_conversation, db_session):
+        """Otherwise the model sees "what stage am I" and adds that the
+        sources don't mention the user's stage — redundant next to the
+        verbatim recall line already prepended."""
+        from src.db.repositories.profile import upsert_profile
+
+        upsert_profile(db_session, test_conversation.user_id, stage="IV")
+        raw = "What stage am I, and what is glycolysis?"
+        captured = {}
+
+        async def _classify(*args, **kwargs):
+            return {"personal_fields": ["stage"], "has_untracked_personal_ask": False,
+                    "has_general_question": True, "general_question": "What is glycolysis?"}
+
+        async def _search(conversation, emit=None, latest_text_override=None):
+            captured["search_text"] = latest_text_override
+            return {"terms": [], "latest_terms": [], "entity_groups": [], "rewritten_query": None}
+
+        async def _gen(*args, **kwargs):
+            captured["question"] = kwargs["question"]
+            captured["history"] = [m.content for m in kwargs["history"]]
+            yield "Glycolysis is a metabolic pathway."
+            yield {}
+
+        with (
+            patch("src.routers.conversations.OllamaConnector.classify_personal_question", new=_classify),
+            patch("src.routers.conversations.search_and_embed", new=_search),
+            patch("src.routers.conversations.run_retrieval") as mock_retrieval,
+            patch("src.routers.conversations.OllamaConnector.stream_text", new=_gen),
+        ):
+            mock_retrieval.return_value = {"generation_context": "info", "sources_ids": []}
+            response = client.post(f"/conversations/{test_conversation.id}/add_message", json={"content": raw})
+
+        assert response.status_code == 200
+        assert captured["search_text"] == "What is glycolysis?"
+        assert captured["question"] == "What is glycolysis?"
+        assert raw not in captured["history"]
+        # What the user typed is still what's saved and shown.
+        assert response.json()["messages"][0]["content"] == raw
+
+    def test_mixed_question_without_a_general_part_falls_back_to_full_text(self, client, test_conversation, db_session):
+        from src.db.repositories.profile import upsert_profile
+
+        upsert_profile(db_session, test_conversation.user_id, stage="IV")
+        raw = "What stage am I, and what is glycolysis?"
+        captured = {}
+
+        async def _classify(*args, **kwargs):
+            return {"personal_fields": ["stage"], "has_untracked_personal_ask": False,
+                    "has_general_question": True, "general_question": None}
+
+        async def _gen(*args, **kwargs):
+            captured["question"] = kwargs["question"]
+            captured["history"] = [m.content for m in kwargs["history"]]
+            yield "Answer."
+            yield {}
+
+        with (
+            patch("src.routers.conversations.OllamaConnector.classify_personal_question", new=_classify),
+            patch("src.routers.conversations.run_retrieval") as mock_retrieval,
+            patch("src.routers.conversations.OllamaConnector.stream_text", new=_gen),
+        ):
+            mock_retrieval.return_value = {"generation_context": "info", "sources_ids": []}
+            response = client.post(f"/conversations/{test_conversation.id}/add_message", json={"content": raw})
+
+        assert response.status_code == 200
+        assert captured["question"] == raw
+        assert raw in captured["history"]
+
     @patch("src.routers.conversations.run_retrieval")
     def test_no_profile_never_classifies(self, mock_retrieval, client, test_conversation):
         mock_retrieval.return_value = {"generation_context": "info", "sources_ids": []}

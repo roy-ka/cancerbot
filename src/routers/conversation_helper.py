@@ -1159,7 +1159,12 @@ async def _timed(coro, stage: str, **extra):
 async def search_and_embed(
     conversation,
     emit: StageEmitter = _emit_noop,
+    latest_text_override: str | None = None,
 ) -> dict[str, Any]:
+    """latest_text_override replaces the newest message's text for search
+    (it's still resolved against history) — used when only part of that
+    message should drive retrieval, e.g. the general half of a question that
+    also asks about the user's own saved profile."""
     messages = list(getattr(conversation, "messages", []) or [])
 
     # Get the last 4 messages
@@ -1190,7 +1195,7 @@ async def search_and_embed(
     # preserved. entity_groups matters most for the message the user is
     # actually asking about right now, so it can't be skipped.
     history_messages = last_messages[:-1]
-    latest_text = message_texts[-1] if message_texts else None
+    latest_text = (latest_text_override or '').strip() or (message_texts[-1] if message_texts else None)
 
     history_stored_terms: list[str] = []
     for msg in history_messages:
