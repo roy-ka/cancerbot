@@ -592,7 +592,7 @@ export default function ConversationList({
             Free to use
           </Typography>
           <Link
-            href="https://github.com/roy-ka/cancerbot-private/issues"
+            href="https://github.com/roy-ka/cancerbot/issues"
             target="_blank"
             rel="noopener noreferrer"
             variant="body2"

@@ -15,8 +15,8 @@ This guide covers deploying CancerBot to an Oracle Cloud Ubuntu instance with Do
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/roy-ka/cancerbot-private.git
-cd cancerbot-private
+git clone https://github.com/roy-ka/cancerbot.git
+cd cancerbot
 ```
 
 ### 2. Configure environment variables

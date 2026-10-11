@@ -38,7 +38,7 @@ server {
     ssl_certificate_key /etc/letsencrypt/live/cancer-bot.com/privkey.pem;
 
     # Serve frontend from build output
-    root /home/ubuntu/cancerbot-private/client/dist;
+    root /home/ubuntu/cancerbot/client/dist;
     index index.html;
 
     # SPA routing: try file, then directory, then fall back to index.html
@@ -156,7 +156,7 @@ echo ""
 echo "========================================="
 echo "✓ Nginx setup completed successfully!"
 echo "========================================="
-echo "Frontend will be served from: /home/ubuntu/cancerbot-private/client/dist"
+echo "Frontend will be served from: /home/ubuntu/cancerbot/client/dist"
 echo "API proxy configured for: http://localhost:8000"
 echo ""
 echo "Next steps:"

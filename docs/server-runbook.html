@@ -387,8 +387,8 @@
       <p class="phase-why">Standard setup — the only CancerBot-specific thing is how many <code class="inline">.env</code> values are Docker-network hostnames rather than <code class="inline">localhost</code>.</p>
 
       <h3 class="step">Clone and copy the env template</h3>
-      <pre>git clone &lt;repo-url&gt; cancerbot-private
-cd cancerbot-private
+      <pre>git clone https://github.com/roy-ka/cancerbot.git
+cd cancerbot
 cp example.env .env</pre>
 
       <h3 class="step">Fill in .env</h3>
@@ -426,7 +426,7 @@ sudo iptables -L INPUT -n -v --line-numbers</pre>
 
     <section class="phase" id="p3">
       <div class="phase-head"><span class="phase-num">03</span><h2>Fix home-directory permissions for nginx</h2></div>
-      <p class="phase-why">nginx serves the built frontend straight out of <code class="inline">~/cancerbot-private/client/dist</code>, running as <code class="inline">www-data</code>. Ubuntu home directories default to <code class="inline">750</code>, which blocks <code class="inline">www-data</code> from even traversing into them — no amount of <code class="inline">chmod</code> on <code class="inline">client/dist</code> itself fixes this.</p>
+      <p class="phase-why">nginx serves the built frontend straight out of <code class="inline">~/cancerbot/client/dist</code>, running as <code class="inline">www-data</code>. Ubuntu home directories default to <code class="inline">750</code>, which blocks <code class="inline">www-data</code> from even traversing into them — no amount of <code class="inline">chmod</code> on <code class="inline">client/dist</code> itself fixes this.</p>
       <pre><span class="c"># grants traversal only — doesn't make your home directory's contents listable</span>
 sudo chmod o+x ~</pre>
       <div class="callout">
@@ -482,7 +482,7 @@ sudo ss -tlnp | grep 11434   <span class="c"># should now read 0.0.0.0:11434, no
       <p class="phase-why">This is a <i>separate</i> certificate from the public site's — self-signed, scoped to the Docker network, and required before OpenSearch's security plugin will let its own nodes talk to each other. Skip this only if <code class="inline">certs/opensearch/</code> already contains a cert whose CN is <code class="inline">opensearch-node1</code>.</p>
       <pre>./scripts/generate_opensearch_certs.sh
 <span class="c"># then add the printed root-ca.pem path to .env:</span>
-<span class="v">OPENSEARCH_CA_CERT</span>=/home/ubuntu/cancerbot-private/certs/opensearch/root-ca.pem</pre>
+<span class="v">OPENSEARCH_CA_CERT</span>=/home/ubuntu/cancerbot/certs/opensearch/root-ca.pem</pre>
       <div class="callout danger">
         <span class="label">Verify the CN if this ever looks wrong later</span>
         <code class="inline">openssl x509 -in certs/opensearch/node.pem -noout -subject</code> — it must read <code class="inline">CN=opensearch-node1</code>. If it shows your public domain instead, the site's Let's Encrypt cert was copied into the wrong directory by mistake; regenerate with the script above.
@@ -609,5 +609,5 @@ sudo ss -tlnp | grep 11434   <span class="c"># should now read 0.0.0.0:11434, no
 
   </main>
 
-  <footer>cancerbot-private · runbook generated from the 2026-08-24 new-server deploy</footer>
+  <footer>cancerbot · runbook generated from the 2026-08-24 new-server deploy</footer>
 </div>
