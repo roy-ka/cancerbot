@@ -592,12 +592,14 @@ export default function ConversationList({
             Free to use
           </Typography>
           <Link
-            href="mailto:kazazroy@gmail.com"
+            href="https://github.com/roy-ka/cancerbot-private/issues"
+            target="_blank"
+            rel="noopener noreferrer"
             variant="body2"
             underline="hover"
             sx={{ color: 'rgba(255,255,255,0.7)' }}
           >
-            kazazroy@gmail.com
+            Questions or feedback? Open an issue on GitHub
           </Link>
         </DialogContent>
       </Dialog>

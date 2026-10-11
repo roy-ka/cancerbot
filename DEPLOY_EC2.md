@@ -71,10 +71,10 @@ Point the `ssl_certificate` lines in `nginx.conf` at `/etc/letsencrypt/live/your
    aws s3 mb s3://cancerbot-backups-$(aws sts get-caller-identity --query Account --output text)
    ```
 
-4. Install the S3 upload dependencies on the host and schedule the job (`requirements-backup.txt` is only needed for the optional Google Drive upload):
+4. Install the backup dependencies on the host and schedule the job:
 
    ```bash
-   pip3 install boto3 python-dotenv
+   pip3 install -r requirements-backup.txt
    (crontab -l 2>/dev/null; echo "0 2 * * * $PWD/scripts/daily_backup.sh >> /var/log/cancerbot_backup.log 2>&1") | crontab -
    ```
 

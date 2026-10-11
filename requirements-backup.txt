@@ -1,8 +1,12 @@
-# Dependencies for scripts/backup_*.py's optional Google Drive upload only.
-# Kept out of requirements.txt on purpose: these scripts run standalone on
-# the host (see daily_backup.sh), never imported by the backend app, so
-# installing google-api-python-client into the Docker image would be dead
-# weight — same reasoning as requirements-test.txt being separate.
+# Dependencies for the host-side backup scripts (scripts/backup_*.py,
+# scripts/daily_backup.sh). Kept out of requirements.txt on purpose: these
+# scripts run standalone on the host, never imported by the backend app, so
+# installing them into the Docker image would be dead weight — same
+# reasoning as requirements-test.txt being separate.
+python-dotenv
+# S3 upload (BACKUP_S3_BUCKET)
+boto3
+# Google Drive upload (GOOGLE_OAUTH_TOKEN_FILE)
 google-api-python-client
 google-auth
 # google-auth-oauthlib is only needed to run
