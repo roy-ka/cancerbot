@@ -32,6 +32,7 @@ import { extractUrls } from '../utils/urls'
 import { isPendingDeletionResponse, loginPathForAuthFailure } from '../utils/authRedirect'
 import { conversationToMarkdown, downloadMarkdown, printConversationAsPdf } from '../utils/conversationExport'
 import { openConversationInGoogleTranslate } from '../utils/googleTranslate'
+import { mergeFetchedMessages } from '../utils/mergeFetchedMessages'
 export default function Chat() {
   const BASE_URL = import.meta.env.VITE_BASE_URL || ''
   const navigate = useNavigate()
@@ -176,7 +177,7 @@ export default function Chat() {
 
         // Replace the message list for the selected conversation
         if (Array.isArray(apiMessages)) {
-          setMessages((prev) => (prev === apiMessages ? prev : apiMessages))
+          setMessages((prev) => mergeFetchedMessages(prev, apiMessages, selectedConversationId))
         } else if (apiMessages) {
   
           setMessages([])
