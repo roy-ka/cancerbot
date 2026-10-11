@@ -16,7 +16,26 @@ jobs:
         run: docker build --no-cache --pull -t cancerbot:${{ github.sha }} .
 
       - name: Scan image with Trivy
+        id: trivy
+        continue-on-error: true
         uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: cancerbot:${{ github.sha }}
+          format: table
+          exit-code: 1
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+
+      # Trivy downloads its vulnerability DB from mirror.gcr.io and only falls
+      # back to its other default (GHCR) on errors it classifies as temporary;
+      # a plain 403 from the mirror fails the scan outright. Retry once against
+      # other registries. Real findings still fail: the retry finds them too.
+      - name: Retry Trivy scan with alternate DB registries
+        if: steps.trivy.outcome == 'failure'
+        uses: aquasecurity/trivy-action@v0.36.0
+        env:
+          TRIVY_DB_REPOSITORY: public.ecr.aws/aquasecurity/trivy-db:2,ghcr.io/aquasecurity/trivy-db:2
+          TRIVY_JAVA_DB_REPOSITORY: public.ecr.aws/aquasecurity/trivy-java-db:1,ghcr.io/aquasecurity/trivy-java-db:1
         with:
           image-ref: cancerbot:${{ github.sha }}
           format: table
