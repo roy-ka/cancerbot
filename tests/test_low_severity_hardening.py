@@ -284,6 +284,23 @@ class TestMissingFrontendUrlGuard:
         with patch.dict("os.environ", {"CORS_ORIGINS": "http://localhost:5173", "ENV": "test"}):
             importlib.reload(src.main)
 
+    def test_dev_email_shortcuts_refused_in_production(self):
+        import importlib
+        import src.main
+
+        with patch.dict("os.environ", {
+            "CORS_ORIGINS": "https://example.com", "ENV": "production",
+            "FRONTEND_URL": "https://example.com", "DEV_EMAIL_SHORTCUTS": "true",
+        }):
+            with patch("src.utils.utils.is_prod", return_value=True):
+                with pytest.raises(RuntimeError, match="DEV_EMAIL_SHORTCUTS"):
+                    importlib.reload(src.main)
+
+        with patch.dict("os.environ", {
+            "CORS_ORIGINS": "http://localhost:5173", "ENV": "test", "DEV_EMAIL_SHORTCUTS": "false",
+        }):
+            importlib.reload(src.main)
+
     def test_production_with_frontend_url_starts(self):
         import importlib
         import src.main

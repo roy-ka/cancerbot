@@ -319,6 +319,7 @@ Used only by the legacy `src/embedding.py` loader; the live chat flow never read
 - `NINJA_EMAIL` / `NINJA_PASSWORD` — the admin principal (see "Ninja account" below); unset = no admin login.
 - `BREVO_API_KEY` — outbound email. Outside production nothing is sent; emails are only logged.
 - `RERANK_ENABLED` — `false` skips the cross-encoder rerank without a redeploy.
+- `DEV_EMAIL_SHORTCUTS` — local dev only (`dev_email_shortcuts()` in `src/utils/utils.py`). `/auth/register/` creates the user already verified and returns `verified: true`; `/auth/forgot-password/` returns `reset_token` instead of emailing it (disclosing whether the account exists), and `ForgotPasswordForm` navigates straight to `/reset-password`. Deliberately a separate opt-in rather than implied by non-production: backend tests and E2E exercise the real verification/reset flows, so `tests/conftest.py` forces it off. `src/main.py` refuses to start with it set in production, and `dev_email_shortcuts()` ignores it there regardless.
 
 ### Auth
 JWT tokens (HS256) accepted via `Authorization: Bearer <token>` header or `access_token` cookie. Dependency: `Depends(get_current_user)` in `src/deps/auth.py`.

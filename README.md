@@ -86,7 +86,7 @@ npm run dev
 
 Open http://localhost:5173.
 
-**Verifying your account locally.** No email is sent outside production. The response to `POST /auth/register/` includes a `verification_token` (visible in your browser's network tab); open `http://localhost:5173/verify-email?token=<token>` to verify.
+**Skipping emails locally.** No email is sent outside production. Set `DEV_EMAIL_SHORTCUTS=true` in your `.env` and registration creates an already-verified account, and "Forgot password" goes straight to the set-new-password page. It's refused when `ENV=production`, and the test suites run with it off. Without it, the `POST /auth/register/` response includes a `verification_token` (visible in your browser's network tab); open `http://localhost:5173/verify-email?token=<token>` to verify.
 
 **Background jobs (optional locally).** Emails and scheduled account deletions run in the arq worker, which needs Redis. Without them the app still works; queued jobs are logged and skipped. To run them, start Redis (`docker compose --profile prod up -d redis`) and then the worker (`arq src.worker.WorkerSettings`).
 

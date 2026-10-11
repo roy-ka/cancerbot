@@ -10,7 +10,7 @@ from src.deps.auth import get_current_user, NINJA_SUBJECT_ID
 from pydantic import BaseModel, Field
 from datetime import timedelta, datetime, timezone
 import re
-from src.utils.utils import is_prod
+from src.utils.utils import is_prod, dev_email_shortcuts
 from src.db.repositories.users import (
     create_user,
     get_user_by_email,
@@ -205,6 +205,11 @@ async def register_user(req: CreateUserRequest, request: Request, db: Session = 
         email=req.email,
         password_hash=password_hash,
     )
+    if dev_email_shortcuts():
+        user.email_verified = True
+        db.commit()
+        return {"message": "Account created. You can log in now.", "email": user.email, "verified": True}
+
     token = create_verification_token(db=db, user_id=user.id)
     frontend_url = _get_frontend_url()
     await enqueue("send_verification_email_job", to=user.email, name=user.display_name, token=token, frontend_url=frontend_url)
@@ -420,6 +425,10 @@ async def forgot_password(req: ForgotPasswordRequest, db: Session = Depends(get_
     record_attempt(db, f"forgot-password:{req.email}", MAX_FORGOT_PASSWORD_ATTEMPTS)
 
     user = get_user_by_email(db=db, email=req.email)
+    if user and dev_email_shortcuts():
+        # Discloses whether the account exists — acceptable only because
+        # dev_email_shortcuts() is never true in production.
+        return {"ok": True, "reset_token": create_reset_token(db=db, user_id=user.id)}
     if user:
         token = create_reset_token(db=db, user_id=user.id)
         frontend_url = _get_frontend_url()

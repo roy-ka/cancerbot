@@ -16,6 +16,9 @@ os.environ.setdefault("NINJA_PASSWORD", "test-ninja-password")
 os.environ.setdefault("REDIS_PASSWORD", "test-redis-password")
 os.environ.setdefault("REDIS_URL", "redis://:test-redis-password@localhost:6379/0")
 os.environ.setdefault("MAX_USERS", "")  # blank = no registration cap, matching production default
+# Forced, not setdefault: a developer's local .env may enable it, and the
+# suite exercises the real verification/reset email flows.
+os.environ["DEV_EMAIL_SHORTCUTS"] = "false"
 # Off by default so existing retrieval tests don't each attempt a doomed
 # HTTP call to a nlp-service that isn't running in unit tests; reranking
 # tests opt in per-test via monkeypatch and mock src.nlp.rerank directly.

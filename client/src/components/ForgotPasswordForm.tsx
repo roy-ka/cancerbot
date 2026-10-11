@@ -1,8 +1,10 @@
 import React, { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Stack, TextField, FormControl, Button, Typography, Alert } from '@mui/material'
 
 export default function ForgotPasswordForm({ onBack }: { onBack: () => void }) {
   const BASE_URL = import.meta.env.VITE_BASE_URL || ''
+  const navigate = useNavigate()
   const [email, setEmail] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
@@ -13,11 +15,18 @@ export default function ForgotPasswordForm({ onBack }: { onBack: () => void }) {
     setError(null)
     setLoading(true)
     try {
-      await fetch(`${BASE_URL}/auth/forgot-password/`, {
+      const res = await fetch(`${BASE_URL}/auth/forgot-password/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email }),
       })
+      const data = await res.json().catch(() => null)
+      // reset_token is only ever returned when the backend runs with
+      // DEV_EMAIL_SHORTCUTS — skip the email and go straight to the reset page.
+      if (data?.reset_token) {
+        navigate(`/reset-password?token=${encodeURIComponent(data.reset_token)}`)
+        return
+      }
       setSent(true)
     } catch {
       setError('Something went wrong. Please try again.')

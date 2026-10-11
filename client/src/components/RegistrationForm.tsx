@@ -22,6 +22,18 @@ function EmailSentScreen({ email, onBackToLogin }: { email: string; onBackToLogi
   )
 }
 
+function AccountReadyScreen({ onBackToLogin }: { onBackToLogin: () => void }) {
+  return (
+    <Stack spacing={3} sx={{ width: '100%', textAlign: 'center' }}>
+      <Typography variant="h6" sx={{ fontWeight: 600 }}>Account created</Typography>
+      <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.7)' }}>
+        Email verification is skipped in this development environment. You can log in now.
+      </Typography>
+      <Button variant="contained" onClick={onBackToLogin}>Go to Login</Button>
+    </Stack>
+  )
+}
+
 interface PasswordRequirement {
   label: string
   met: boolean
@@ -108,6 +120,7 @@ export default function RegistrationForm({
   const [termsAccepted, setTermsAccepted] = useState(false)
   const [error, setError] = useState('')
   const [emailSent, setEmailSent] = useState(false)
+  const [accountReady, setAccountReady] = useState(false)
   const [emailLockedByInvite, setEmailLockedByInvite] = useState(false)
   const BASE_URL = import.meta.env.VITE_BASE_URL || ''
 
@@ -155,7 +168,10 @@ export default function RegistrationForm({
       const err = await res.json().catch(() => null)
       throw new Error(err?.detail ?? err?.message ?? 'Registration failed')
     }
-    setEmailSent(true)
+    const data = await res.json().catch(() => null)
+    // verified is only ever true when the backend runs with DEV_EMAIL_SHORTCUTS.
+    if (data?.verified) setAccountReady(true)
+    else setEmailSent(true)
   }
 
   const onSubmit = (e: React.SubmitEvent<HTMLFormElement>) => {
@@ -195,6 +211,10 @@ export default function RegistrationForm({
   }
   const changeLastName = (e: React.ChangeEvent<HTMLInputElement>) => {
     setLastName(e.target.value)
+  }
+
+  if (accountReady) {
+    return <AccountReadyScreen onBackToLogin={changeToLogin} />
   }
 
   if (emailSent) {

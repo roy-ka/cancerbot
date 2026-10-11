@@ -104,6 +104,12 @@ if "*" in allow_origins:
 # Every emailed link (verification, password reset, deletion, invites) is built
 # from FRONTEND_URL; in production a missing value must not silently fall back
 # to some default host.
+if is_prod() and os.getenv("DEV_EMAIL_SHORTCUTS", "").strip().lower() in ("1", "true", "yes"):
+    raise RuntimeError(
+        "DEV_EMAIL_SHORTCUTS is set in production. It skips email verification and returns "
+        "password-reset tokens in API responses — local development only."
+    )
+
 if is_prod() and not os.getenv("FRONTEND_URL", "").strip():
     raise RuntimeError(
         "FRONTEND_URL is not set. Production must set it to the public frontend origin "

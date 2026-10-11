@@ -434,6 +434,73 @@ class TestResendVerification:
         assert unknown.json() == verified.json() == {"ok": True}
 
 
+class TestDevEmailShortcuts:
+    """DEV_EMAIL_SHORTCUTS (local dev only): registration skips email
+    verification and forgot-password hands the reset token straight back."""
+
+    @pytest.fixture(autouse=True)
+    def _enable(self, monkeypatch):
+        monkeypatch.setenv("DEV_EMAIL_SHORTCUTS", "true")
+
+    @pytest.fixture
+    def enqueued(self, monkeypatch):
+        jobs = []
+
+        async def fake_enqueue(job_name, **kwargs):
+            jobs.append(job_name)
+
+        monkeypatch.setattr("src.routers.auth.enqueue", fake_enqueue)
+        return jobs
+
+    def test_register_auto_verifies_and_sends_no_email(self, anon_client, enqueued):
+        response = anon_client.post(
+            "/auth/register/",
+            json={"first_name": "Dev", "last_name": "User",
+                  "email": "dev@example.com", "password": "SecurePass123!"},
+        )
+        assert response.status_code == 201
+        assert response.json()["verified"] is True
+        assert "verification_token" not in response.json()
+        assert enqueued == []
+
+        login = anon_client.post(
+            "/auth/login/",
+            json={"email": "dev@example.com", "password": "SecurePass123!", "rememberMe": False},
+        )
+        assert login.status_code == 200
+
+    def test_forgot_password_returns_a_working_reset_token(self, anon_client, test_user, enqueued):
+        response = anon_client.post("/auth/forgot-password/", json={"email": test_user.email})
+        assert response.status_code == 200
+        token = response.json()["reset_token"]
+        assert enqueued == []
+
+        reset = anon_client.post(
+            "/auth/reset-password/", json={"token": token, "new_password": "BrandNew123!"},
+        )
+        assert reset.status_code == 200
+        login = anon_client.post(
+            "/auth/login/",
+            json={"email": test_user.email, "password": "BrandNew123!", "rememberMe": False},
+        )
+        assert login.status_code == 200
+
+    def test_forgot_password_unknown_email_returns_no_token(self, anon_client, enqueued):
+        response = anon_client.post("/auth/forgot-password/", json={"email": "nobody@example.com"})
+        assert response.status_code == 200
+        assert "reset_token" not in response.json()
+
+    def test_ignored_in_production(self, monkeypatch):
+        from src.utils.utils import dev_email_shortcuts
+        monkeypatch.setattr("src.utils.utils.ENV", "production")
+        assert dev_email_shortcuts() is False
+
+    def test_off_by_default(self, anon_client, monkeypatch):
+        monkeypatch.setenv("DEV_EMAIL_SHORTCUTS", "false")
+        response = anon_client.post("/auth/forgot-password/", json={"email": "nobody@example.com"})
+        assert response.json() == {"ok": True}
+
+
 class TestEmailCaseInsensitivity:
     """Emails are stored and matched lowercase — the local part included,
     which EmailStr alone leaves untouched."""
