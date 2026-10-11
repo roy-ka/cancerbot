@@ -1,7 +1,7 @@
 from dotenv import load_dotenv
 from passlib.context import CryptContext
 from datetime import datetime, timedelta, timezone
-from jose import jwt, exceptions
+import jwt
 from fastapi import HTTPException, status
 import os
 
@@ -40,13 +40,8 @@ class SecurityUtils:
     try:
       payload = jwt.decode(token, cls.JWT_SECRET, algorithms=[cls.JWT_ALGORITHM])
       return payload
-    except exceptions.ExpiredSignatureError:
-      raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Invalid or expired token",
-        headers={"WWW-Authenticate": "Bearer"},
-      )
-    except exceptions.JWTError:
+    except jwt.InvalidTokenError:
+      # Base class of every PyJWT validation failure, expiry included.
       raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid or expired token",

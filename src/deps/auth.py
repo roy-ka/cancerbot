@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from uuid import UUID
 from fastapi import Depends, HTTPException, status, Cookie, Header
 from sqlalchemy.orm import Session
-from jose import JWTError
+from jwt import InvalidTokenError
 from src.db.repositories.users import get_user_by_id
 from src.deps.db import get_db
 from src.auth.security import SecurityUtils
@@ -41,7 +41,7 @@ def get_current_user(
         if user.deletion_scheduled_at is not None:
             raise HTTPException(status_code=401, detail="Account pending deletion")
         return user
-    except JWTError:
+    except InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
 
@@ -59,7 +59,7 @@ def get_current_ninja_user(token: str = Depends(get_token)) -> NinjaPrincipal:
     design: the ninja account has no row to look up."""
     try:
         payload = SecurityUtils.decode_jwt_token(token)
-    except JWTError:
+    except InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
     if not payload.get("is_ninja"):
         raise HTTPException(status_code=403, detail="Forbidden")
