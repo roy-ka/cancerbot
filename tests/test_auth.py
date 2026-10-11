@@ -6,23 +6,28 @@ from src.auth.security import SecurityUtils
 
 
 class TestFrontendUrlFallback:
-    """FRONTEND_URL missing in production must not silently produce a
-    localhost link in verification/deletion emails — it previously did
-    because three call sites hardcoded their own `http://localhost:5173`
-    fallback instead of sharing one production-safe default.
+    """Every emailed link goes through one helper. Outside production it
+    falls back to the local dev frontend; production can't reach the
+    fallback because src/main.py refuses to start without FRONTEND_URL
+    (see TestMissingFrontendUrlGuard in test_low_severity_hardening.py).
     """
 
-    def test_helper_falls_back_to_production_domain(self, monkeypatch):
+    def test_helper_falls_back_to_local_dev_frontend(self, monkeypatch):
         from src.routers.auth import _get_frontend_url
         monkeypatch.delenv("FRONTEND_URL", raising=False)
-        assert _get_frontend_url() == "https://cancer-bot.com"
+        assert _get_frontend_url() == "http://localhost:5173"
+
+    def test_blank_value_is_treated_as_unset(self, monkeypatch):
+        from src.routers.auth import _get_frontend_url
+        monkeypatch.setenv("FRONTEND_URL", "  ")
+        assert _get_frontend_url() == "http://localhost:5173"
 
     def test_helper_respects_explicit_env_var(self, monkeypatch):
         from src.routers.auth import _get_frontend_url
         monkeypatch.setenv("FRONTEND_URL", "https://staging.cancer-bot.com")
         assert _get_frontend_url() == "https://staging.cancer-bot.com"
 
-    def test_register_verification_email_uses_production_link_when_unset(self, anon_client, monkeypatch):
+    def test_register_verification_email_uses_fallback_link_when_unset(self, anon_client, monkeypatch):
         monkeypatch.delenv("FRONTEND_URL", raising=False)
         captured = {}
 
@@ -42,7 +47,7 @@ class TestFrontendUrlFallback:
         )
 
         assert captured["job_name"] == "send_verification_email_job"
-        assert captured["frontend_url"] == "https://cancer-bot.com"
+        assert captured["frontend_url"] == "http://localhost:5173"
 
 
 class TestRegister:

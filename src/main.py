@@ -101,6 +101,15 @@ if "*" in allow_origins:
         "authenticated requests. Acceptable in development only; this refuses to start in production."
     )
 
+# Every emailed link (verification, password reset, deletion, invites) is built
+# from FRONTEND_URL; in production a missing value must not silently fall back
+# to some default host.
+if is_prod() and not os.getenv("FRONTEND_URL", "").strip():
+    raise RuntimeError(
+        "FRONTEND_URL is not set. Production must set it to the public frontend origin "
+        "(e.g. https://example.com) — it's used to build every link in outgoing email."
+    )
+
 app.add_middleware(
   CORSMiddleware,
   allow_origins=allow_origins,

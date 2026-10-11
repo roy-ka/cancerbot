@@ -30,7 +30,7 @@ The active provider is Brevo. Email bodies are version-controlled HTML in this r
 
 Admin-facing mail (the daily/weekly digests and the Groq→Gemini fallback alert) goes to every address in `ADMIN_DIGEST_EMAILS`; unset means those are skipped. Never hardcode a recipient address in code.
 
-SendGrid is dormant (kept only in case it's ever reinstated): `_send_sendgrid`/`SENDGRID_EMAIL_TEMPLATES` in `src/utils/email.py` are commented out and unused by any live sender.
+SendGrid is dormant (kept only in case it's ever reinstated): `_send_sendgrid` in `src/utils/email.py` is unused by any live sender.
 
 ## Environment Variables
 
@@ -313,7 +313,7 @@ Used only by the legacy `src/embedding.py` loader; the live chat flow never read
 - `JWT_SECRET` — required, ≥ 32 characters (checked at import in `src/auth/security.py`). The algorithm is hardcoded to HS256.
 - `GROQ_MODEL_NAME` — do **not** wrap in quotes. `openai/gpt-oss-120b` is a reasoning model whose hidden reasoning counts against `max_tokens`; short utility calls pass `reasoning_effort="low"` for that reason (see `ollama_connector.py`).
 - `OLLAMA_CONTEXT_ITEMS` — must stay ≥ `MAX_RESULTS` in `search.py` (see Retrieval).
-- `FRONTEND_URL` — origin used in every emailed link; falls back to the production domain when unset.
+- `FRONTEND_URL` — origin used in every emailed link. **Required in production** (`src/main.py` refuses to start without it); elsewhere it falls back to `http://localhost:5173`.
 - `CORS_ORIGINS` — comma-separated; `*` refuses to start in production.
 - `ADMIN_DIGEST_EMAILS` — comma-separated recipients for admin digests and the LLM fallback alert; unset = those emails are skipped.
 - `NINJA_EMAIL` / `NINJA_PASSWORD` — the admin principal (see "Ninja account" below); unset = no admin login.

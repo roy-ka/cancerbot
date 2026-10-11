@@ -264,6 +264,41 @@ class TestMissingEnvGuard:
             importlib.reload(src.main)
 
 
+class TestMissingFrontendUrlGuard:
+    def test_production_without_frontend_url_refuses_to_start(self):
+        """Every emailed link is built from FRONTEND_URL; production must not
+        fall back to a default host."""
+        import importlib
+        import os
+        import src.main
+
+        env = {k: v for k, v in os.environ.items() if k != "FRONTEND_URL"}
+        env.update({"CORS_ORIGINS": "https://example.com", "ENV": "production"})
+        # main.py's load_dotenv() would otherwise re-read FRONTEND_URL from a
+        # developer's local .env on reload.
+        with patch.dict("os.environ", env, clear=True), patch("dotenv.load_dotenv"):
+            with patch("src.utils.utils.is_prod", return_value=True):
+                with pytest.raises(RuntimeError, match="FRONTEND_URL"):
+                    importlib.reload(src.main)
+
+        with patch.dict("os.environ", {"CORS_ORIGINS": "http://localhost:5173", "ENV": "test"}):
+            importlib.reload(src.main)
+
+    def test_production_with_frontend_url_starts(self):
+        import importlib
+        import src.main
+
+        with patch.dict("os.environ", {
+            "CORS_ORIGINS": "https://example.com", "ENV": "production",
+            "FRONTEND_URL": "https://example.com",
+        }):
+            with patch("src.utils.utils.is_prod", return_value=True):
+                importlib.reload(src.main)
+
+        with patch.dict("os.environ", {"CORS_ORIGINS": "http://localhost:5173", "ENV": "test"}):
+            importlib.reload(src.main)
+
+
 # ---------------------------------------------------------------------------
 # Prompt fence
 # ---------------------------------------------------------------------------

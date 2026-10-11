@@ -10,7 +10,6 @@ from src.deps.auth import get_current_user, NINJA_SUBJECT_ID
 from pydantic import BaseModel, Field
 from datetime import timedelta, datetime, timezone
 import re
-import logging
 from src.utils.utils import is_prod
 from src.db.repositories.users import (
     create_user,
@@ -71,10 +70,10 @@ from src.jobs.account_deletion import job_id_for_user
 def _get_frontend_url() -> str:
     """Single source of truth for the frontend origin used in email links.
 
-    Falls back to the production domain, not localhost — a missing
-    FRONTEND_URL in production must not silently produce localhost links.
+    The localhost fallback only ever applies outside production: src/main.py
+    refuses to start in production without FRONTEND_URL.
     """
-    return os.getenv("FRONTEND_URL", "https://cancer-bot.com")
+    return os.getenv("FRONTEND_URL", "").strip() or "http://localhost:5173"
 
 
 def _get_max_users() -> int | None:
@@ -316,7 +315,6 @@ async def generate_token(req: LoginRequest, response: Response, db: Session = De
         )
 
     user = get_user_by_email(db=db, email=req.email)
-    logging.info(f"Login attempt for email: {req.email}")
 
     # Always spend the cost of one verify, even when the email is unknown, so
     # response time doesn't disclose whether an account exists.

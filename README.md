@@ -92,7 +92,7 @@ Open http://localhost:5173.
 
 ### Production
 
-`docker compose --profile prod up --build` adds the backend, worker and Redis containers. `scripts/deploy.sh` is the full deploy (image build, Trivy scan, migrations, health check, nginx reload). See [DEPLOY_EC2.md](DEPLOY_EC2.md), [DEPLOY_ORACLE_CLOUD.md](DEPLOY_ORACLE_CLOUD.md) and [BACKUP.md](BACKUP.md). Set `ENV=production`: outside production, token-issuing endpoints return their tokens in the response for test automation.
+`docker compose --profile prod up --build` adds the backend, worker and Redis containers. `scripts/deploy.sh` is the full deploy (image build, Trivy scan, migrations, health check, nginx reload). See [DEPLOY_EC2.md](DEPLOY_EC2.md), [DEPLOY_ORACLE_CLOUD.md](DEPLOY_ORACLE_CLOUD.md) and [BACKUP.md](BACKUP.md). Set `ENV=production` (outside production, token-issuing endpoints return their tokens in the response for test automation) and `FRONTEND_URL` to your public origin; the backend refuses to start in production without it.
 
 ## Tests
 
@@ -101,7 +101,7 @@ pytest                    # backend (no services needed)
 cd client && npm test     # frontend
 ```
 
-The NLP service and Playwright end-to-end suites are covered in [TESTING.md](TESTING.md).
+The NLP service and Playwright end-to-end suites are covered in [TESTING.md](TESTING.md). CI runs the backend, NLP service and frontend suites on every push and pull request.
 
 ## Repository layout
 
@@ -119,7 +119,7 @@ scripts/        Deploy, backup and one-off data-migration scripts
 
 ## Contributing
 
-Issues and pull requests are welcome. Please run the backend and frontend tests before opening a PR, and include tests with any change. If you find a security issue, please report it privately rather than opening a public issue.
+Issues and pull requests are welcome. Please run the backend and frontend tests before opening a PR, and include tests with any change. If you find a security issue, please report it privately as described in [SECURITY.md](SECURITY.md) rather than opening a public issue.
 
 ## License
 

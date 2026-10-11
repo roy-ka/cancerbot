@@ -1,9 +1,9 @@
 """Email bodies sent via Brevo (src/utils/email_brevo.py).
 
 Content lives here in the repo rather than in a provider dashboard (unlike the
-dormant SendGrid path in email.py, whose commented-out SENDGRID_EMAIL_TEMPLATES
-are opaque IDs pointing at templates stored in SendGrid) — fully
-version-controlled and testable, and portable to any future provider.
+dormant SendGrid path in email.py, which referenced templates stored in
+SendGrid by opaque ID) — fully version-controlled and testable, and portable
+to any future provider.
 
 One module per email (`verification.py`, `password_reset.py`, ...), each
 exposing a plain `SUBJECT` string and `HTML` string. This module just

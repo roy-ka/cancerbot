@@ -63,19 +63,8 @@ def _redact_payload(template_data: dict) -> dict:
     }
 
 
-# Dormant — SendGrid is no longer the active provider (see Brevo path in
-# email_brevo.py / email_templates.py). Kept only as a reference for these
-# template IDs in case SendGrid is ever reinstated; nothing reads this today.
-# SENDGRID_EMAIL_TEMPLATES = {
-#     "verification": "d-6a6d6095e74549fbb91c18e741cef813",
-#     "password_reset": "d-89a37afdde454f699046dda66cfca385",
-#     "fallback_alert": "d-18e52d88f49b4b79b4ff292b1074bd75",
-#     "account_deleted": "d-feba610add7d4ad091351504f1a14937",
-#     "delete_account_request": "d-4db440ef36e547a0a7e16e35500d935c",
-#     "delete_account_scheduled": "d-336a3518ba8140cd9b5689f1aab52a94",
-# }
-
-
+# Dormant — SendGrid is no longer the active provider (see the Brevo path in
+# email_brevo.py / email_templates/). Not called by any live sender.
 def _send_sendgrid(
     to: str,
     template_id: str,

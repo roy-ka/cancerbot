@@ -1,342 +1,87 @@
 # Deploying CancerBot to AWS EC2
 
-## 1. EC2 Instance Setup
+This is the EC2-specific part of a deployment. Everything after the instance exists — Docker, Ollama on the host, `.env`, `scripts/deploy.sh`, nginx — is the same as on any Ubuntu host and is covered in [DEPLOY_ORACLE_CLOUD.md](DEPLOY_ORACLE_CLOUD.md). Use the repository's own `docker-compose.yml` and `scripts/deploy.sh` unchanged; don't hand-write replacements.
 
-**Launch instance:**
+## 1. Launch the instance
 
-- AMI: Ubuntu 24.04 LTS (t3.medium or larger for Ollama)
-- Storage: 30+ GB (for embeddings + backups)
-- Security group inbound rules:
-  - Port 80: HTTP (from 0.0.0.0/0, for Let's Encrypt)
-  - Port 443: HTTPS (from 0.0.0.0/0)
-  - Port 22: SSH (from your IP)
-
-**SSH in:**
-
-```bash
-ssh -i your-key.pem ubuntu@your-instance-ip
-```
-
-## 2. Install Docker & Docker Compose
+- **AMI:** Ubuntu 24.04 LTS
+- **Memory:** 4 GB is the minimum. More is better: two OpenSearch nodes, PostgreSQL, Redis, the NLP service (scispaCy + a cross-encoder) and Ollama all run on this one host.
+- **Disk:** at least **150 GB**. `scripts/deploy.sh` refuses to deploy with less than 100 GB free.
+- **Security group, inbound:**
+  - 22 (SSH) from your IP only
+  - 80 and 443 from anywhere (nginx, Let's Encrypt)
+  - **Nothing else.** The backend container publishes port 8000 on all interfaces so nginx can reach it; the security group is what keeps it off the internet. Every other service is bound to `127.0.0.1` by `docker-compose.yml`.
 
 ```bash
-sudo apt update && sudo apt install -y docker.io docker-compose
-
-# Add ubuntu user to docker group (no sudo needed)
-sudo usermod -aG docker $USER
-# Log out and back in for group membership to take effect
-
-# Verify
-docker --version
-docker-compose --version
+ssh -i your-key.pem ubuntu@<instance-public-ip>
 ```
 
-## 3. Clone & Configure
+## 2. Prepare the host
+
+Follow [DEPLOY_ORACLE_CLOUD.md](DEPLOY_ORACLE_CLOUD.md) from "Initial Server Setup". The parts that matter on any host:
+
+- **Docker** with the Compose v2 plugin (`docker compose`, not the legacy `docker-compose`).
+- **Node.js 20.19+** — `deploy.sh` builds the frontend on the host.
+- **Ollama on the host, listening on all interfaces.** Containers reach it through the Docker bridge gateway (`172.30.0.1`, set in `docker-compose.yml`), and the official installer binds to `127.0.0.1` only. Add `Environment="OLLAMA_HOST=0.0.0.0"` to the `ollama` systemd unit, restart it, then `ollama pull nomic-embed-text`. Port 11434 must stay closed in the security group.
+- **`.env`** from `example.env`. In production you must set `ENV=production` and `FRONTEND_URL` (the backend refuses to start without it), plus `CORS_ORIGINS`, `JWT_SECRET`, `POSTGRES_PASSWORD`, `OPENSEARCH_INITIAL_ADMIN_PASSWORD`, `REDIS_PASSWORD`, `GROQ_API_KEY` and `BREVO_API_KEY`. Don't set `POSTGRES_URL`, `OPENSEARCH_URL`, `OLLAMA_URL`, `NLP_SERVICE_URL` or `REDIS_URL` for production — `docker-compose.yml` sets the in-network values itself.
+- **OpenSearch TLS:** run `scripts/generate_opensearch_certs.sh` and set `OPENSEARCH_CA_CERT` (see "OpenSearch — Production SSL" in [CLAUDE.md](CLAUDE.md)).
+- **`nginx.conf`** is deployment-specific. `deploy.sh` copies it into `/etc/nginx/sites-available/cancerbot` on every deploy, so edit the repository copy, never the installed one:
+  - `root` — the built frontend, `<your checkout>/client/dist`
+  - `ssl_certificate` / `ssl_certificate_key` — your domain's Let's Encrypt paths (next step)
+
+## 3. HTTPS
+
+Get a certificate without letting certbot rewrite the nginx config (the next deploy would overwrite its changes anyway):
 
 ```bash
-cd /opt
-sudo git clone https://github.com/YOUR_REPO/cancerbot.git
-cd cancerbot
-sudo chown -R $USER:$USER .
-
-# Create .env
-cp example.env .env
-nano .env  # Fill in all values (see below)
-```
-
-**Required .env values for EC2:**
-
-```
-# Database
-POSTGRES_PASSWORD=<generate-strong-password>
-POSTGRES_USER=cancerbot
-POSTGRES_DB=cancerbot
-POSTGRES_URL=postgresql+asyncpg://cancerbot:PASSWORD@postgres:5432/cancerbot
-
-# Secrets
-JWT_SECRET=<generate-with: python3 -c "import secrets; print(secrets.token_urlsafe(32))">
-
-# URLs
-CORS_ORIGINS=https://your-domain.com
-OLLAMA_URL=http://ollama:11434
-# OpenSearch (from Docker service)
-OPENSEARCH_URL=https://opensearch:9200
-OPENSEARCH_INITIAL_ADMIN_PASSWORD=<generate-strong-password>
-
-# SMTP (for password reset emails)
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
-SMTP_USER=<your-gmail>
-SMTP_PASSWORD=<app-password>
-SMTP_FROM=noreply@your-domain.com
-
-# S3 Backups
-BACKUP_S3_BUCKET=cancerbot-backups-<account-id>
-
-# Dev/Prod
-ENV=production
-```
-
-## 4. Docker Compose
-
-Update `docker-compose.yml` for production:
-
-```yaml
-version: '3.8'
-
-services:
-  postgres:
-    image: postgres:16
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    ports:
-      - '5432:5432'
-    healthcheck:
-      test: ['CMD', 'pg_isready', '-U', '${POSTGRES_USER}']
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  opensearch:
-    image: opensearchproject/opensearch:latest
-    environment:
-      - discovery.type=single-node
-      - OPENSEARCH_INITIAL_ADMIN_PASSWORD=${OPENSEARCH_INITIAL_ADMIN_PASSWORD}
-      - OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m
-    volumes:
-      - opensearch_data:/usr/share/opensearch/data
-    ports:
-      - '9200:9200'
-    healthcheck:
-      test: ['CMD', 'curl', '-f', 'http://localhost:9200']
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  ollama:
-    image: ollama/ollama:latest
-    volumes:
-      - ollama_data:/root/.ollama
-    ports:
-      - '11434:11434'
-    healthcheck:
-      test: ['CMD', 'curl', '-f', 'http://localhost:11434/api/tags']
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-volumes:
-  postgres_data:
-  opensearch_data:
-  ollama_data:
-```
-
-## 5. AWS IAM Role for S3 Backups
-
-**Create IAM role:**
-
-1. Go to IAM → Roles → Create role
-2. Trusted entity: EC2
-3. Add inline policy:
-
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Action": [
-        "s3:PutObject",
-        "s3:GetObject",
-        "s3:DeleteObject",
-        "s3:ListBucket"
-      ],
-      "Resource": [
-        "arn:aws:s3:::cancerbot-backups-*",
-        "arn:aws:s3:::cancerbot-backups-*/*"
-      ]
-    }
-  ]
-}
-```
-
-4. Attach role to your EC2 instance
-
-**Create S3 bucket:**
-
-```bash
-aws s3 mb s3://cancerbot-backups-$(aws sts get-caller-identity --query Account --output text)
-```
-
-## 6. Deploy Script
-
-Create `deploy.sh`:
-
-```bash
-#!/bin/bash
-set -e
-
-cd /opt/cancerbot
-
-echo "Pulling latest code..."
-git pull origin main
-
-echo "Building containers..."
-docker-compose build
-
-echo "Running migrations..."
-docker-compose run --rm backend alembic upgrade head
-
-echo "Starting services..."
-docker-compose up -d
-
-echo "Waiting for services to be ready..."
-sleep 10
-
-echo "Running health check..."
-curl -f http://localhost:8000/health/ || { echo "Health check failed"; exit 1; }
-
-echo "✓ Deployment complete"
-```
-
-Make executable:
-
-```bash
-chmod +x deploy.sh
-```
-
-Deploy:
-
-```bash
-./deploy.sh
-```
-
-## 7. SSL/HTTPS (Let's Encrypt)
-
-```bash
-sudo apt install -y certbot python3-certbot-nginx
-
-sudo certbot certonly --standalone -d your-domain.com -d www.your-domain.com
-
-# Auto-renew
+sudo apt install -y nginx certbot python3-certbot-nginx
+sudo certbot certonly --nginx -d your-domain.com -d www.your-domain.com
 sudo systemctl enable certbot.timer
 ```
 
-## 8. Nginx Reverse Proxy
+Point the `ssl_certificate` lines in `nginx.conf` at `/etc/letsencrypt/live/your-domain.com/`, then deploy:
 
 ```bash
-sudo apt install -y nginx
+./scripts/deploy.sh
 ```
 
-Create `/etc/nginx/sites-available/cancerbot`:
+## 4. S3 backups (optional)
 
-```nginx
-upstream backend {
-  server localhost:8000;
-}
+`scripts/daily_backup.sh` can upload PostgreSQL dumps to S3 when `BACKUP_S3_BUCKET` is set (see [BACKUP.md](BACKUP.md)). Use an instance IAM role rather than access keys:
 
-server {
-  listen 80;
-  server_name your-domain.com www.your-domain.com;
-  return 301 https://$server_name$request_uri;
-}
+1. **IAM → Roles → Create role**, trusted entity **EC2**, with this inline policy:
 
-server {
-  listen 443 ssl http2;
-  server_name your-domain.com www.your-domain.com;
+   ```json
+   {
+     "Version": "2012-10-17",
+     "Statement": [
+       {
+         "Effect": "Allow",
+         "Action": ["s3:PutObject", "s3:GetObject", "s3:DeleteObject", "s3:ListBucket"],
+         "Resource": ["arn:aws:s3:::cancerbot-backups-*", "arn:aws:s3:::cancerbot-backups-*/*"]
+       }
+     ]
+   }
+   ```
 
-  ssl_certificate /etc/letsencrypt/live/your-domain.com/fullchain.pem;
-  ssl_certificate_key /etc/letsencrypt/live/your-domain.com/privkey.pem;
+2. Attach the role to the instance.
+3. Create the bucket:
 
-  location / {
-    proxy_pass http://backend;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_read_timeout 300s;
-    proxy_connect_timeout 300s;
+   ```bash
+   aws s3 mb s3://cancerbot-backups-$(aws sts get-caller-identity --query Account --output text)
+   ```
 
-    # WebSocket support
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection "upgrade";
-  }
-}
-```
+4. Install the S3 upload dependencies on the host and schedule the job (`requirements-backup.txt` is only needed for the optional Google Drive upload):
 
-Enable:
+   ```bash
+   pip3 install boto3 python-dotenv
+   (crontab -l 2>/dev/null; echo "0 2 * * * $PWD/scripts/daily_backup.sh >> /var/log/cancerbot_backup.log 2>&1") | crontab -
+   ```
+
+## Checking it's up
 
 ```bash
-sudo ln -s /etc/nginx/sites-available/cancerbot /etc/nginx/sites-enabled/
-sudo nginx -t
-sudo systemctl restart nginx
-```
-
-## 9. Automated Backups
-
-```bash
-# Install boto3 inside the instance
-pip3 install boto3
-
-# Add to crontab (backup daily at 2am)
-(crontab -l 2>/dev/null; echo "0 2 * * * /opt/cancerbot/scripts/daily_backup.sh >> /var/log/cancerbot_backup.log 2>&1") | crontab -
-
-# Check cron logs
-sudo tail -f /var/log/cancerbot_backup.log
-```
-
-## 10. Monitoring
-
-**Health check endpoint:**
-
-```bash
-curl https://your-domain.com/health/
-```
-
-**Check logs:**
-
-```bash
-docker-compose logs -f backend
-docker-compose logs -f ollama
-```
-
-**Disk usage:**
-
-```bash
-df -h
-du -sh /opt/cancerbot
-```
-
-## Troubleshooting
-
-**Backend won't start:**
-
-```bash
-docker-compose logs backend
-docker-compose run backend python -c "import src.main"
-```
-
-**Ollama not ready:**
-
-```bash
-docker-compose exec ollama ollama list
-docker-compose exec ollama ollama pull llama3.1:8b
-```
-
-**Database migration failed:**
-
-```bash
-docker-compose run backend alembic upgrade head
-```
-
-**No backups happening:**
-
-```bash
-/opt/cancerbot/scripts/backup_db.py  # Test manually
-sudo tail -f /var/log/cancerbot_backup.log
+curl -i https://your-domain.com/health/   # 200 when PostgreSQL and Ollama are reachable, 503 otherwise
+docker compose -p cancerbot --profile prod ps
+docker compose -p cancerbot --profile prod logs -f backend
 ```

@@ -27,68 +27,53 @@ cp example.env .env
 nano .env
 ```
 
-Key variables:
-- `OPENSEARCH_INITIAL_ADMIN_PASSWORD` — OpenSearch admin password
-- `POSTGRES_PASSWORD` — PostgreSQL password
-- `OLLAMA_URL` — Points to Ollama running on host (e.g., http://localhost:11434)
-- `JWT_SECRET` — Session secret
-- Other API keys and settings as needed
+Required in production:
+- `ENV=production`
+- `FRONTEND_URL` — your public origin, e.g. `https://your-domain.com` (the backend refuses to start without it)
+- `CORS_ORIGINS` — the same origin
+- `JWT_SECRET`, `POSTGRES_PASSWORD`, `OPENSEARCH_INITIAL_ADMIN_PASSWORD`, `REDIS_PASSWORD`
+- `GROQ_API_KEY` (and optionally `GEMINI_API_KEY` for fallback), `BREVO_API_KEY`
+- `ADMIN_DIGEST_EMAILS` — where admin digests and LLM-fallback alerts go
+
+Don't set `POSTGRES_URL`, `OPENSEARCH_URL`, `OLLAMA_URL`, `NLP_SERVICE_URL` or `REDIS_URL` for production — `docker-compose.yml` sets the in-network values for the backend and worker containers.
 
 ### 3. Install Ollama on host
 
-Ollama runs on the host (not in Docker) for GPU acceleration:
+Ollama runs on the host (not in Docker) and is used for embeddings only:
 
 ```bash
 # On Ubuntu, follow: https://github.com/ollama/ollama/blob/main/README.md
-curl -fsSL https://ollama.ai/install.sh | sh
-
-# Pull a model
-ollama pull llama3.1:8b
+curl -fsSL https://ollama.com/install.sh | sh
 ollama pull nomic-embed-text
-
-# Start Ollama service
-systemctl start ollama
-systemctl enable ollama
 ```
 
-Verify Ollama is accessible from the Docker network:
+Containers reach Ollama through the Docker bridge gateway (`172.30.0.1`, set in `docker-compose.yml`), but the installer binds it to `127.0.0.1` only. Make it listen on all interfaces (keep port 11434 closed in your cloud firewall):
+
 ```bash
+sudo systemctl edit ollama
+# add:
+#   [Service]
+#   Environment="OLLAMA_HOST=0.0.0.0"
+sudo systemctl restart ollama
+sudo systemctl enable ollama
 curl http://localhost:11434/api/tags
 ```
 
 ## Docker Deployment
 
-### 1. Build and start services
+Deploy with the deploy script — it builds the images and the frontend, starts the `prod` profile (backend, worker, Redis alongside the default services), waits for PostgreSQL and OpenSearch, runs migrations and seeds, and health-checks the result:
 
 ```bash
-docker compose build
-docker compose up -d
+./scripts/deploy.sh
 ```
 
-Verify services are running:
-```bash
-docker compose ps
-```
-
-### 2. Run database migrations
+Then check:
 
 ```bash
-docker run --rm \
-  --network cancerbot_osnet \
-  --env-file .env \
-  -v $(pwd):/app -w /app \
-  python:3.12-slim bash -c \
-  "pip install -q alembic psycopg2-binary sqlalchemy python-dotenv && alembic upgrade head"
-```
-
-### 3. Test health endpoints
-
-```bash
-# Backend health check
-curl http://localhost:8000/health/
-
-# Expected response:
-# {"status":"ok","checks":{"database":"ok","ollama":"ok"}}
+docker compose -p cancerbot --profile prod ps
+curl -i http://localhost:8000/health/
+# 200 {"status":"ok","checks":{"database":{"status":"ok"},"ollama":{"status":"ok","models":1}},...}
+# 503 with "status":"degraded" if PostgreSQL or Ollama is unreachable
 ```
 
 ## Docker-to-Host Connectivity (Iptables Fix)
@@ -167,48 +152,15 @@ Deploy logs are saved to `logs/deploy_TIMESTAMP.log`
 
 ## Nginx Reverse Proxy Setup
 
-Setup Nginx as a reverse proxy to expose the FastAPI backend on port 80/443:
+nginx serves the built frontend (`client/dist`) and proxies the API path prefixes (`/auth/`, `/conversations/`, `/health/`, …) to the backend on port 8000. The configuration is the repository's `nginx.conf`, which `deploy.sh` copies to `/etc/nginx/sites-available/cancerbot` and reloads on every deploy — so edit the repository copy, never the installed one. Before the first deploy, edit it for your host:
+
+- `root` — `<your checkout>/client/dist`
+- `ssl_certificate` / `ssl_certificate_key` — your domain's Let's Encrypt paths
 
 ```bash
-sudo apt-get install -y nginx
-
-# Use the provided setup script (requires certbot SSL certs already installed)
-sudo ./scripts/setup-nginx.sh
-```
-
-Example configuration (managed by `scripts/setup-nginx.sh`):
-```nginx
-server {
-    listen 80;
-    server_name cancer-bot.com www.cancer-bot.com;
-    return 301 https://$server_name$request_uri;
-}
-
-server {
-    listen 443 ssl http2;
-    server_name cancer-bot.com www.cancer-bot.com;
-
-    ssl_certificate /etc/letsencrypt/live/cancer-bot.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/cancer-bot.com/privkey.pem;
-
-    location / {
-        proxy_pass http://localhost:8000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-    }
-}
-```
-
-Enable the site:
-```bash
+sudo apt-get install -y nginx certbot python3-certbot-nginx
+sudo certbot certonly --nginx -d your-domain.com -d www.your-domain.com
 sudo ln -s /etc/nginx/sites-available/cancerbot /etc/nginx/sites-enabled/
-sudo nginx -t
-sudo systemctl restart nginx
 ```
 
 ## Database Backups
@@ -260,9 +212,10 @@ docker compose stats
 
 **Solution:**
 1. Verify Ollama is running: `curl http://localhost:11434/api/tags`
-2. Check iptables service: `sudo systemctl status iptables-docker.service`
-3. Manually apply rules: `sudo ./scripts/fix-iptables.sh`
-4. Verify connectivity from container: `docker exec cancerbot-backend-1 curl http://host.docker.internal:11434/api/tags`
+2. Verify it listens on all interfaces, not just loopback: `ss -ltnp | grep 11434` should show `*:11434` or `0.0.0.0:11434` (see "Install Ollama on host")
+3. Check iptables service: `sudo systemctl status iptables-docker.service`
+4. Manually apply rules: `sudo ./scripts/fix-iptables.sh`
+5. Verify connectivity from the container (the image has no curl): `docker exec cancerbot-backend-1 python -c "import urllib.request; print(urllib.request.urlopen('http://172.30.0.1:11434/api/tags').status)"`
 
 ### Database connection errors
 

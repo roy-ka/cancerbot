@@ -305,7 +305,7 @@ class TestAdminDigestEmails:
 
 
 class TestDormantSendgridPath:
-    """_send_sendgrid/EMAIL_TEMPLATES are kept in email.py, unused by any live
+    """_send_sendgrid is kept in email.py, unused by any live
     sender, in case SendGrid is ever reinstated. Minimal regression coverage
     only — the active path is Brevo, tested above."""
 

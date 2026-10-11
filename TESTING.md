@@ -75,5 +75,6 @@ Configuration comes from the `E2E_*` variables in `.env` (see `example.env`): `E
 - `scan` — builds the backend image and scans it with Trivy
 - `test` — backend pytest suite (Python 3.12)
 - `nlp-service-test` — NLP extraction tests against the real scispaCy model
+- `frontend-test` — ESLint, Vitest, and a type-checked production build
 
-The frontend and E2E suites are not run in CI yet — run them locally before opening a pull request.
+`.github/workflows/e2e.yml` runs the Playwright suite on demand (manual "Run workflow") against an already-running deployment whose URLs you pass as inputs; it needs `E2E_EMAIL`/`E2E_PASSWORD` repository secrets.
