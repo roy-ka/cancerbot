@@ -95,7 +95,9 @@ fi
 DISK_AVAILABLE=$(df -BG "$PROJECT_DIR" | awk 'NR==2 {print $(NF-2)}' | sed 's/G$//')
 if [ "$DISK_AVAILABLE" -lt 100 ]; then
   echo "⚠ Low disk space (${DISK_AVAILABLE}GB). Running Docker cleanup..."
-  docker system prune -a -f --volumes 2>/dev/null || true
+  # Never add --volumes: PostgreSQL and OpenSearch data live in named volumes,
+  # and prune deletes any volume whose container happens to be stopped.
+  docker system prune -a -f 2>/dev/null || true
   DISK_AVAILABLE=$(df -BG "$PROJECT_DIR" | awk 'NR==2 {print $(NF-2)}' | sed 's/G$//')
   if [ "$DISK_AVAILABLE" -lt 100 ]; then
     echo "✗ Error: Still not enough disk space after cleanup. Required: 100GB, Available: ${DISK_AVAILABLE}GB"
