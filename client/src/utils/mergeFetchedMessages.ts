@@ -2,24 +2,26 @@ import type { Message } from '../types'
 
 /** The message list to show once a conversation's messages have loaded.
  *
- * A question sent while that fetch was still in flight exists only as an
- * optimistic `temp-` message in `prev`; replacing the list with the fetched
- * one would hide it until the answer finished streaming (seconds with Groq,
- * much longer with a local model). So pending messages for this conversation
- * are kept after the fetched ones — unless the server already saved that
- * question, in which case it's the fetched list's last message.
+ * `before` is the list that was on screen when the load started. Anything
+ * added since — a question sent while it was in flight, or the reply that
+ * already came back for it — would be wiped out by simply replacing the list
+ * with the fetched one, so those are kept after the fetched history. They're
+ * dropped when the fetched list already has them: same id, or (for a
+ * still-unsaved `temp-` question) the server already saved that question as
+ * its last message.
  */
 export function mergeFetchedMessages(
   prev: Message[],
   fetched: Message[],
-  conversationId: string,
+  before: Message[],
 ): Message[] {
+  const fetchedIds = new Set(fetched.map((m) => m.id).filter(Boolean))
   const last = fetched[fetched.length - 1]
-  const pending = prev.filter(
+  const added = prev.filter(
     (m) =>
-      m.id?.startsWith('temp-') &&
-      m.conversationId === conversationId &&
-      !(last?.role === 'user' && last.content === m.content),
+      !before.includes(m) &&
+      !(m.id && fetchedIds.has(m.id)) &&
+      !(m.id?.startsWith('temp-') && last?.role === 'user' && last.content === m.content),
   )
-  return pending.length === 0 ? fetched : [...fetched, ...pending]
+  return added.length === 0 ? fetched : [...fetched, ...added]
 }

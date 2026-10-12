@@ -95,6 +95,12 @@ export default function Chat() {
   // message fetch triggered by setSelectedConversationId so the optimistic
   // message is not wiped before the WS final response arrives.
   const skipFetchForConvRef = useRef<string | null>(null)
+  // What's on screen right now, so a conversation load can tell which
+  // messages were added after it started (see mergeFetchedMessages).
+  const messagesRef = useRef<Message[]>([])
+  useEffect(() => {
+    messagesRef.current = messages
+  }, [messages])
 
   const setSelectedConversationIdWithClose = (id: string | React.SetStateAction<string>) => {
     setSelectedConversationId(id)
@@ -145,6 +151,9 @@ export default function Chat() {
   }, [BASE_URL, conversations.length])
 
   useEffect(() => {
+    // Set by the cleanup when the selection changes, so a slower load for a
+    // conversation the user already left can't overwrite the current one.
+    let cancelled = false
     const fetchMessages = async () => {
       if (selectedConversationId === 'new') {
         // Avoid re-render loops: only clear if there is something to clear
@@ -161,6 +170,7 @@ export default function Chat() {
         return
       }
 
+      const onScreenAtStart = messagesRef.current
       try {
         const res = await fetch(
           `${BASE_URL}/conversations/${selectedConversationId}/messages/?limit=30`,
@@ -169,6 +179,7 @@ export default function Chat() {
         if (!res.ok) throw new Error(await res.text())
 
         const json = await res.json()
+        if (cancelled) return
         const apiMessages = json?.messages
         const apiConversation = json?.conversation
         const apiNextBefore = json?.next_before ?? null
@@ -177,7 +188,7 @@ export default function Chat() {
 
         // Replace the message list for the selected conversation
         if (Array.isArray(apiMessages)) {
-          setMessages((prev) => mergeFetchedMessages(prev, apiMessages, selectedConversationId))
+          setMessages((prev) => mergeFetchedMessages(prev, apiMessages, onScreenAtStart))
         } else if (apiMessages) {
   
           setMessages([])
@@ -206,6 +217,9 @@ export default function Chat() {
       }
     }
     fetchMessages()
+    return () => {
+      cancelled = true
+    }
   }, [BASE_URL, selectedConversationId])
 
   const loadOlderMessages = useCallback(async (): Promise<boolean> => {

@@ -9,7 +9,6 @@ function message(overrides: Partial<Message> = {}): Message {
     role: 'user',
     timestamp: '2026-10-11T12:00:00Z',
     sources: [],
-    conversationId: 'conv-1',
     ...overrides,
   }
 }
@@ -20,29 +19,38 @@ const fetched = [
 ]
 
 describe('mergeFetchedMessages', () => {
-  it('returns the fetched list when nothing is pending', () => {
-    expect(mergeFetchedMessages([], fetched, 'conv-1')).toBe(fetched)
+  it('returns the fetched list when nothing was added during the load', () => {
+    const before = [message({ id: 'x', content: 'Previous conversation' })]
+    expect(mergeFetchedMessages(before, fetched, before)).toBe(fetched)
   })
 
-  it('keeps a question sent while the fetch was in flight', () => {
+  it('drops the previous conversation\'s messages', () => {
+    const previous = [message({ id: 'x', content: 'Earlier' })]
+    expect(mergeFetchedMessages(previous, fetched, previous)).toBe(fetched)
+  })
+
+  it('keeps a question sent while the load was in flight', () => {
     const pending = message({ id: 'temp-1', content: 'What is lung cancer?' })
-    const result = mergeFetchedMessages([pending], fetched, 'conv-1')
-    expect(result).toEqual([...fetched, pending])
+    expect(mergeFetchedMessages([pending], fetched, [])).toEqual([...fetched, pending])
   })
 
-  it('drops pending messages that belong to a different conversation', () => {
-    const other = message({ id: 'temp-1', content: 'Old question', conversationId: 'conv-2' })
-    expect(mergeFetchedMessages([other], fetched, 'conv-1')).toBe(fetched)
+  it('keeps a reply that arrived before the load finished', () => {
+    const exchange = [
+      message({ id: 'u1', content: 'What is lung cancer?' }),
+      message({ id: 'r1', role: 'assistant', content: 'Lung cancer is…' }),
+    ]
+    expect(mergeFetchedMessages(exchange, fetched, [])).toEqual([...fetched, ...exchange])
   })
 
-  it('does not duplicate a question the server has already saved', () => {
+  it('does not duplicate messages the fetched list already contains', () => {
+    const saved = [...fetched, message({ id: 'u1', content: 'What is lung cancer?' })]
+    const added = [message({ id: 'u1', content: 'What is lung cancer?' })]
+    expect(mergeFetchedMessages(added, saved, [])).toBe(saved)
+  })
+
+  it('does not duplicate an unsaved question the server has already saved', () => {
     const saved = [...fetched, message({ id: 'c', content: 'What is lung cancer?' })]
     const pending = message({ id: 'temp-1', content: 'What is lung cancer?' })
-    expect(mergeFetchedMessages([pending], saved, 'conv-1')).toBe(saved)
-  })
-
-  it('ignores the previous conversation\'s already-saved messages', () => {
-    const previous = [message({ id: 'x', content: 'Earlier', conversationId: 'conv-1' })]
-    expect(mergeFetchedMessages(previous, fetched, 'conv-1')).toBe(fetched)
+    expect(mergeFetchedMessages([pending], saved, [])).toBe(saved)
   })
 })
