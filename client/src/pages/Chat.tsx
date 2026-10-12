@@ -102,7 +102,12 @@ export default function Chat() {
     messagesRef.current = messages
   }, [messages])
 
+  // Set once the user picks or starts a conversation; from then on the
+  // initial conversation-list load must not move the selection.
+  const userChoseConversationRef = useRef(false)
+
   const setSelectedConversationIdWithClose = (id: string | React.SetStateAction<string>) => {
+    userChoseConversationRef.current = true
     setSelectedConversationId(id)
     setSidebarOpen(false)
   }
@@ -138,9 +143,14 @@ export default function Chat() {
       })
       .then((convs: Conversation[] | null) => {
         if (!convs) return
-        setConversations(convs)
+        // Keep conversations created locally while this request was in
+        // flight (e.g. by a message sent from the new-conversation screen).
+        setConversations((prev) => {
+          const fetchedIds = new Set(convs.map((c) => c.id))
+          return [...prev.filter((c) => !fetchedIds.has(c.id)), ...convs]
+        })
         setConversationsLoaded(true)
-        if (Array.isArray(convs) && convs.length > 0) {
+        if (Array.isArray(convs) && convs.length > 0 && !userChoseConversationRef.current) {
           setSelectedConversationId(convs[0].id)
         }
       })
@@ -308,6 +318,7 @@ export default function Chat() {
       },
       ...prev,
     ])
+    userChoseConversationRef.current = true
     setSelectedConversationId(conversation.id)
   }
 
@@ -589,6 +600,7 @@ export default function Chat() {
     e.preventDefault()
     const messageText = inputValue.trim()
     if (!messageText) return
+    userChoseConversationRef.current = true
 
     const optimisticMessage = textToMessage(messageText)
     setMessages((prev) => [...prev, optimisticMessage])
