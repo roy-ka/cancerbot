@@ -4,9 +4,11 @@ import type { Source } from '../types'
 export default function GroupedMessageSourceItem({
   sources,
   displayTexts,
+  onAskAboutSource,
 }: {
   sources: Source[]
   displayTexts: string[]
+  onAskAboutSource?: (sourceId: string) => void
 }) {
   return (
     <span>
@@ -15,6 +17,7 @@ export default function GroupedMessageSourceItem({
           <MessageSourceItem
             text={displayTexts[index] || source.text}
             source={source}
+            onAskAboutSource={onAskAboutSource}
           />
           {index < sources.length - 1 && ', '}
         </span>

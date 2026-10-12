@@ -40,6 +40,7 @@ export default function MessageList({
   conversationId,
   onSplit,
   onContinue,
+  onAskAboutSource,
   continuingMessageId,
   continuingText,
 }: {
@@ -53,6 +54,7 @@ export default function MessageList({
   conversationId?: string
   onSplit?: (conversation: NewConversation) => void
   onContinue?: (messageId: string) => void
+  onAskAboutSource?: (sourceId: string) => void
   continuingMessageId?: string | null
   continuingText?: string
 }) {
@@ -152,6 +154,7 @@ export default function MessageList({
           conversationId={conversationId}
           onSplit={onSplit}
           onContinue={onContinue}
+          onAskAboutSource={onAskAboutSource}
           isContinuing={!!message.id && message.id === continuingMessageId}
           continuingText={message.id === continuingMessageId ? continuingText : undefined}
         />

@@ -64,6 +64,7 @@ export default function MessageItem({
   conversationId,
   onSplit,
   onContinue,
+  onAskAboutSource,
   isContinuing,
   continuingText,
 }: {
@@ -71,6 +72,7 @@ export default function MessageItem({
   conversationId?: string
   onSplit?: (conversation: NewConversation) => void
   onContinue?: (messageId: string) => void
+  onAskAboutSource?: (sourceId: string) => void
   isContinuing?: boolean
   continuingText?: string
 }) {
@@ -258,6 +260,7 @@ export default function MessageItem({
             key={`${message.id}-${group.start}`}
             source={groupSources[0]}
             text={displayTexts[0]}
+            onAskAboutSource={onAskAboutSource}
           />,
         )
         parts.push(']')
@@ -268,6 +271,7 @@ export default function MessageItem({
             key={`${message.id}-${group.start}`}
             sources={groupSources}
             displayTexts={displayTexts}
+            onAskAboutSource={onAskAboutSource}
           />,
         )
         parts.push(']')
@@ -284,7 +288,7 @@ export default function MessageItem({
     }
 
     return <Typography sx={{ whiteSpace: 'pre-wrap' }}>{parts}</Typography>
-  }, [displayContent, mergedSources, message.id])
+  }, [displayContent, mergedSources, message.id, onAskAboutSource])
 
   const iconButtonSx = {
     color: 'rgba(255,255,255,0.4)',

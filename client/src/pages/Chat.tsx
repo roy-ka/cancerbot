@@ -26,7 +26,7 @@ import { useNavigate } from 'react-router-dom'
 import ConversationList from '../components/ConversationList'
 import MessageList from '../components/MessageList'
 import type { Conversation, Message } from '../types'
-import InputField from '../components/InputField'
+import InputField, { type InputFieldHandle } from '../components/InputField'
 import IconGuideDialog from '../components/IconGuideDialog'
 import { extractUrls } from '../utils/urls'
 import { isPendingDeletionResponse, loginPathForAuthFailure } from '../utils/authRedirect'
@@ -596,6 +596,17 @@ export default function Chat() {
     }
   }
 
+  const inputFieldRef = useRef<InputFieldHandle>(null)
+
+  // From a citation's popover: put the source's id in the message box (the
+  // backend fetches that source by id and answers from it), then focus it.
+  const handleAskAboutSource = useCallback((sourceId: string) => {
+    inputFieldRef.current?.append(`[${sourceId}] `)
+    // Deferred: the popover's focus trap is still active during this click
+    // and would pull focus straight back until the popover has closed.
+    setTimeout(() => inputFieldRef.current?.focus(), 0)
+  }, [])
+
   const onMessageSubmit = (e: React.SubmitEvent<HTMLFormElement>) => {
     e.preventDefault()
     const messageText = inputValue.trim()
@@ -769,6 +780,7 @@ export default function Chat() {
               conversationId={selectedConversationId === 'new' ? undefined : selectedConversationId}
               onSplit={handleSplitConversation}
               onContinue={handleContinue}
+              onAskAboutSource={handleAskAboutSource}
               continuingMessageId={continuingMessageId}
               continuingText={continuingText}
             />
@@ -777,6 +789,7 @@ export default function Chat() {
       </Box>
       <Box className="chat-input">
         <InputField
+          ref={inputFieldRef}
           onSubmit={onMessageSubmit}
           value={inputValue}
           onChange={setInputValue}

@@ -4,6 +4,7 @@ import { crabReadingSendIcon } from '../assets'
 
 export type InputFieldHandle = {
   append: (text: string) => void
+  focus: () => void
 }
 
 const InputField = forwardRef<
@@ -15,11 +16,15 @@ const InputField = forwardRef<
   }
 >(({ onSubmit, value, onChange }, ref) => {
   const formRef = useRef<HTMLFormElement>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   useImperativeHandle(ref, () => ({
+    // No-op when the text is already in the box (e.g. the same source picked twice).
     append: (text: string) => {
+      if (value.includes(text.trim())) return
       onChange(value + (value.endsWith(' ') || value === '' ? '' : ' ') + text)
     },
+    focus: () => textareaRef.current?.focus(),
   }))
 
   const handleSubmit = (e: React.SubmitEvent<HTMLFormElement>) => {
@@ -56,6 +61,7 @@ const InputField = forwardRef<
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={handleKeyDown}
           value={value}
+          inputRef={textareaRef}
         />
         {/* Desktop: icon + text */}
         <Button

@@ -56,6 +56,9 @@ _OLLAMA_TIMEOUT_SECONDS = 60.0
 _EVIDENCE_BEGIN = "===== BEGIN UNTRUSTED EVIDENCE ====="
 _EVIDENCE_END = "===== END UNTRUSTED EVIDENCE ====="
 
+# Evidence cap for a source the user explicitly asked about (see _build_prompt).
+_FOCUS_EVIDENCE_CHARS = 4000
+
 # Matches any attempt by retrieved content to reproduce a fence marker,
 # decorated or bare, in any casing or spacing. See _build_prompt.
 _EVIDENCE_FENCE_RE = re.compile(
@@ -270,8 +273,11 @@ class OllamaConnector:
         or ''
       )
       text = ' '.join(str(text).split())
-      if len(text) > max_evidence_chars:
-        text = text[:max_evidence_chars] + '…'
+      # A source the user explicitly asked about gets more room: an
+      # abstract's conclusion is usually its last sentences.
+      char_cap = _FOCUS_EVIDENCE_CHARS if item.get('focus') else max_evidence_chars
+      if len(text) > char_cap:
+        text = text[:char_cap] + '…'
       # A source that contains the fence marker verbatim could otherwise close
       # the evidence block early and have the rest of its text read as
       # top-level instructions.
@@ -293,6 +299,20 @@ LANGUAGE:
 Respond in the same language as the conversation's first message below (English if that message is in English).
 First message: "{_truncate(first_message, 200)}"
 Exception: the no-evidence fallback line itself must be written exactly as shown, in English, regardless of the conversation's language. The follow-up guidance that comes after it (see the citation rules below) should still follow the conversation's language like the rest of your response.
+"""
+
+    focus_aliases = [
+      f"source{i + 1}" for i, item in enumerate(context[:max_context_items])
+      if isinstance(item, Mapping) and item.get('focus')
+    ]
+    focus_block = ""
+    if focus_aliases:
+      named = ", ".join(f"[{a}]" for a in focus_aliases)
+      focus_block = f"""
+SOURCES THE USER ASKED ABOUT:
+The question refers specifically to {named}. Answer about that source from its own text, citing it; for this
+question it is sufficient evidence on its own, so the two-source minimum below does not apply to it. If its text
+does not contain what was asked, say so plainly (and what it does cover) instead of using the no-evidence fallback.
 """
 
     profile_block = ""
@@ -338,7 +358,7 @@ CRITICAL — CITATION RULES (you MUST follow these):
      biomarker, or trial phase) — followed by one concrete example question prefixed
      with "Try asking:". Base the example on what this question was already about,
      phrased more specifically, not a generic example.
-{language_block}{profile_block}
+{language_block}{focus_block}{profile_block}
 Scientific Evidence:
 {_EVIDENCE_BEGIN}
 {context_block}

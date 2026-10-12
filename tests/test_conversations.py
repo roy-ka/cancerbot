@@ -1190,3 +1190,94 @@ class TestContinueMessage:
 
         messages = self._run_continue(client, conv.id, msg.id)
         assert messages[-1]["type"] == "error"
+
+
+class TestAskAboutSource:
+    """A question containing [pmid:...]-style references (inserted by the
+    source popover's "Ask about this source" button) is answered with those
+    sources in context, fetched by id."""
+
+    def test_referenced_ids_are_extracted_normalized_and_deduped(self):
+        from src.routers.conversations import _referenced_source_ids
+        text = "Compare [pmid:123] with [doi:10.1/ABC:c2], [PMID:123] and [nct:NCT01]. [some note]"
+        assert _referenced_source_ids(text) == ["pmid:123", "doi:10.1/ABC", "nct:NCT01"]
+
+    def test_references_are_stripped_from_search_text(self):
+        from src.routers.conversations import _strip_source_refs
+        assert _strip_source_refs("[pmid:123] what was the sample size?") == "what was the sample size?"
+
+    def test_fetch_returns_requested_order_and_skips_unknown(self):
+        from src.routers.conversations import _fetch_referenced_sources
+        hits = {"hits": {"hits": [
+            {"_source": {"id": "doi:10.1/x:c0", "source_id": "doi:10.1/x", "title": "Paper X", "full_text": "X text"}},
+            {"_source": {"id": "pmid:123:c1", "source_id": "pmid:123", "title": "Paper 123", "full_text": "123 text"}},
+            {"_source": {"id": "pmid:123:c0", "source_id": "pmid:123", "title": "Paper 123", "full_text": "123 text"}},
+        ]}}
+        with patch("src.routers.conversations.dbConnector.get_claims_and_sources_by_id", return_value=hits):
+            items = _fetch_referenced_sources(["pmid:123", "pmid:999", "doi:10.1/x"])
+        assert [i["id"] for i in items] == ["pmid:123", "doi:10.1/x"]
+        assert items[0]["content_for_embedding"] == "123 text"
+
+    def test_question_about_a_source_puts_it_first_and_aliases_it(self, client, test_conversation):
+        captured = {}
+
+        async def _search(conversation, emit=None, latest_text_override=None):
+            captured["search_text"] = latest_text_override
+            return {"terms": [], "latest_terms": [], "entity_groups": [], "rewritten_query": None}
+
+        async def _gen(*args, **kwargs):
+            captured["question"] = kwargs["question"]
+            captured["context_ids"] = [
+                item.get("id") or item.get("_source", {}).get("id") for item in kwargs["context"]
+            ]
+            yield "The sample size was 40 [source1]."
+            yield {"source1": "pmid:123"}
+
+        retrieval = {
+            "generation_context": [
+                {"_source": {"id": "pmid:123:c0", "content_for_embedding": "duplicate chunk"}},
+                {"_source": {"id": "pmid:456:c0", "content_for_embedding": "other source"}},
+            ],
+            "sources_ids": ["pmid:123:c0", "pmid:456:c0"],
+        }
+        referenced = {"hits": {"hits": [
+            {"_source": {"id": "pmid:123:c0", "source_id": "pmid:123", "title": "Trial", "full_text": "Forty patients were enrolled."}},
+        ]}}
+        with (
+            patch("src.routers.conversations.search_and_embed", new=_search),
+            patch("src.routers.conversations.run_retrieval", return_value=retrieval),
+            patch("src.routers.conversations.dbConnector.get_claims_and_sources_by_id", return_value=referenced),
+            patch("src.routers.conversations.OllamaConnector.stream_text", new=_gen),
+        ):
+            response = client.post(
+                f"/conversations/{test_conversation.id}/add_message",
+                json={"content": "[pmid:123] what was the sample size?"},
+            )
+
+        assert response.status_code == 200
+        assert captured["search_text"] == "what was the sample size?"
+        assert captured["question"] == "[source1] what was the sample size?"
+        assert captured["context_ids"] == ["pmid:123", "pmid:456:c0"]
+
+    def test_unknown_reference_leaves_question_untouched(self, client, test_conversation):
+        captured = {}
+
+        async def _gen(*args, **kwargs):
+            captured["question"] = kwargs["question"]
+            yield "Answer."
+            yield {}
+
+        with (
+            patch("src.routers.conversations.run_retrieval",
+                  return_value={"generation_context": [], "sources_ids": []}),
+            patch("src.routers.conversations.dbConnector.get_claims_and_sources_by_id",
+                  return_value={"hits": {"hits": []}}),
+            patch("src.routers.conversations.OllamaConnector.stream_text", new=_gen),
+        ):
+            response = client.post(
+                f"/conversations/{test_conversation.id}/add_message",
+                json={"content": "[pmid:999] what was the sample size?"},
+            )
+
+        assert response.status_code == 200
+        assert captured["question"] == "[pmid:999] what was the sample size?"

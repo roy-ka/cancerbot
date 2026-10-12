@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import {
   Box,
+  Button,
   Chip,
   IconButton,
   Link,
@@ -16,11 +17,16 @@ import { isTrialSource, trialBadgeLabel } from '../utils/trialBadge'
 export default function MessageSourceItem({
   text,
   source,
+  onAskAboutSource,
 }: {
   text: string
   source: Source
+  onAskAboutSource?: (sourceId: string) => void
 }) {
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null)
+  // Closing via "Ask about this source" moves focus to the message box, so
+  // the popover must not hand focus back to the citation as it closes.
+  const [askedAboutSource, setAskedAboutSource] = useState(false)
   const open = Boolean(anchorEl)
   const popupText = source.text
   const url = source.url ?? ''
@@ -35,6 +41,7 @@ export default function MessageSourceItem({
     // Prevent navigating when later you swap to a link component.
     e.preventDefault()
     e.stopPropagation()
+    setAskedAboutSource(false)
     setAnchorEl(e.currentTarget)
   }
 
@@ -106,6 +113,7 @@ export default function MessageSourceItem({
         open={open}
         anchorEl={anchorEl}
         onClose={handleClose}
+        disableRestoreFocus={askedAboutSource}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
         transformOrigin={{ vertical: 'top', horizontal: 'left' }}
         marginThreshold={12}
@@ -160,6 +168,21 @@ export default function MessageSourceItem({
                   </Link>
                 </Box>
               </Box>
+            ) : null}
+
+            {onAskAboutSource && source.id ? (
+              <Button
+                size="small"
+                variant="outlined"
+                sx={{ mt: 2, textTransform: 'none' }}
+                onClick={() => {
+                  setAskedAboutSource(true)
+                  setAnchorEl(null)
+                  onAskAboutSource(source.id)
+                }}
+              >
+                Ask about this source
+              </Button>
             ) : null}
           </Box>
         </Box>

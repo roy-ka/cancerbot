@@ -7,6 +7,7 @@ import logging
 import time
 import asyncio
 import os
+import re
 from collections import defaultdict
 from pydantic import BaseModel, Field, field_validator
 from src.db.repositories.conversations import (
@@ -145,6 +146,45 @@ def _is_allowed_ws_origin(origin: str | None) -> bool:
 router = APIRouter(prefix="/conversations", tags=["conversations"])
 
 
+# A source the user explicitly asks about, as inserted by the source popover's
+# "Ask about this source" button: [pmid:123], [doi:10.1/x], [nct:NCT01], [url:abc].
+_SOURCE_REF_RE = re.compile(r'\[((?:pmid|doi|nct|url):[^\]\s]+)\]', re.IGNORECASE)
+
+
+def _referenced_source_ids(text: str) -> list[str]:
+    """Base ids (any :cN chunk suffix dropped) referenced in text, in order, deduped."""
+    ids: list[str] = []
+    for match in _SOURCE_REF_RE.finditer(text or ''):
+        prefix, rest = match.group(1).split(':', 1)
+        base = f"{prefix.lower()}:{re.sub(r':c\d+$', '', rest)}"
+        if base.lower() not in {i.lower() for i in ids}:
+            ids.append(base)
+    return ids
+
+
+def _strip_source_refs(text: str) -> str:
+    """text without its [pmid:...]-style references — what retrieval should
+    search on, since an id token only adds noise to term extraction."""
+    return ' '.join(_SOURCE_REF_RE.sub(' ', text or '').split())
+
+
+def _fetch_referenced_sources(ids: list[str]) -> list[dict]:
+    """Generation-context items for referenced sources, in the order asked.
+    Fetched by id rather than from conversation history, so a source cited
+    many turns ago still works. Unknown ids are skipped."""
+    hits = dbConnector.get_claims_and_sources_by_id(ids).get('hits', {}).get('hits', [])
+    by_base: dict[str, dict] = {}
+    for hit in hits:
+        src = hit.get('_source', {})
+        base = src.get('source_id') or re.sub(r':c\d+$', '', str(src.get('id') or ''))
+        if base and base not in by_base and src.get('full_text'):
+            by_base[base] = src
+    return [
+        {'id': base, 'title': by_base[base].get('title'), 'content_for_embedding': by_base[base]['full_text'], 'focus': True}
+        for base in ids if base in by_base
+    ]
+
+
 def _msg_to_dict(m):
     return {
         "id": str(m.id),
@@ -185,9 +225,14 @@ async def _answer_via_retrieval(
     message is then also left out of the prompt history, or the model would
     see the personal part there and report that the sources don't cover it."""
     question = question_override or req.content
+    referenced_ids = _referenced_source_ids(question)
+    # Retrieval searches on the question without [pmid:...] tokens; an id-only
+    # message ("[pmid:123]") falls back to the full text.
+    search_question = (_strip_source_refs(question) or question) if referenced_ids else question
+    search_override = search_question if search_question != req.content else None
     await emit('fallback_triggered', {'reason': 'always_search_external'})
     async with timed_stage('search_and_embed', conversation_id=str(conversation_id)):
-        search_meta = await search_and_embed(conversation, emit=emit, latest_text_override=question_override)
+        search_meta = await search_and_embed(conversation, emit=emit, latest_text_override=search_override)
 
     # Persist the terms extracted for this message. search_and_embed already ran
     # spell-correction + entity extraction on this exact text, so its result is
@@ -271,7 +316,7 @@ async def _answer_via_retrieval(
     # same as req.content when there was nothing to resolve. Falling back to
     # this instead of req.content keeps the KNN query (and the terms/BM25
     # fallback below) from reverting to the unresolved pronoun-laden message.
-    rewritten_query = (search_meta.get('rewritten_query') or '').strip() or question
+    rewritten_query = (search_meta.get('rewritten_query') or '').strip() or search_question
     retrieval_terms = _representative_terms(entity_groups, extracted_query_terms)
     retrieval_query = ' '.join(retrieval_terms) if retrieval_terms else rewritten_query
     if url_context_items:
@@ -312,6 +357,30 @@ async def _answer_via_retrieval(
             context['generation_context'] = url_items + context['generation_context']
             context['sources_ids'] = [item['id'] for item in url_items] + context.get('sources_ids', [])
 
+    # Sources the user explicitly asked about go first, so they get the
+    # first evidence aliases ([source1], ...), and the question's id tokens
+    # are rewritten to those aliases — the model only ever sees aliases.
+    generation_question = question
+    if referenced_ids:
+        referenced = await asyncio.to_thread(_fetch_referenced_sources, referenced_ids)
+        if referenced:
+            found = {item['id'] for item in referenced}
+            context['generation_context'] = referenced + [
+                item for item in context['generation_context']
+                if re.sub(r':c\d+$', '', str(item.get('id') or item.get('_source', {}).get('id') or '')) not in found
+            ]
+            context['sources_ids'] = [item['id'] for item in referenced] + [
+                sid for sid in context.get('sources_ids', []) if re.sub(r':c\d+$', '', sid) not in found
+            ]
+            alias_for = {item['id'].lower(): f"source{i + 1}" for i, item in enumerate(referenced)}
+
+            def _to_alias(match: re.Match) -> str:
+                alias = alias_for.get(re.sub(r':c\d+$', '', match.group(1)).lower())
+                return f"[{alias}]" if alias else match.group(0)
+
+            generation_question = _SOURCE_REF_RE.sub(_to_alias, question)
+            logging.info("[conversation] injected %d referenced source(s): %s", len(referenced), sorted(found))
+
     max_history = int(os.getenv('PROMPT_MAX_HISTORY', '8'))
     # Ninja's own turn sees the full thread (real history + any earlier hidden
     # ninja exchanges) for continuity; a real user's turn never includes
@@ -346,7 +415,7 @@ async def _answer_via_retrieval(
         nonlocal alias_to_id
         async for chunk in OllamaConnector.stream_text(
             context=context["generation_context"],
-            question=question,
+            question=generation_question,
             history=history,
             first_message=first_message_content,
             profile_context=profile_context,
@@ -390,7 +459,7 @@ async def _answer_via_retrieval(
         analytic = SearchAnalytic(
             conversation_id=conversation.id,
             message_id=user_message.id,
-            search_query=question[:500],
+            search_query=search_question[:500],
             result_count=metrics.get('result_count', 0),
             top_score=metrics.get('top_score'),
             avg_score=metrics.get('avg_score'),

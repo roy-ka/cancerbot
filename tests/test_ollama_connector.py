@@ -112,3 +112,25 @@ class TestStreamCompletionFallsBackOnGroqTimeout:
             with pytest.raises(ValueError, match="AI generation unavailable"):
                 async for _ in OllamaConnector._stream_completion("prompt text", max_tokens=100):
                     pass
+
+
+class TestFocusSources:
+    """Sources the user explicitly asked about ("Ask about this source") get
+    more evidence room and a prompt note lifting the two-source minimum."""
+
+    def test_focus_source_is_named_and_not_truncated_to_the_normal_cap(self):
+        ctx = [
+            {"id": "pmid:1", "content_for_embedding": "A" * 3000, "focus": True},
+            {"id": "pmid:2", "content_for_embedding": "B" * 3000},
+        ]
+        prompt, aliases, _ = OllamaConnector._build_prompt(ctx, "[source1] main finding?", [])
+        assert aliases == {"source1": "pmid:1", "source2": "pmid:2"}
+        assert "refers specifically to [source1]" in prompt
+        assert "A" * 3000 in prompt
+        assert "B" * 1000 not in prompt
+
+    def test_no_focus_note_without_focus_sources(self):
+        prompt, _, _ = OllamaConnector._build_prompt(
+            [{"id": "pmid:2", "content_for_embedding": "text"}], "question", [],
+        )
+        assert "SOURCES THE USER ASKED ABOUT" not in prompt
