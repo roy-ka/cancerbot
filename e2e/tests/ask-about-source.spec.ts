@@ -71,4 +71,30 @@ test.describe('Ask about a source', () => {
     await expect(page.getByText('Abstract of the Warburg paper.')).toBeVisible()
     await expect(page.getByRole('button', { name: 'Ask about this source' })).toHaveCount(0)
   })
+
+  test('your question keeps its source id; an invented citation in an answer stays hidden', async ({ page }) => {
+    const now = new Date().toISOString()
+    await page.route(/\/conversations\/(\?.*)?$/, (route) =>
+      route.fulfill({
+        json: { conversations: [{ id: 'ask-shown', title: 'Ask shown', updatedAt: now, lastMessage: 'q', lastMessageTime: now }] },
+      }),
+    )
+    await page.route(/\/conversations\/ask-shown\/messages\//, (route) =>
+      route.fulfill({
+        json: {
+          conversation: { id: 'ask-shown', title: 'Ask shown', updatedAt: now, use_profile_context: true, shared: false },
+          messages: [
+            { id: 'shown-q', role: 'user', content: '[pmid:12345] what about [the second trial]?', created_at: now, sources: [], truncated: false },
+            { id: 'shown-a', role: 'assistant', content: 'It enrolled 40 patients [pmid:99999].', created_at: now, sources: [], truncated: false },
+          ],
+          next_before: null,
+        },
+      }),
+    )
+
+    await page.goto('/')
+    await expect(page.locator('.message-bubble-user').last()).toHaveText('[pmid:12345] what about [the second trial]?', { timeout: 15_000 })
+    await expect(page.locator('.message-bubble-assistant').last()).toContainText('It enrolled 40 patients')
+    await expect(page.locator('.message-bubble-assistant').last()).not.toContainText('pmid:99999')
+  })
 })

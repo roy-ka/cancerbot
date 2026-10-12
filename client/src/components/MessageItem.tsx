@@ -275,6 +275,11 @@ export default function MessageItem({
           />,
         )
         parts.push(']')
+      } else if (message.role === 'user') {
+        // Nothing resolved. In an answer that's a citation the model made up,
+        // so it stays hidden; in the user's own message it's their text — an
+        // "Ask about this source" id or just bracketed words — so show it.
+        parts.push(text.slice(group.start, group.end))
       }
 
       lastIndex = group.end
