@@ -57,8 +57,9 @@ test.describe('unauthenticated', () => {
     await page.locator('input[type="checkbox"]').check()
     await page.click('button[type="submit"]')
 
-    // Successful registration shows the "check your email" screen
-    await expect(page.getByText(/check your email/i)).toBeVisible({ timeout: 15_000 })
+    // Successful registration shows "check your email" — or, when the backend
+    // runs with DEV_EMAIL_SHORTCUTS, "account created" (already verified).
+    await expect(page.getByText(/check your email|account created/i)).toBeVisible({ timeout: 15_000 })
     await ctx.close()
   })
 

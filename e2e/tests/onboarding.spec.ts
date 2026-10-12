@@ -1,4 +1,5 @@
 import { test, expect, request as playwrightRequest } from '@playwright/test'
+import { verifyRegisteredUser } from '../helpers'
 
 const E2E_API_URL = process.env.E2E_API_URL ?? 'http://localhost:8000'
 
@@ -14,9 +15,7 @@ test.describe('Health profile onboarding', () => {
       data: { first_name: 'Onboarding', last_name: 'E2E', email, password },
     })
     expect(reg.status()).toBe(201)
-    const { verification_token: verificationToken } = await reg.json()
-    const verify = await api.get(`/auth/verify-email/?token=${verificationToken}`)
-    expect(verify.ok()).toBeTruthy()
+    await verifyRegisteredUser(api, reg)
     await api.dispose()
 
     await page.goto('/login')
@@ -78,9 +77,7 @@ test.describe('Health profile onboarding', () => {
       data: { first_name: 'Onboarding', last_name: 'Skip', email, password },
     })
     expect(reg.status()).toBe(201)
-    const { verification_token: verificationToken } = await reg.json()
-    const verify = await api.get(`/auth/verify-email/?token=${verificationToken}`)
-    expect(verify.ok()).toBeTruthy()
+    await verifyRegisteredUser(api, reg)
     await api.dispose()
 
     await page.goto('/login')

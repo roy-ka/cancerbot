@@ -7,6 +7,7 @@
  * that relies on the shared account's persisted storageState.
  */
 import { test, expect, request as playwrightRequest } from '@playwright/test'
+import { verifyRegisteredUser } from '../helpers'
 
 const E2E_API_URL = process.env.E2E_API_URL ?? 'http://localhost:8000'
 
@@ -65,9 +66,7 @@ test.describe('Account deletion', () => {
       data: { first_name: 'Delete', last_name: 'E2E', email, password },
     })
     expect(reg.status()).toBe(201)
-    const { verification_token: verificationToken } = await reg.json()
-    const verify = await api.get(`/auth/verify-email/?token=${verificationToken}`)
-    expect(verify.ok()).toBeTruthy()
+    await verifyRegisteredUser(api, reg)
     await api.dispose()
 
     // Log in via the UI
@@ -130,9 +129,7 @@ test.describe('Account deletion', () => {
       data: { first_name: 'Delete', last_name: 'E2E Cancel Relogin', email, password },
     })
     expect(reg.status()).toBe(201)
-    const { verification_token: verificationToken } = await reg.json()
-    const verify = await api.get(`/auth/verify-email/?token=${verificationToken}`)
-    expect(verify.ok()).toBeTruthy()
+    await verifyRegisteredUser(api, reg)
     const login = await api.post('/auth/login/', { data: { email, password } })
     expect(login.ok()).toBeTruthy()
     const requestDelete = await api.post('/auth/request-delete/')
@@ -171,9 +168,7 @@ test.describe('Account deletion', () => {
       data: { first_name: 'Delete', last_name: 'E2E Other Device', email, password },
     })
     expect(reg.status()).toBe(201)
-    const { verification_token: verificationToken } = await reg.json()
-    const verify = await api.get(`/auth/verify-email/?token=${verificationToken}`)
-    expect(verify.ok()).toBeTruthy()
+    await verifyRegisteredUser(api, reg)
 
     // This browser tab logs in and stays on an authenticated page — its
     // session cookie is never touched by what follows, simulating a tab
@@ -219,9 +214,7 @@ test.describe('Account deletion', () => {
       data: { first_name: 'Delete', last_name: 'E2E WS', email, password },
     })
     expect(reg.status()).toBe(201)
-    const { verification_token: verificationToken } = await reg.json()
-    const verify = await api.get(`/auth/verify-email/?token=${verificationToken}`)
-    expect(verify.ok()).toBeTruthy()
+    await verifyRegisteredUser(api, reg)
 
     await page.goto('/login')
     await page.fill('input[name="email"]', email)
@@ -273,9 +266,7 @@ test.describe('Account deletion', () => {
       data: { first_name: 'Delete', last_name: 'E2E Auto Redirect', email, password },
     })
     expect(reg.status()).toBe(201)
-    const { verification_token: verificationToken } = await reg.json()
-    const verify = await api.get(`/auth/verify-email/?token=${verificationToken}`)
-    expect(verify.ok()).toBeTruthy()
+    await verifyRegisteredUser(api, reg)
     const login = await api.post('/auth/login/', { data: { email, password } })
     expect(login.ok()).toBeTruthy()
     const requestDelete = await api.post('/auth/request-delete/')

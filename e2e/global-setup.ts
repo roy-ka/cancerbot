@@ -1,6 +1,7 @@
 import { chromium, request } from '@playwright/test'
 import path from 'path'
 import fs from 'fs'
+import { verifyRegisteredUser } from './helpers'
 
 const E2E_API_URL = process.env.E2E_API_URL ?? 'http://localhost:8000'
 const E2E_BASE_URL = process.env.E2E_BASE_URL ?? 'http://localhost:5173'
@@ -16,14 +17,7 @@ export default async function globalSetup() {
   })
 
   if (reg.status() === 201) {
-    const body = await reg.json()
-    if (!body.verification_token) {
-      throw new Error('[e2e setup] no verification_token — check ENV != production')
-    }
-    const verify = await api.get(`/auth/verify-email/?token=${body.verification_token}`)
-    if (!verify.ok()) {
-      console.warn('[e2e setup] verify-email failed:', await verify.text())
-    }
+    await verifyRegisteredUser(api, reg)
   } else if (reg.status() !== 400) {
     throw new Error(`[e2e setup] registration failed: ${reg.status()} ${await reg.text()}`)
   }

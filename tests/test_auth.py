@@ -483,6 +483,21 @@ class TestRateLimiting:
         response = anon_client.post("/auth/register/", json={"first_name": "U", "last_name": "U", "email": "last@x.com", "password": "SecurePass123!"})
         assert response.status_code != 429
 
+    def test_register_from_localhost_not_limited_outside_production(self, anon_client, monkeypatch):
+        """Local E2E runs register many throwaway accounts from 127.0.0.1."""
+        from src.db.repositories.rate_limit import MAX_REGISTER_ATTEMPTS
+        monkeypatch.setattr("src.routers.auth._client_ip", lambda request: "127.0.0.1")
+        payload = {"first_name": "Reg", "last_name": "User", "email": "local@example.com", "password": "SecurePass123!"}
+        for _ in range(MAX_REGISTER_ATTEMPTS + 2):
+            response = anon_client.post("/auth/register/", json=payload)
+        assert response.status_code != 429
+
+    def test_register_from_localhost_still_limited_in_production(self, monkeypatch):
+        from src.routers.auth import _register_rate_limit_applies
+        monkeypatch.setattr("src.routers.auth.is_prod", lambda: True)
+        assert _register_rate_limit_applies("127.0.0.1") is True
+        assert _register_rate_limit_applies("::1") is True
+
     def test_forgot_password_blocked_after_limit(self, anon_client, test_user):
         from src.db.repositories.rate_limit import MAX_FORGOT_PASSWORD_ATTEMPTS
         for _ in range(MAX_FORGOT_PASSWORD_ATTEMPTS):

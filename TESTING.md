@@ -67,7 +67,9 @@ npm test              # headless
 npm run test:headed   # watch it run
 ```
 
-Configuration comes from the `E2E_*` variables in `.env` (see `example.env`): `E2E_BASE_URL`, `E2E_API_URL`, `E2E_EMAIL`, `E2E_PASSWORD`, plus `NINJA_EMAIL`/`NINJA_PASSWORD` for the admin flows. `global-setup.ts` registers the E2E user on first run (tolerating "already registered" afterwards); the user is deliberately kept and reused across runs.
+Configuration comes from the `E2E_*` variables in `.env` (see `example.env`): `E2E_BASE_URL`, `E2E_API_URL`, `E2E_EMAIL`, `E2E_PASSWORD`, plus `NINJA_EMAIL`/`NINJA_PASSWORD` for the admin flows. `global-setup.ts` registers the E2E user on first run (tolerating "already registered" afterwards); the user is deliberately kept and reused across runs. Specs that need a fresh account register one through `verifyRegisteredUser` (`e2e/helpers.ts`), which works whether or not the backend has `DEV_EMAIL_SHORTCUTS` on.
+
+Locally, the per-IP registration limit (10/hour) doesn't apply to requests from the machine itself, so you can run the suite repeatedly. It always applies in production.
 
 ## CI
 

@@ -136,14 +136,26 @@ def _client_ip(request: Request) -> str:
     """
     return request.client.host if request.client else "unknown"
 
+_LOOPBACK_IPS = frozenset({"127.0.0.1", "::1"})
+
+
+def _register_rate_limit_applies(ip: str) -> bool:
+    """Outside production, registrations from this machine itself aren't
+    per-IP limited: a local E2E run creates around ten throwaway accounts
+    from localhost, which used up the 10/hour budget and made the next run
+    fail. Production always applies the limit, loopback included."""
+    return is_prod() or ip not in _LOOPBACK_IPS
+
+
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 @router.post("/register/", status_code=201)
 async def register_user(req: CreateUserRequest, request: Request, db: Session = Depends(get_db)):
     ip = _client_ip(request)
-    if is_rate_limited(db, f"register:{ip}"):
-        raise HTTPException(status_code=429, detail="Too many registration attempts. Please try again later.")
-    record_attempt(db, f"register:{ip}", MAX_REGISTER_ATTEMPTS)
+    if _register_rate_limit_applies(ip):
+        if is_rate_limited(db, f"register:{ip}"):
+            raise HTTPException(status_code=429, detail="Too many registration attempts. Please try again later.")
+        record_attempt(db, f"register:{ip}", MAX_REGISTER_ATTEMPTS)
 
     existing = get_user_by_email(db=db, email=req.email)
     if existing:
