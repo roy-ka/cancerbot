@@ -8,7 +8,6 @@ import { cancerbotDark } from '../assets'
 export default function Login() {
   const bgRef = useRef<HTMLDivElement | null>(null)
   const [searchParams] = useSearchParams()
-  const inviteToken = searchParams.get('invite_token') || undefined
   const [toast, setToast] = useState(() => searchParams.get('verified') === '1')
   const [pendingDeletionToast, setPendingDeletionToast] = useState(
     () => searchParams.get('reason') === 'pending_deletion'
@@ -90,7 +89,7 @@ export default function Login() {
           </Grid>
 
           <Grid size={{ xs: 12, md: 6 }} className="login-grid-item login-auth-panel">
-            <AuthPanel inviteToken={inviteToken} />
+            <AuthPanel />
           </Grid>
         </Grid>
       </Box>

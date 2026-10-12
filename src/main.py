@@ -22,8 +22,8 @@ logger = logging.getLogger(__name__)
 if not ENV:
     # is_prod() (src/utils/utils.py) treats a missing ENV as non-production —
     # several endpoints key off "not is_prod()" to return a live single-use
-    # token (email verification, account deletion, email change, waitlist
-    # invite) directly in the API response, for E2E automation convenience.
+    # token (email verification, account deletion, email change) directly
+    # in the API response, for E2E automation convenience.
     # A deployment that silently ends up on that branch because ENV was never
     # set is a token-disclosure bug, not a harmless default — refuse to boot
     # instead, mirroring the CORS_ORIGINS='*' refusal below.

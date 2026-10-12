@@ -219,14 +219,13 @@ class UserProfile(Base):
 
 class Token(Base):
     """Unified table for every single-purpose token flow: password reset,
-    email verification, account deletion, and waitlist invites — see
+    email verification, account deletion, and email change/revert — see
     src/db/repositories/tokens.py for the type-specific behavior each of
     those still needs (different TTLs, and password_reset alone allows
     multiple verifies via use_count before consumption).
 
-    Exactly one of user_id / waitlist_entry_id is set, never both: the first
-    three types belong to an existing User, while waitlist_invite belongs to
-    a WaitlistEntry (issued before that person has an account at all)."""
+    waitlist_entry_id is legacy: it keyed the removed waitlist-invite tokens.
+    Kept so the model still matches the database (see WaitlistEntry)."""
     __tablename__ = "tokens"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
@@ -275,14 +274,14 @@ class RateLimitEntry(Base):
 
 
 class WaitlistEntry(Base):
+    """Legacy: the registration cap and waitlist were removed, and nothing
+    reads or writes this table any more. The model stays so it keeps
+    matching the database — dropping it would make the next Alembic
+    autogenerate propose deleting the table and its existing rows."""
     __tablename__ = "waitlist_entries"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     email = Column(String(320), unique=True, index=True, nullable=False)
-    # Canonical form of `email` (see src/utils/email_normalize.py) — catches
-    # dot/plus-tag variations of an email already on the list. Never used to
-    # send mail, only to detect duplicates; unique so a race between two
-    # requests for variations of the same email can't both insert.
     normalized_email = Column(String(320), unique=True, index=True, nullable=False)
     name = Column(String(150), nullable=True)
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)

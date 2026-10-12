@@ -20,8 +20,6 @@ from src.utils.email import (
     send_delete_account_scheduled_email,
     send_delete_account_cancelled_email,
     send_fallback_alert,
-    send_waitlist_joined_email,
-    send_waitlist_invited_email,
     send_email_change_request_email,
     send_email_change_verification_email,
     send_email_changed_notice_email,
@@ -52,12 +50,6 @@ async def send_fallback_alert_job(ctx, *, model) -> None:
     await send_fallback_alert(model)
 
 
-async def send_waitlist_joined_email_job(ctx, *, to, name) -> None:
-    await send_waitlist_joined_email(to=to, name=name)
-
-
-async def send_waitlist_invited_email_job(ctx, *, to, name, link) -> None:
-    await send_waitlist_invited_email(to=to, name=name, link=link)
 
 
 async def send_email_change_request_email_job(ctx, *, to, name, link) -> None:

@@ -16,11 +16,8 @@ from src.db.repositories.users import (
     get_user_by_email,
     get_user_by_id,
     update_last_login,
-    count_all_users,
-    email_variation_is_registered,
 )
-from src.db.repositories.waitlist import create_waitlist_entry
-from src.utils.email_normalize import LowercaseEmail, normalize_email_for_dedup
+from src.utils.email_normalize import LowercaseEmail
 from src.db.repositories.tokens import (
     create_reset_token,
     verify_reset_token,
@@ -33,8 +30,6 @@ from src.db.repositories.tokens import (
     consume_deletion_token,
     schedule_deletion,
     cancel_deletion,
-    verify_waitlist_invite_token,
-    get_waitlist_invite_entry,
     create_email_change_request_token,
     verify_email_change_request_token,
     consume_email_change_request_token,
@@ -60,7 +55,6 @@ from src.db.repositories.rate_limit import (
     MAX_REGISTER_ATTEMPTS,
     MAX_FORGOT_PASSWORD_ATTEMPTS,
     MAX_REQUEST_DELETE_ATTEMPTS,
-    MAX_WAITLIST_ATTEMPTS,
     MAX_EMAIL_CHANGE_ATTEMPTS,
     MAX_RESEND_VERIFICATION_ATTEMPTS,
 )
@@ -74,23 +68,6 @@ def _get_frontend_url() -> str:
     refuses to start in production without FRONTEND_URL.
     """
     return os.getenv("FRONTEND_URL", "").strip() or "http://localhost:5173"
-
-
-def _get_max_users() -> int | None:
-    """Registration cap for slow-growth rollout. Unset/blank = no cap.
-
-    Read from env on every call (not cached at import time) so tests can
-    monkeypatch it per-test, matching _get_frontend_url's pattern.
-    """
-    raw = os.getenv("MAX_USERS", "").strip()
-    return int(raw) if raw else None
-
-
-def _registration_open(db: Session) -> bool:
-    max_users = _get_max_users()
-    if max_users is None:
-        return True
-    return count_all_users(db) < max_users
 
 
 PASSWORD_REGEX_PATTERNS = {
@@ -107,17 +84,11 @@ class CreateUserRequest(BaseModel):
     last_name: str = Field(..., min_length=1, max_length=150)
     email: LowercaseEmail
     password: str
-    invite_token: str | None = None
 
 class LoginRequest(BaseModel):
     email: LowercaseEmail
     password: str
     rememberMe: bool = False
-
-
-class WaitlistRequest(BaseModel):
-    email: LowercaseEmail
-    name: str = Field(..., min_length=1, max_length=150)
 
 
 
@@ -174,24 +145,9 @@ async def register_user(req: CreateUserRequest, request: Request, db: Session = 
         raise HTTPException(status_code=429, detail="Too many registration attempts. Please try again later.")
     record_attempt(db, f"register:{ip}", MAX_REGISTER_ATTEMPTS)
 
-    # Check for an existing account before the capacity cap: re-registering an
-    # email that's already taken must still return the normal "already
-    # registered" 400, not a confusing "we're full" 403 — the cap only
-    # matters for accounts that would actually consume a new slot.
     existing = get_user_by_email(db=db, email=req.email)
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
-
-    if not _registration_open(db):
-        # A valid, unexpired invite token for this exact email bypasses the
-        # cap — that's the whole point of an individual invite (see
-        # src/db/repositories/tokens.py:verify_waitlist_invite_token).
-        invited = req.invite_token and verify_waitlist_invite_token(db, req.invite_token, req.email)[0]
-        if not invited:
-            raise HTTPException(
-                status_code=403,
-                detail="Registration is currently full. Please join the waitlist and we'll invite you once a spot opens up.",
-            )
 
     password_error = validate_password(req.password)
     if password_error:
@@ -217,41 +173,6 @@ async def register_user(req: CreateUserRequest, request: Request, db: Session = 
     if not is_prod():
         resp["verification_token"] = token
     return resp
-
-
-@router.get("/registration_status/")
-async def get_registration_status(db: Session = Depends(get_db)):
-    """Whether new registrations are currently accepted. No count is
-    disclosed publicly — just the open/closed boolean the frontend needs to
-    decide whether to show the registration form or the waitlist form."""
-    return {"open": _registration_open(db)}
-
-
-@router.get("/invite_info/")
-async def get_invite_info(invite_token: str = Query(...), db: Session = Depends(get_db)):
-    """Look up the email/name for a still-valid waitlist invite token, so
-    the registration form can pre-fill (and lock) the email field. Does not
-    consume the token — /auth/register/ re-validates it at submit time."""
-    entry, error = get_waitlist_invite_entry(db, invite_token)
-    if not entry:
-        raise HTTPException(status_code=400, detail=error)
-    return {"email": entry.email, "name": entry.name}
-
-
-@router.post("/waitlist/", status_code=201)
-async def join_waitlist(req: WaitlistRequest, request: Request, db: Session = Depends(get_db)):
-    ip = _client_ip(request)
-    if is_rate_limited(db, f"waitlist:{ip}"):
-        raise HTTPException(status_code=429, detail="Too many attempts. Please try again later.")
-    record_attempt(db, f"waitlist:{ip}", MAX_WAITLIST_ATTEMPTS)
-
-    normalized = normalize_email_for_dedup(req.email)
-    if email_variation_is_registered(db, normalized):
-        raise HTTPException(status_code=400, detail="You already have an account — log in instead.")
-
-    create_waitlist_entry(db=db, email=req.email, name=req.name.strip())
-    await enqueue("send_waitlist_joined_email_job", to=req.email, name=req.name.strip())
-    return {"message": "You're on the waitlist! We'll email you an invite once a spot opens up."}
 
 
 def _ninja_login(req: "LoginRequest", response: Response, db: Session) -> dict | None:

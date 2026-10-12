@@ -63,7 +63,6 @@ jobs:
       NINJA_PASSWORD: test-ninja-password
       REDIS_PASSWORD: test-redis-password
       REDIS_URL: redis://:test-redis-password@localhost:6379/0
-      MAX_USERS: ""
       DEV_EMAIL_SHORTCUTS: "false"
       OLLAMA_GEN_MODEL: ""
       ADMIN_DIGEST_EMAILS: admin-test@example.com

@@ -28,8 +28,6 @@ from . import (
     delete_account_scheduled,
     delete_account_cancelled,
     fallback_alert,
-    waitlist_joined,
-    waitlist_invited,
     daily_admin_digest,
     weekly_admin_digest,
     email_change_request,
@@ -65,14 +63,6 @@ TEMPLATES = {
   "fallback_alert": {
     "subject": fallback_alert.SUBJECT,
     "html": fallback_alert.HTML,
-  },
-  "waitlist_joined": {
-    "subject": waitlist_joined.SUBJECT,
-    "html": waitlist_joined.HTML,
-  },
-  "waitlist_invited": {
-    "subject": waitlist_invited.SUBJECT,
-    "html": waitlist_invited.HTML,
   },
   "daily_admin_digest": {
     "subject": daily_admin_digest.SUBJECT,

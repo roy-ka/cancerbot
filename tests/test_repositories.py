@@ -4,11 +4,8 @@ from unittest.mock import patch, MagicMock
 import uuid
 
 from src.db.repositories.users import (
-    create_user, get_user_by_email, get_user_by_id, update_last_login, count_all_users,
-    email_variation_is_registered,
+    create_user, get_user_by_email, get_user_by_id, update_last_login,
 )
-from src.utils.email_normalize import normalize_email_for_dedup
-from src.db.repositories.waitlist import create_waitlist_entry, list_waitlist_entries, count_waitlist_entries
 from src.db.repositories.conversations import (
     create_conversation, get_conversation_by_id, soft_delete_conversation, get_conversations_list_by_user_id
 )
@@ -19,7 +16,6 @@ from src.db.repositories.messeges import (
 from src.db.repositories.message_feedback import set_feedback, get_feedback_for_messages
 from src.db.repositories.tokens import (
     create_reset_token, verify_reset_token, consume_reset_token,
-    create_waitlist_invite_token, verify_waitlist_invite_token,
 )
 from src.auth.security import SecurityUtils
 
@@ -71,85 +67,6 @@ class TestUserRepository:
         update_last_login(db_session, test_user)
         db_session.refresh(test_user)
         assert test_user.last_login is not None
-
-    def test_count_all_users(self, db_session, test_user):
-        assert count_all_users(db_session) == 1
-        create_user(
-            db_session,
-            first_name="Second", last_name="User",
-            email="second@example.com",
-            password_hash=SecurityUtils.hash_password("SecondPass123"),
-        )
-        assert count_all_users(db_session) == 2
-
-    def test_email_variation_is_registered_true_for_gmail_dot_variation(self, db_session):
-        create_user(
-            db_session,
-            first_name="Ada", last_name="L",
-            email="ada.lovelace@gmail.com",
-            password_hash=SecurityUtils.hash_password("Pass1234"),
-        )
-        assert email_variation_is_registered(
-            db_session, normalize_email_for_dedup("adalovelace@gmail.com")
-        ) is True
-
-    def test_email_variation_is_registered_false_for_unregistered(self, db_session, test_user):
-        assert email_variation_is_registered(
-            db_session, normalize_email_for_dedup("nobody@example.com")
-        ) is False
-
-
-class TestWaitlistRepository:
-    def test_create_waitlist_entry_returns_entry_with_id(self, db_session):
-        entry = create_waitlist_entry(db_session, "new@example.com", "New Person")
-        assert entry.id is not None
-        assert entry.email == "new@example.com"
-        assert entry.name == "New Person"
-        assert entry.invited is False
-
-    def test_create_waitlist_entry_is_idempotent(self, db_session):
-        first = create_waitlist_entry(db_session, "dupe@example.com", "First Name")
-        second = create_waitlist_entry(db_session, "dupe@example.com", "Second Name")
-        assert first.id == second.id
-        assert second.name == "First Name"
-        assert count_waitlist_entries(db_session) == 1
-
-    def test_create_waitlist_entry_stores_normalized_email(self, db_session):
-        entry = create_waitlist_entry(db_session, "John.Doe+promo@Gmail.com", "John Doe")
-        assert entry.normalized_email == "johndoe@gmail.com"
-        assert entry.email == "John.Doe+promo@Gmail.com"
-
-    def test_create_waitlist_entry_dedupes_gmail_dot_variation(self, db_session):
-        first = create_waitlist_entry(db_session, "john.doe@gmail.com", "John")
-        second = create_waitlist_entry(db_session, "johndoe@gmail.com", "John Again")
-        assert first.id == second.id
-        assert count_waitlist_entries(db_session) == 1
-
-    def test_create_waitlist_entry_dedupes_plus_tag_variation(self, db_session):
-        first = create_waitlist_entry(db_session, "user@example.com", "User")
-        second = create_waitlist_entry(db_session, "user+newsletter@example.com", "User Again")
-        assert first.id == second.id
-        assert count_waitlist_entries(db_session) == 1
-
-    def test_create_waitlist_entry_dedupes_case_variation(self, db_session):
-        first = create_waitlist_entry(db_session, "case@example.com", "Case")
-        second = create_waitlist_entry(db_session, "Case@Example.com", "Case Again")
-        assert first.id == second.id
-        assert count_waitlist_entries(db_session) == 1
-
-    def test_list_waitlist_entries_orders_oldest_first(self, db_session):
-        create_waitlist_entry(db_session, "first@example.com", "First")
-        create_waitlist_entry(db_session, "second@example.com", "Second")
-        entries = list_waitlist_entries(db_session)
-        emails = [e.email for e in entries]
-        assert emails.index("first@example.com") < emails.index("second@example.com")
-
-    def test_count_waitlist_entries(self, db_session):
-        assert count_waitlist_entries(db_session) == 0
-        create_waitlist_entry(db_session, "counted@example.com", "Counted")
-        assert count_waitlist_entries(db_session) == 1
-
-
 class TestConversationRepository:
     def test_create_conversation_returns_conversation(self, db_session, test_user):
         conv = create_conversation(db_session, user_id=test_user.id, title="Test Conversation")
@@ -489,63 +406,3 @@ class TestTokenTypeIsolation:
             tokens_repo.verify_deletion_token(db_session, deletion_token)
 
         assert spy.call_args.kwargs.get("for_update") is True
-
-
-class TestWaitlistInviteToken:
-    def test_create_and_verify_round_trip(self, db_session):
-        entry = create_waitlist_entry(db_session, "invite@example.com", "Invite Person")
-        token = create_waitlist_invite_token(db_session, entry.id)
-
-        record, error = verify_waitlist_invite_token(db_session, token, "invite@example.com")
-        assert record is not None
-        assert error == ""
-        assert record.waitlist_entry_id == entry.id
-        assert record.user_id is None
-
-    def test_verify_wrong_email_rejected(self, db_session):
-        entry = create_waitlist_entry(db_session, "owner@example.com", "Owner")
-        token = create_waitlist_invite_token(db_session, entry.id)
-
-        record, error = verify_waitlist_invite_token(db_session, token, "someone-else@example.com")
-        assert record is None
-        assert "different email" in error.lower()
-
-    def test_verify_accepts_email_variation(self, db_session):
-        entry = create_waitlist_entry(db_session, "john.doe@gmail.com", "John")
-        token = create_waitlist_invite_token(db_session, entry.id)
-
-        record, error = verify_waitlist_invite_token(db_session, token, "johndoe+tag@gmail.com")
-        assert record is not None
-        assert error == ""
-
-    def test_resend_invalidates_previous_token(self, db_session):
-        entry = create_waitlist_entry(db_session, "resend2@example.com", "Resend")
-        token1 = create_waitlist_invite_token(db_session, entry.id)
-        token2 = create_waitlist_invite_token(db_session, entry.id)
-
-        record1, error1 = verify_waitlist_invite_token(db_session, token1, "resend2@example.com")
-        assert record1 is None
-
-        record2, error2 = verify_waitlist_invite_token(db_session, token2, "resend2@example.com")
-        assert record2 is not None
-        assert error2 == ""
-
-    def test_expired_invite_token_rejected(self, db_session):
-        from freezegun import freeze_time
-
-        entry = create_waitlist_entry(db_session, "expired@example.com", "Expired")
-        with freeze_time("2026-01-01 12:00:00"):
-            token = create_waitlist_invite_token(db_session, entry.id)
-
-        with freeze_time("2026-01-03 13:00:00"):  # 49h later
-            record, error = verify_waitlist_invite_token(db_session, token, "expired@example.com")
-
-        assert record is None
-        assert "expired" in error.lower()
-
-    def test_invite_token_does_not_verify_as_reset_token(self, db_session):
-        entry = create_waitlist_entry(db_session, "notreset@example.com", "Not Reset")
-        invite_token = create_waitlist_invite_token(db_session, entry.id)
-
-        record, error = verify_reset_token(db_session, invite_token)
-        assert record is None

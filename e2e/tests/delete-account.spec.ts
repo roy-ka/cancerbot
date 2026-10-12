@@ -13,17 +13,6 @@ const E2E_API_URL = process.env.E2E_API_URL ?? 'http://localhost:8000'
 // Fresh browser session — do not reuse the shared E2E_EMAIL storageState.
 test.use({ storageState: { cookies: [], origins: [] } })
 
-// Each test here registers its own throwaway account, so it needs
-// registration open — skip rather than fail when MAX_USERS has capped
-// signups (see waitlist.spec.ts for the gated-registration coverage).
-async function registrationIsOpen(): Promise<boolean> {
-  const api = await playwrightRequest.newContext({ baseURL: E2E_API_URL })
-  const res = await api.get('/auth/registration_status/')
-  const { open } = await res.json()
-  await api.dispose()
-  return open
-}
-
 // Terms acceptance now lands on /onboarding (the health-profile step), not
 // /chat directly — a brand-new account here has never seen it, so skip it
 // rather than fill it in, since it's not what these tests are about.
@@ -67,7 +56,6 @@ async function dismissIconGuideIfShown(page: import('@playwright/test').Page) {
 
 test.describe('Account deletion', () => {
   test('request, confirm, grace-period login block, and cancel', async ({ page }) => {
-    test.skip(!(await registrationIsOpen()), 'registration is closed (MAX_USERS reached)')
     const email = `delete-e2e-${Date.now()}@example.com`
     const password = 'DeleteE2e123!'
 
@@ -134,7 +122,6 @@ test.describe('Account deletion', () => {
   })
 
   test('a failed automatic re-login after cancelling deletion shows an error, not a silent form', async ({ page }) => {
-    test.skip(!(await registrationIsOpen()), 'registration is closed (MAX_USERS reached)')
     const email = `delete-e2e-cancel-relogin-${Date.now()}@example.com`
     const password = 'DeleteE2e123!'
 
@@ -176,7 +163,6 @@ test.describe('Account deletion', () => {
   })
 
   test('deletion scheduled from another device explains the logout', async ({ page }) => {
-    test.skip(!(await registrationIsOpen()), 'registration is closed (MAX_USERS reached)')
     const email = `delete-e2e-other-device-${Date.now()}@example.com`
     const password = 'DeleteE2e123!'
 
@@ -225,7 +211,6 @@ test.describe('Account deletion', () => {
   })
 
   test('deletion scheduled from another device explains a WebSocket send failure too', async ({ page }) => {
-    test.skip(!(await registrationIsOpen()), 'registration is closed (MAX_USERS reached)')
     const email = `delete-e2e-ws-${Date.now()}@example.com`
     const password = 'DeleteE2e123!'
 
@@ -280,7 +265,6 @@ test.describe('Account deletion', () => {
   })
 
   test('confirm-delete page auto-redirects to login without a manual click', async ({ page }) => {
-    test.skip(!(await registrationIsOpen()), 'registration is closed (MAX_USERS reached)')
     const email = `delete-e2e-autoredirect-${Date.now()}@example.com`
     const password = 'DeleteE2e123!'
 

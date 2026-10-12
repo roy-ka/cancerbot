@@ -159,7 +159,6 @@ class TestDeliveryFailureIsContained:
                     to="a@b.c", name="N", deletion_date="January 1, 2027"),
                 as_prod.send_delete_account_cancelled_email(to="a@b.c", name="N"),
                 as_prod.send_fallback_alert("gpt-4o"),
-                as_prod.send_waitlist_joined_email(to="a@b.c", name="N"),
             ]
             for coro in calls:
                 assert asyncio.run(coro) is False
@@ -210,7 +209,6 @@ class TestEveryPublicSenderRendersSuccessfully:
                     to="a@b.c", name="N", deletion_date="January 1, 2027"),
                 as_prod.send_delete_account_cancelled_email(to="a@b.c", name="N"),
                 as_prod.send_fallback_alert("gpt-4o"),
-                as_prod.send_waitlist_joined_email(to="a@b.c", name="N"),
             ]
             for coro in calls:
                 assert asyncio.run(coro) is True
@@ -250,12 +248,12 @@ class TestEveryPublicSenderRendersSuccessfully:
 class TestAdminDigestEmails:
     _daily_fields = {
         "date": "September 6, 2026", "new_users": 1, "new_conversations": 2,
-        "messages_sent": 3, "fallback_triggered": 0, "waitlist_joined": 0,
+        "messages_sent": 3, "fallback_triggered": 0,
         "bug_reports": 0, "feedback": 0, "axiom_section": "<p>ok</p>",
     }
     _weekly_fields = {
         "date": "September 6, 2026", "new_users": 1, "new_conversations": 2,
-        "messages_sent": 3, "fallback_triggered": 0, "waitlist_joined": 0,
+        "messages_sent": 3, "fallback_triggered": 0,
         "total_users": 10,
     }
 

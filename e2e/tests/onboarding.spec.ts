@@ -2,19 +2,10 @@ import { test, expect, request as playwrightRequest } from '@playwright/test'
 
 const E2E_API_URL = process.env.E2E_API_URL ?? 'http://localhost:8000'
 
-async function registrationIsOpen(): Promise<boolean> {
-  const api = await playwrightRequest.newContext({ baseURL: E2E_API_URL })
-  const res = await api.get('/auth/registration_status/')
-  const { open } = await res.json()
-  await api.dispose()
-  return open
-}
-
 test.describe('Health profile onboarding', () => {
   test.use({ storageState: { cookies: [], origins: [] } })
 
   test('register -> terms -> onboarding -> chat, then edit and clear from the account menu', async ({ page }) => {
-    test.skip(!(await registrationIsOpen()), 'registration is closed (MAX_USERS reached)')
     const email = `onboarding-e2e-${Date.now()}@example.com`
     const password = 'OnboardingE2e123!'
 
@@ -79,7 +70,6 @@ test.describe('Health profile onboarding', () => {
   })
 
   test('skipping onboarding lands on chat without the profile toggle', async ({ page }) => {
-    test.skip(!(await registrationIsOpen()), 'registration is closed (MAX_USERS reached)')
     const email = `onboarding-skip-e2e-${Date.now()}@example.com`
     const password = 'OnboardingE2e123!'
 

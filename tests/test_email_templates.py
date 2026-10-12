@@ -2,7 +2,7 @@ from src.utils.email_templates import TEMPLATES, render
 
 
 class TestTemplatesShape:
-    def test_fourteen_templates_present(self):
+    def test_twelve_templates_present(self):
         assert set(TEMPLATES) == {
             "verification",
             "password_reset",
@@ -11,8 +11,6 @@ class TestTemplatesShape:
             "delete_account_scheduled",
             "delete_account_cancelled",
             "fallback_alert",
-            "waitlist_joined",
-            "waitlist_invited",
             "daily_admin_digest",
             "weekly_admin_digest",
             "email_change_request",
@@ -73,7 +71,7 @@ class TestRender:
             "daily_admin_digest",
             date="September 6, 2026",
             new_users=3, new_conversations=10, messages_sent=42,
-            fallback_triggered=1, waitlist_joined=2, bug_reports=1, feedback=2,
+            fallback_triggered=1, bug_reports=1, feedback=2,
             axiom_section="<p>ok</p>",
         )
         assert "September 6, 2026" in subject
@@ -106,7 +104,7 @@ class TestRender:
             "weekly_admin_digest",
             date="September 6, 2026",
             new_users=3, new_conversations=10, messages_sent=42,
-            fallback_triggered=1, waitlist_joined=2, total_users=100,
+            fallback_triggered=1, total_users=100,
         )
         assert "September 6, 2026" in subject
         assert "100" in html

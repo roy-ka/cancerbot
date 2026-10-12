@@ -13,14 +13,6 @@ const E2E_API_URL = process.env.E2E_API_URL ?? 'http://localhost:8000'
 
 test.use({ storageState: { cookies: [], origins: [] } })
 
-async function registrationIsOpen(): Promise<boolean> {
-  const api = await playwrightRequest.newContext({ baseURL: E2E_API_URL })
-  const res = await api.get('/auth/registration_status/')
-  const { open } = await res.json()
-  await api.dispose()
-  return open
-}
-
 async function skipOnboardingIfShown(page: import('@playwright/test').Page) {
   const skip = page.getByRole('button', { name: /^skip for now$/i })
   const shown = await skip
@@ -50,7 +42,6 @@ async function dismissIconGuideIfShown(page: import('@playwright/test').Page) {
 
 test.describe('Email change', () => {
   test('request, enter new email, confirm, and log in with the new address', async ({ page }) => {
-    test.skip(!(await registrationIsOpen()), 'registration is closed (MAX_USERS reached)')
     const oldEmail = `email-change-e2e-${Date.now()}@example.com`
     const newEmail = `email-change-e2e-new-${Date.now()}@example.com`
     const password = 'EmailChangeE2e123!'
@@ -123,7 +114,6 @@ test.describe('Email change', () => {
   })
 
   test('revert restores the old address', async ({ page }) => {
-    test.skip(!(await registrationIsOpen()), 'registration is closed (MAX_USERS reached)')
     const oldEmail = `email-change-e2e-revert-${Date.now()}@example.com`
     const newEmail = `email-change-e2e-revert-new-${Date.now()}@example.com`
     const password = 'EmailChangeE2e123!'

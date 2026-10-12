@@ -1,6 +1,6 @@
 """Single table (Token, src/db/models.py) backing every single-purpose
 token flow: password reset, email verification, account deletion, and
-waitlist invites.
+email change/revert.
 
 Each flow gets its own TTL and its own public function names below (unchanged
 from when each lived in its own repository file — src/routers/auth.py's call
@@ -28,13 +28,11 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import update
 
-from src.db.models import Token, User, WaitlistEntry
-from src.utils.email_normalize import normalize_email_for_dedup
+from src.db.models import Token, User
 
 TOKEN_TYPE_PASSWORD_RESET = "password_reset"
 TOKEN_TYPE_EMAIL_VERIFICATION = "email_verification"
 TOKEN_TYPE_ACCOUNT_DELETION = "account_deletion"
-TOKEN_TYPE_WAITLIST_INVITE = "waitlist_invite"
 TOKEN_TYPE_EMAIL_CHANGE_REQUEST = "email_change_request"
 TOKEN_TYPE_EMAIL_CHANGE = "email_change"
 TOKEN_TYPE_EMAIL_REVERT = "email_revert"
@@ -44,7 +42,6 @@ _PASSWORD_RESET_MAX_USES = 5
 _EMAIL_VERIFICATION_TTL_HOURS = 24
 _ACCOUNT_DELETION_TTL_HOURS = 24
 _ACCOUNT_DELETION_GRACE_PERIOD_DAYS = 7
-_WAITLIST_INVITE_TTL_HOURS = 48
 _EMAIL_CHANGE_REQUEST_TTL_HOURS = 24
 _EMAIL_CHANGE_TTL_HOURS = 24
 _EMAIL_REVERT_TTL_HOURS = 72
@@ -374,73 +371,3 @@ def find_consumed_target_email(db, token: str, token_type: str):
     if not record or record.used_at is None:
         return None, None
     return record.user_id, record.target_email
-
-
-# ---------------------------------------------------------------------------
-# Waitlist invite
-# ---------------------------------------------------------------------------
-# A waitlist invite has no User yet to key off of (it's issued *before*
-# registration), so it's tied to waitlist_entry_id instead of user_id —
-# see the Token model docstring. A valid, unexpired invite token lets
-# /auth/register/ bypass the MAX_USERS cap for that one email.
-
-def create_waitlist_invite_token(db, waitlist_entry_id) -> str:
-    """Invalidate the entry's existing unused invite token, create a new
-    one, return the plain token. Used for both the first invite and any
-    resend — a resend simply supersedes whatever link was sent before."""
-    db.query(Token).filter(
-        Token.waitlist_entry_id == waitlist_entry_id,
-        Token.token_type == TOKEN_TYPE_WAITLIST_INVITE,
-        Token.used_at.is_(None),
-    ).delete(synchronize_session=False)
-
-    token = secrets.token_urlsafe(32)
-    record = Token(
-        waitlist_entry_id=waitlist_entry_id,
-        token_type=TOKEN_TYPE_WAITLIST_INVITE,
-        token_hash=_hash_token(token),
-        expires_at=datetime.now(timezone.utc) + timedelta(hours=_WAITLIST_INVITE_TTL_HOURS),
-    )
-    db.add(record)
-    db.commit()
-    return token
-
-
-def get_waitlist_invite_entry(db, token: str) -> tuple[WaitlistEntry | None, str]:
-    """Look up the WaitlistEntry (email/name) for a still-valid invite token,
-    without needing to already know the email — used by the frontend to
-    pre-fill the registration form. Returns (entry, "") on success or
-    (None, error) on failure. Does not consume the token."""
-    record, error = _verify_token(
-        db, token, TOKEN_TYPE_WAITLIST_INVITE,
-        not_found_msg="Invalid or expired invite link.",
-        expired_msg="This invite link has expired. Please rejoin the waitlist.",
-    )
-    if not record:
-        return None, error
-
-    entry = db.query(WaitlistEntry).filter(WaitlistEntry.id == record.waitlist_entry_id).first()
-    if not entry:
-        return None, "Invalid or expired invite link."
-    return entry, ""
-
-
-def verify_waitlist_invite_token(db, token: str, email: str) -> tuple[Token | None, str]:
-    """Validate an invite token AND that it was issued for this email (so
-    a forwarded link can't be used to register a different address under
-    someone else's invite). Does NOT consume it — registration succeeding
-    is itself the terminal state; see create_reset_token-style callers for
-    why other flows explicitly consume but this one doesn't need to."""
-    record, error = _verify_token(
-        db, token, TOKEN_TYPE_WAITLIST_INVITE,
-        not_found_msg="Invalid or expired invite link.",
-        expired_msg="This invite link has expired. Please rejoin the waitlist.",
-    )
-    if not record:
-        return None, error
-
-    entry = db.query(WaitlistEntry).filter(WaitlistEntry.id == record.waitlist_entry_id).first()
-    if not entry or normalize_email_for_dedup(entry.email) != normalize_email_for_dedup(email):
-        return None, "This invite link was sent to a different email address."
-
-    return record, ""

@@ -1,20 +1,7 @@
-import { test, expect, Browser, request } from '@playwright/test'
+import { test, expect, Browser } from '@playwright/test'
 
 const E2E_EMAIL = process.env.E2E_EMAIL ?? 'e2e-test@example.com'
 const E2E_PASSWORD = process.env.E2E_PASSWORD ?? 'E2eTest123!'
-const E2E_API_URL = process.env.E2E_API_URL ?? 'http://localhost:8000'
-
-// These registration tests need the registration form itself, which only
-// renders when MAX_USERS hasn't capped signups (see waitlist.spec.ts for the
-// gated-form coverage). Skip rather than fail when the live environment is
-// at capacity — that's a config state, not a regression.
-async function registrationIsOpen(): Promise<boolean> {
-  const api = await request.newContext({ baseURL: E2E_API_URL })
-  const res = await api.get('/auth/registration_status/')
-  const { open } = await res.json()
-  await api.dispose()
-  return open
-}
 
 // Unauthenticated tests — clear the saved storageState for this describe block only
 test.describe('unauthenticated', () => {
@@ -48,7 +35,6 @@ test.describe('unauthenticated', () => {
   })
 
   test('registration form has separate first and last name fields', async ({ browser }: { browser: Browser }) => {
-    test.skip(!(await registrationIsOpen()), 'registration is closed (MAX_USERS reached)')
     const ctx = await browser.newContext()
     const page = await ctx.newPage()
     await page.goto('/login')
@@ -77,7 +63,6 @@ test.describe('unauthenticated', () => {
   })
 
   test('registration blocks submit when passwords do not match', async ({ browser }: { browser: Browser }) => {
-    test.skip(!(await registrationIsOpen()), 'registration is closed (MAX_USERS reached)')
     const ctx = await browser.newContext()
     const page = await ctx.newPage()
     await page.goto('/login')

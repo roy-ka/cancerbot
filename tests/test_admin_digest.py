@@ -6,7 +6,6 @@ from unittest.mock import patch, AsyncMock, MagicMock
 from src.db.models import SearchAnalytic, BugReport
 from src.db.repositories.conversations import create_conversation
 from src.db.repositories.messeges import add_message
-from src.db.repositories.waitlist import create_waitlist_entry
 from src.jobs.admin_digest import (
     _gather_db_stats,
     _gather_axiom_stats,
@@ -53,14 +52,6 @@ class TestGatherDbStats:
         since = datetime.now(timezone.utc) - timedelta(hours=1)
         stats = _gather_db_stats(db_session, since)
         assert stats["fallback_triggered"] == 1
-
-    def test_waitlist_joined_counted(self, db_session):
-        create_waitlist_entry(db_session, "digest-e2e@example.com", "Digest Test")
-
-        since = datetime.now(timezone.utc) - timedelta(hours=1)
-        stats = _gather_db_stats(db_session, since)
-        assert stats["waitlist_joined"] == 1
-
     def test_bug_reports_counted(self, db_session, test_user):
         db_session.add(BugReport(user_id=test_user.id, title="Something broke"))
         db_session.commit()

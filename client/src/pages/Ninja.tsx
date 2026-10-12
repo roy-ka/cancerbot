@@ -41,132 +41,12 @@ type NinjaMessage = {
   sources: Source[]
 }
 
-type WaitlistEntry = {
-  id: string
-  email: string
-  name: string | null
-  created_at: string | null
-  invited: boolean
-  invited_at: string | null
-}
-
 const BASE_URL = import.meta.env.VITE_BASE_URL || ''
-
-function WaitlistTab() {
-  const [entries, setEntries] = useState<WaitlistEntry[]>([])
-  const [loading, setLoading] = useState(false)
-  const [invitingId, setInvitingId] = useState<string | null>(null)
-  const [errorMsg, setErrorMsg] = useState<string | null>(null)
-
-  const loadEntries = () => {
-    setLoading(true)
-    fetch(`${BASE_URL}/ninja/waitlist/`, { credentials: 'include' })
-      .then(async (res) => {
-        if (!res.ok) throw new Error(await res.text())
-        return res.json()
-      })
-      .then((data) => setEntries(data.entries || []))
-      .catch(() => setErrorMsg('Failed to load waitlist.'))
-      .finally(() => setLoading(false))
-  }
-
-  useEffect(() => {
-    // loadEntries sets the loading spinner before its fetch resolves —
-    // that's the point of this effect, not an avoidable cascading render.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    loadEntries()
-  }, [])
-
-  const invite = async (entry: WaitlistEntry) => {
-    setInvitingId(entry.id)
-    try {
-      const res = await fetch(`${BASE_URL}/ninja/waitlist/${entry.id}/invite`, {
-        method: 'POST',
-        credentials: 'include',
-      })
-      if (!res.ok) throw new Error(await res.text())
-      const updated: WaitlistEntry = await res.json()
-      setEntries((prev) => prev.map((e) => (e.id === updated.id ? updated : e)))
-    } catch {
-      setErrorMsg('Failed to send invite.')
-    } finally {
-      setInvitingId(null)
-    }
-  }
-
-  return (
-    <>
-      <Snackbar
-        open={!!errorMsg}
-        autoHideDuration={5000}
-        onClose={() => setErrorMsg(null)}
-        anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
-      >
-        <Alert severity="error" onClose={() => setErrorMsg(null)}>{errorMsg}</Alert>
-      </Snackbar>
-
-      {loading && (
-        <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
-          <CircularProgress size={24} />
-        </Box>
-      )}
-
-      {!loading && (
-        <List>
-          {entries.map((entry) => (
-            <Box
-              key={entry.id}
-              data-testid={`waitlist-row-${entry.email}`}
-              sx={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                gap: 2,
-                borderRadius: 2,
-                px: 2,
-                py: 1.25,
-                mb: 0.5,
-                bgcolor: 'rgba(255,255,255,0.03)',
-              }}
-            >
-              <Box sx={{ minWidth: 0 }}>
-                <Typography sx={{ fontWeight: 600 }} noWrap>
-                  {entry.name || entry.email}
-                </Typography>
-                <Typography variant="body2" sx={{ opacity: 0.6 }} noWrap>
-                  {entry.email}
-                </Typography>
-                {entry.invited_at && (
-                  <Typography variant="caption" sx={{ opacity: 0.5 }}>
-                    Invited {new Date(entry.invited_at).toLocaleString()}
-                  </Typography>
-                )}
-              </Box>
-              <Button
-                size="small"
-                variant={entry.invited ? 'outlined' : 'contained'}
-                onClick={() => invite(entry)}
-                disabled={invitingId === entry.id}
-                sx={{ textTransform: 'none', flexShrink: 0 }}
-              >
-                {invitingId === entry.id ? '…' : entry.invited ? 'Resend invite' : 'Invite'}
-              </Button>
-            </Box>
-          ))}
-          {entries.length === 0 && (
-            <Typography sx={{ opacity: 0.6, py: 2 }}>The waitlist is empty.</Typography>
-          )}
-        </List>
-      )}
-    </>
-  )
-}
 
 export default function Ninja() {
   const navigate = useNavigate()
 
   const [accessChecked, setAccessChecked] = useState(false)
-  const [tab, setTab] = useState<'users' | 'waitlist'>('users')
   const [users, setUsers] = useState<NinjaUser[]>([])
   const [selectedUser, setSelectedUser] = useState<NinjaUser | null>(null)
   const [conversations, setConversations] = useState<NinjaConversation[]>([])
@@ -193,8 +73,7 @@ export default function Ninja() {
   }, [navigate])
 
   useEffect(() => {
-    if (!accessChecked || tab !== 'users') return
-    // Same loading-before-fetch pattern as WaitlistTab.loadEntries above.
+    if (!accessChecked) return
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true)
     fetch(`${BASE_URL}/ninja/users/`, { credentials: 'include' })
@@ -205,7 +84,7 @@ export default function Ninja() {
       .then((data) => setUsers(data.users || []))
       .catch(() => setErrorMsg('Failed to load users.'))
       .finally(() => setLoading(false))
-  }, [accessChecked, tab])
+  }, [accessChecked])
 
   const openUser = (user: NinjaUser) => {
     setSelectedUser(user)
@@ -288,29 +167,6 @@ export default function Ninja() {
         </Button>
       </Box>
 
-      <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
-        <Button
-          size="small"
-          variant={tab === 'users' ? 'contained' : 'outlined'}
-          onClick={() => setTab('users')}
-          sx={{ textTransform: 'none' }}
-        >
-          Users
-        </Button>
-        <Button
-          size="small"
-          variant={tab === 'waitlist' ? 'contained' : 'outlined'}
-          onClick={() => setTab('waitlist')}
-          sx={{ textTransform: 'none' }}
-        >
-          Waitlist
-        </Button>
-      </Box>
-
-      {tab === 'waitlist' ? (
-        <WaitlistTab />
-      ) : (
-        <>
           {/* Breadcrumb-ish step indicator */}
           <Typography variant="body2" sx={{ opacity: 0.7, mb: 2 }}>
             Users
@@ -432,8 +288,6 @@ export default function Ninja() {
               </Box>
             </>
           )}
-        </>
-      )}
     </Box>
   )
 }

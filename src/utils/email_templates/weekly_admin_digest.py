@@ -40,7 +40,6 @@ HTML = """<!DOCTYPE html>
                 <tr><td style="padding:4px 0;">New conversations</td><td align="right" style="padding:4px 0; font-weight:bold;">{new_conversations}</td></tr>
                 <tr><td style="padding:4px 0;">Messages sent</td><td align="right" style="padding:4px 0; font-weight:bold;">{messages_sent}</td></tr>
                 <tr><td style="padding:4px 0;">Fallback searches triggered</td><td align="right" style="padding:4px 0; font-weight:bold;">{fallback_triggered}</td></tr>
-                <tr><td style="padding:4px 0;">New waitlist signups</td><td align="right" style="padding:4px 0; font-weight:bold;">{waitlist_joined}</td></tr>
                 <tr><td style="padding:12px 0 4px 0; border-top:1px solid #e5e7eb;">Total registered users</td><td align="right" style="padding:12px 0 4px 0; border-top:1px solid #e5e7eb; font-weight:bold;">{total_users}</td></tr>
               </table>
             </td>

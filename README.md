@@ -16,7 +16,7 @@ For every message:
 
 Users can optionally save a health profile (cancer type, stage, biomarkers, age band, treatment status) to frame answers. Questions about the profile itself ("what stage did I save?") are answered directly from it, without any model generation.
 
-Other features: email-verified accounts, shareable read-only conversation links, conversation export (Markdown / print-to-PDF), clinical-trial finder, answer feedback, a capped-registration waitlist with invites, and an admin console.
+Other features: email-verified accounts, shareable read-only conversation links, conversation export (Markdown / print-to-PDF), clinical-trial finder, answer feedback, and an admin console.
 
 ## Stack
 
