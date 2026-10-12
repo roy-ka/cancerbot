@@ -11,6 +11,10 @@ export PATH=$PATH:/snap/bin
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+# docker-compose.yml alone is the local-development stack (OpenSearch over
+# plain HTTP); docker-compose.prod.yml layers on OpenSearch TLS. Every
+# compose call here must use both.
+COMPOSE_FILES=(-f "$PROJECT_DIR/docker-compose.yml" -f "$PROJECT_DIR/docker-compose.prod.yml")
 
 # git pull (below) can update this very file mid-run. Bash has already read
 # this script into memory by the time that happens, so it keeps executing the
@@ -169,7 +173,7 @@ MIGRATIONS_APPLIED=false
 
 # Run a command inside a one-off backend container (defined early so rollback can call it)
 _alembic() {
-  docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot \
+  docker compose "${COMPOSE_FILES[@]}" -p cancerbot \
     run --rm --no-deps backend "$@" 2>&1 | sed 's/^/    /'
 }
 
@@ -192,7 +196,7 @@ rollback() {
 
   # Always stop services and restart with old images
   echo "Stopping services..."
-  docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot down || true
+  docker compose "${COMPOSE_FILES[@]}" -p cancerbot down || true
 
   if [ -n "$BACKEND_IMAGE" ] && docker inspect "$BACKEND_IMAGE_TAG" &>/dev/null; then
     docker tag "$BACKEND_IMAGE_TAG" "$BACKEND_IMAGE"
@@ -200,7 +204,7 @@ rollback() {
   fi
 
   echo "Starting services with previous images..."
-  docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot --profile prod up -d || true
+  docker compose "${COMPOSE_FILES[@]}" -p cancerbot --profile prod up -d || true
 
   if [ -f "$BACKUP_FILE" ]; then
     # Wait for postgres to be ready
@@ -417,7 +421,7 @@ if [ "$REQS_HASH_NOW" != "$REQS_HASH_PREV" ]; then
 else
   echo "Requirements unchanged — using Docker layer cache"
 fi
-if docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot --profile prod build --pull $DOCKER_BUILD_FLAGS --build-arg APT_CACHE_DATE="$(date +%Y%m%d)"; then
+if docker compose "${COMPOSE_FILES[@]}" -p cancerbot --profile prod build --pull $DOCKER_BUILD_FLAGS --build-arg APT_CACHE_DATE="$(date +%Y%m%d)"; then
   echo "✓ Docker images built successfully"
   echo "$REQS_HASH_NOW" > "$REQS_HASH_FILE"
 else
@@ -504,7 +508,7 @@ fi
 # concurrently and corrupt the alembic_version table with duplicate entries.
 echo ""
 echo "Starting infrastructure services..."
-if docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot up -d; then
+if docker compose "${COMPOSE_FILES[@]}" -p cancerbot up -d; then
   echo "✓ Infrastructure services started"
 else
   echo "✗ Failed to start infrastructure services"
@@ -589,7 +593,7 @@ fi
 # Seeds are non-fatal: a failure logs a warning but does not abort the deploy.
 echo ""
 echo "Running seeds..."
-if docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot \
+if docker compose "${COMPOSE_FILES[@]}" -p cancerbot \
     run --rm --no-deps backend python scripts/seed_wikipedia_tags.py 2>&1 | sed 's/^/    /'; then
   echo "✓ Seeds completed"
 else
@@ -599,7 +603,7 @@ fi
 # Backfill existing OpenSearch docs to chunked schema (idempotent — skips already-migrated docs)
 echo ""
 echo "Running chunk backfill migration..."
-if docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot \
+if docker compose "${COMPOSE_FILES[@]}" -p cancerbot \
     run --rm --no-deps backend python scripts/backfill_chunks.py 2>&1 | sed 's/^/    /'; then
   echo "✓ Chunk backfill completed"
 else
@@ -611,7 +615,7 @@ fi
 # only touches docs still missing evidence_level)
 echo ""
 echo "Running source metadata backfill..."
-if docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot \
+if docker compose "${COMPOSE_FILES[@]}" -p cancerbot \
     run --rm --no-deps backend python scripts/backfill_source_metadata.py 2>&1 | sed 's/^/    /'; then
   echo "✓ Source metadata backfill completed"
 else
@@ -622,7 +626,7 @@ fi
 # first-message-prefix title (idempotent — skips already-backfilled ones)
 echo ""
 echo "Running conversation title backfill..."
-if docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot \
+if docker compose "${COMPOSE_FILES[@]}" -p cancerbot \
     run --rm --no-deps backend python scripts/backfill_conversation_titles.py 2>&1 | sed 's/^/    /'; then
   echo "✓ Conversation title backfill completed"
 else
@@ -632,7 +636,7 @@ fi
 # Now start the backend and other prod-profile services
 echo ""
 echo "Starting backend services..."
-if docker compose -f "$PROJECT_DIR/docker-compose.yml" -p cancerbot --profile prod up -d --remove-orphans; then
+if docker compose "${COMPOSE_FILES[@]}" -p cancerbot --profile prod up -d --remove-orphans; then
   echo "✓ Backend services started"
 else
   echo "✗ Failed to start backend services"

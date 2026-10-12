@@ -94,7 +94,7 @@ Open http://localhost:5173.
 
 ### Production
 
-`docker compose --profile prod up --build` adds the backend, worker and Redis containers. `scripts/deploy.sh` is the full deploy (image build, Trivy scan, migrations, health check, nginx reload). See [DEPLOY_EC2.md](DEPLOY_EC2.md), [DEPLOY_ORACLE_CLOUD.md](DEPLOY_ORACLE_CLOUD.md) and [BACKUP.md](BACKUP.md). Set `ENV=production` (outside production, token-issuing endpoints return their tokens in the response for test automation) and `FRONTEND_URL` to your public origin; the backend refuses to start in production without it.
+Production uses `docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile prod up -d --build`: the second file turns on OpenSearch TLS (local development runs it over plain HTTP), and the `prod` profile adds the backend, worker and Redis containers. `scripts/deploy.sh` is the full deploy (image build, Trivy scan, migrations, health check, nginx reload). See [DEPLOY_EC2.md](DEPLOY_EC2.md), [DEPLOY_ORACLE_CLOUD.md](DEPLOY_ORACLE_CLOUD.md) and [BACKUP.md](BACKUP.md). Set `ENV=production` (outside production, token-issuing endpoints return their tokens in the response for test automation) and `FRONTEND_URL` to your public origin; the backend refuses to start in production without it.
 
 ## Tests
 

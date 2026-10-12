@@ -38,6 +38,7 @@ class TestOpenSearchTLS:
     def test_prod_without_ca_cert_falls_back_insecurely_with_warning(self, monkeypatch, caplog):
         _reset()
         monkeypatch.delenv("OPENSEARCH_CA_CERT", raising=False)
+        monkeypatch.setenv("OPENSEARCH_URL", "https://localhost:9200")
         monkeypatch.setenv("OPENSEARCH_VERIFY_CERTS", "false")
         monkeypatch.setattr(dbConnector, "_PASS", "fake-password")
         monkeypatch.setattr("src.retrieval.db_connector.model_name", "nomic-embed-text")
@@ -54,6 +55,7 @@ class TestOpenSearchTLS:
     def test_dev_without_ca_cert_skips_ssl_context(self, monkeypatch):
         _reset()
         monkeypatch.delenv("OPENSEARCH_CA_CERT", raising=False)
+        monkeypatch.setenv("OPENSEARCH_URL", "https://localhost:9200")
         monkeypatch.setenv("OPENSEARCH_VERIFY_CERTS", "false")
         monkeypatch.setattr(dbConnector, "_PASS", "fake-password")
         monkeypatch.setattr("src.retrieval.db_connector.model_name", "nomic-embed-text")
@@ -65,6 +67,52 @@ class TestOpenSearchTLS:
         _, kwargs = mock_os.call_args
         assert kwargs.get("verify_certs") is False
         assert "ssl_context" not in kwargs
+
+
+class TestOpenSearchPlainHttp:
+    """Local development runs OpenSearch over plain HTTP with the security
+    plugin off (docker-compose.yml); TLS is production-only."""
+
+    def teardown_method(self):
+        _reset()
+
+    def test_http_url_gets_plain_client_without_tls_or_auth(self, monkeypatch):
+        _reset()
+        monkeypatch.setenv("OPENSEARCH_URL", "http://localhost:9200")
+        monkeypatch.setenv("OPENSEARCH_CA_CERT", "/fake/root-ca.pem")
+        monkeypatch.setattr("src.retrieval.db_connector.model_name", "nomic-embed-text")
+
+        with patch("src.retrieval.db_connector.OpenSearch") as mock_os, \
+             patch("src.retrieval.db_connector.ssl.create_default_context") as mock_ctx:
+            dbConnector._initialize()
+
+        _, kwargs = mock_os.call_args
+        assert kwargs["use_ssl"] is False
+        assert "http_auth" not in kwargs
+        assert "ssl_context" not in kwargs
+        mock_ctx.assert_not_called()
+
+    def test_http_url_needs_no_admin_password(self, monkeypatch):
+        _reset()
+        monkeypatch.setenv("OPENSEARCH_URL", "http://localhost:9200")
+        monkeypatch.setattr(dbConnector, "_PASS", None)
+        monkeypatch.setattr("src.retrieval.db_connector.model_name", "nomic-embed-text")
+
+        with patch("src.retrieval.db_connector.OpenSearch") as mock_os:
+            dbConnector._initialize()
+
+        mock_os.assert_called_once()
+
+    def test_https_url_still_requires_admin_password(self, monkeypatch):
+        _reset()
+        monkeypatch.setenv("OPENSEARCH_URL", "https://localhost:9200")
+        monkeypatch.setattr(dbConnector, "_PASS", None)
+        monkeypatch.setattr("src.retrieval.db_connector.model_name", "nomic-embed-text")
+
+        with patch("src.retrieval.db_connector.OpenSearch") as mock_os:
+            dbConnector._initialize()
+
+        mock_os.assert_not_called()
 
 
 class TestExistingDoiBaseIds:

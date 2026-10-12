@@ -48,8 +48,15 @@ class dbConnector:
       return
     cls._initialized = True
 
-    if not model_name or not cls._PASS:
-      cls.logger.warning("OpenSearch not configured (missing EMBED_MODEL_NAME or OPENSEARCH_INITIAL_ADMIN_PASSWORD)")
+    from urllib.parse import urlparse
+    _parsed = urlparse(os.getenv('OPENSEARCH_URL', 'http://localhost:9200'))
+    # TLS and the admin password only exist on the production cluster
+    # (docker-compose.prod.yml); local development runs OpenSearch over plain
+    # HTTP with the security plugin off. src/main.py refuses to start in
+    # production unless OPENSEARCH_URL is https://.
+    use_tls = _parsed.scheme == 'https'
+    if not model_name or (use_tls and not cls._PASS):
+      cls.logger.warning("OpenSearch not configured (missing EMBED_MODEL_NAME, or OPENSEARCH_INITIAL_ADMIN_PASSWORD for an https:// cluster)")
       return
 
     try:
@@ -57,10 +64,13 @@ class dbConnector:
         raise KeyError(f"EMBED_MODEL_NAME='{model_name}' not found in MODELS. Valid models: {list(cls.MODELS.keys())}")
 
       cls._model = cls.MODELS[model_name]
-      from urllib.parse import urlparse
-      _parsed = urlparse(os.getenv('OPENSEARCH_URL', 'https://localhost:9200'))
       host = _parsed.hostname or 'localhost'
       port = _parsed.port or 9200
+
+      if not use_tls:
+        cls.db_client = OpenSearch(hosts=[{'host': host, 'port': port}], http_compress=True, use_ssl=False)
+        return
+
       auth = ('admin', cls._PASS)
       ca_cert_path = os.getenv("OPENSEARCH_CA_CERT")
       verify_certs = os.getenv("OPENSEARCH_VERIFY_CERTS", "false").lower() in ("1", "true", "yes")

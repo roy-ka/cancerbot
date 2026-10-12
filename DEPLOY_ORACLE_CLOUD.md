@@ -35,7 +35,7 @@ Required in production:
 - `GROQ_API_KEY` (and optionally `GEMINI_API_KEY` for fallback), `BREVO_API_KEY`
 - `ADMIN_DIGEST_EMAILS` — where admin digests and LLM-fallback alerts go
 
-Don't set `POSTGRES_URL`, `OPENSEARCH_URL`, `OLLAMA_URL`, `NLP_SERVICE_URL` or `REDIS_URL` for production — `docker-compose.yml` sets the in-network values for the backend and worker containers.
+Don't set `POSTGRES_URL`, `OPENSEARCH_URL`, `OLLAMA_URL`, `NLP_SERVICE_URL` or `REDIS_URL` for production — `docker-compose.yml` and `docker-compose.prod.yml` set the in-network values for the backend and worker containers.
 
 ### 3. Install Ollama on host
 
@@ -70,7 +70,7 @@ Deploy with the deploy script — it builds the images and the frontend, starts 
 Then check:
 
 ```bash
-docker compose -p cancerbot --profile prod ps
+docker compose -f docker-compose.yml -f docker-compose.prod.yml -p cancerbot --profile prod ps
 curl -i http://localhost:8000/health/
 # 200 {"status":"ok","checks":{"database":{"status":"ok"},"ollama":{"status":"ok","models":1}},...}
 # 503 with "status":"degraded" if PostgreSQL or Ollama is unreachable
@@ -194,8 +194,8 @@ docker logs cancerbot-postgres --follow
 ### Check container status
 
 ```bash
-docker compose ps
-docker compose stats
+docker compose -f docker-compose.yml -f docker-compose.prod.yml -p cancerbot ps
+docker compose -f docker-compose.yml -f docker-compose.prod.yml -p cancerbot stats
 ```
 
 ### Health endpoints
@@ -220,7 +220,7 @@ docker compose stats
 ### Database connection errors
 
 **Solution:**
-1. Verify PostgreSQL is running: `docker compose ps`
+1. Verify PostgreSQL is running: `docker compose -f docker-compose.yml -f docker-compose.prod.yml -p cancerbot ps`
 2. Check `.env` has correct `POSTGRES_PASSWORD`
 3. Verify health check: `docker exec cancerbot-postgres pg_isready -U cancerbot`
 
@@ -232,7 +232,7 @@ docker compose stats
 docker exec opensearch-node1 curl -u admin:PASSWORD -k https://localhost:9200/_cluster/health
 
 # Restart cluster
-docker compose restart opensearch-node1 opensearch-node2
+docker compose -f docker-compose.yml -f docker-compose.prod.yml -p cancerbot restart opensearch-node1 opensearch-node2
 ```
 
 ## Security Notes

@@ -8,17 +8,11 @@ services:
       - node.roles=cluster_manager,data,ingest
       - discovery.seed_hosts=opensearch-node1,opensearch-node2
       - cluster.initial_cluster_manager_nodes=opensearch-node1,opensearch-node2
-      - OPENSEARCH_INITIAL_ADMIN_PASSWORD=${OPENSEARCH_INITIAL_ADMIN_PASSWORD}
       - bootstrap.memory_lock=true
       - OPENSEARCH_JAVA_OPTS=-Xms2g -Xmx2g
-      - plugins.security.ssl.http.enabled=true
-      - plugins.security.ssl.http.pemcert_filepath=certs/node.pem
-      - plugins.security.ssl.http.pemkey_filepath=certs/node-key.pem
-      - plugins.security.ssl.http.pemtrustedcas_filepath=certs/root-ca.pem
-      - plugins.security.ssl.transport.pemcert_filepath=certs/node.pem
-      - plugins.security.ssl.transport.pemkey_filepath=certs/node-key.pem
-      - plugins.security.ssl.transport.pemtrustedcas_filepath=certs/root-ca.pem
-      - plugins.security.nodes_dn=CN=opensearch-node1
+      # Local development: plain HTTP, no auth, no certificates.
+      # docker-compose.prod.yml turns the security plugin and TLS back on.
+      - DISABLE_SECURITY_PLUGIN=true
     ulimits:
       memlock: { soft: -1, hard: -1 }
       nofile: { soft: 65536, hard: 65536 }
@@ -27,12 +21,11 @@ services:
       - '127.0.0.1:9600:9600'
     volumes:
       - os-data1:/usr/share/opensearch/data
-      - ./certs/opensearch:/usr/share/opensearch/config/certs:ro
     healthcheck:
       test:
         [
           'CMD-SHELL',
-          'curl -sf --insecure -u admin:${OPENSEARCH_INITIAL_ADMIN_PASSWORD} "https://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s" || exit 1',
+          'curl -sf "http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s" || exit 1',
         ]
       interval: 15s
       timeout: 10s
@@ -49,30 +42,24 @@ services:
       - node.roles=cluster_manager,data,ingest
       - discovery.seed_hosts=opensearch-node1,opensearch-node2
       - cluster.initial_cluster_manager_nodes=opensearch-node1,opensearch-node2
-      - OPENSEARCH_INITIAL_ADMIN_PASSWORD=${OPENSEARCH_INITIAL_ADMIN_PASSWORD}
       - bootstrap.memory_lock=true
       - OPENSEARCH_JAVA_OPTS=-Xms2g -Xmx2g
-      - plugins.security.ssl.http.enabled=true
-      - plugins.security.ssl.http.pemcert_filepath=certs/node.pem
-      - plugins.security.ssl.http.pemkey_filepath=certs/node-key.pem
-      - plugins.security.ssl.http.pemtrustedcas_filepath=certs/root-ca.pem
-      - plugins.security.ssl.transport.pemcert_filepath=certs/node.pem
-      - plugins.security.ssl.transport.pemkey_filepath=certs/node-key.pem
-      - plugins.security.ssl.transport.pemtrustedcas_filepath=certs/root-ca.pem
-      - plugins.security.nodes_dn=CN=opensearch-node1
+      # Local development: plain HTTP, no auth, no certificates.
+      # docker-compose.prod.yml turns the security plugin and TLS back on.
+      - DISABLE_SECURITY_PLUGIN=true
     ulimits:
       memlock: { soft: -1, hard: -1 }
       nofile: { soft: 65536, hard: 65536 }
     volumes:
       - os-data2:/usr/share/opensearch/data
-      - ./certs/opensearch:/usr/share/opensearch/config/certs:ro
     networks: [osnet]
 
   dashboards:
     image: opensearchproject/opensearch-dashboards:3
     container_name: opensearch-dashboards
     environment:
-      - OPENSEARCH_HOSTS=["https://opensearch-node1:9200"]
+      - OPENSEARCH_HOSTS=["http://opensearch-node1:9200"]
+      - DISABLE_SECURITY_DASHBOARDS_PLUGIN=true
     ports:
       - '127.0.0.1:5601:5601'
     depends_on:
@@ -150,14 +137,12 @@ services:
     environment:
       ENV: production
       POSTGRES_URL: 'postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}'
-      OPENSEARCH_URL: 'https://opensearch-node1:9200'
+      OPENSEARCH_URL: 'http://opensearch-node1:9200'
       OLLAMA_URL: 'http://172.30.0.1:11434'
       NLP_SERVICE_URL: 'http://nlp-service:8100'
       REDIS_URL: 'redis://:${REDIS_PASSWORD}@redis:6379/0'
     ports:
       - '8000:8000'
-    volumes:
-      - ./certs/opensearch/root-ca.pem:/app/certs/opensearch/root-ca.pem:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -191,12 +176,10 @@ services:
     environment:
       ENV: production
       POSTGRES_URL: 'postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}'
-      OPENSEARCH_URL: 'https://opensearch-node1:9200'
+      OPENSEARCH_URL: 'http://opensearch-node1:9200'
       OLLAMA_URL: 'http://172.30.0.1:11434'
       NLP_SERVICE_URL: 'http://nlp-service:8100'
       REDIS_URL: 'redis://:${REDIS_PASSWORD}@redis:6379/0'
-    volumes:
-      - ./certs/opensearch/root-ca.pem:/app/certs/opensearch/root-ca.pem:ro
     depends_on:
       postgres:
         condition: service_healthy

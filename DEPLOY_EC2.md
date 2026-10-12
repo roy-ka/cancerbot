@@ -82,6 +82,6 @@ Point the `ssl_certificate` lines in `nginx.conf` at `/etc/letsencrypt/live/your
 
 ```bash
 curl -i https://your-domain.com/health/   # 200 when PostgreSQL and Ollama are reachable, 503 otherwise
-docker compose -p cancerbot --profile prod ps
-docker compose -p cancerbot --profile prod logs -f backend
+docker compose -f docker-compose.yml -f docker-compose.prod.yml -p cancerbot --profile prod ps
+docker compose -f docker-compose.yml -f docker-compose.prod.yml -p cancerbot --profile prod logs -f backend
 ```

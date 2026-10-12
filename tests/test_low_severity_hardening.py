@@ -273,7 +273,8 @@ class TestMissingFrontendUrlGuard:
         import src.main
 
         env = {k: v for k, v in os.environ.items() if k != "FRONTEND_URL"}
-        env.update({"CORS_ORIGINS": "https://example.com", "ENV": "production"})
+        env.update({"CORS_ORIGINS": "https://example.com", "ENV": "production",
+                    "OPENSEARCH_URL": "https://opensearch-node1:9200"})
         # main.py's load_dotenv() would otherwise re-read FRONTEND_URL from a
         # developer's local .env on reload.
         with patch.dict("os.environ", env, clear=True), patch("dotenv.load_dotenv"):
@@ -307,9 +308,42 @@ class TestMissingFrontendUrlGuard:
 
         with patch.dict("os.environ", {
             "CORS_ORIGINS": "https://example.com", "ENV": "production",
-            "FRONTEND_URL": "https://example.com",
+            "FRONTEND_URL": "https://example.com", "OPENSEARCH_URL": "https://opensearch-node1:9200",
         }):
             with patch("src.utils.utils.is_prod", return_value=True):
+                importlib.reload(src.main)
+
+        with patch.dict("os.environ", {"CORS_ORIGINS": "http://localhost:5173", "ENV": "test"}):
+            importlib.reload(src.main)
+
+
+class TestOpenSearchTlsGuard:
+    """Plain-HTTP OpenSearch is local-development only; production must
+    connect over TLS (docker-compose.prod.yml)."""
+
+    @pytest.mark.parametrize("url", ["http://opensearch-node1:9200", ""])
+    def test_production_without_https_opensearch_refuses_to_start(self, url):
+        import importlib
+        import os
+        import src.main
+
+        env = {k: v for k, v in os.environ.items() if k != "OPENSEARCH_URL"}
+        env.update({"CORS_ORIGINS": "https://example.com", "ENV": "production",
+                    "FRONTEND_URL": "https://example.com", "OPENSEARCH_URL": url})
+        with patch.dict("os.environ", env, clear=True), patch("dotenv.load_dotenv"):
+            with patch("src.utils.utils.is_prod", return_value=True):
+                with pytest.raises(RuntimeError, match="OPENSEARCH_URL"):
+                    importlib.reload(src.main)
+
+        with patch.dict("os.environ", {"CORS_ORIGINS": "http://localhost:5173", "ENV": "test"}):
+            importlib.reload(src.main)
+
+    def test_development_allows_plain_http_opensearch(self):
+        import importlib
+        import src.main
+
+        with patch.dict("os.environ", {"OPENSEARCH_URL": "http://localhost:9200", "ENV": "development"}):
+            with patch("src.utils.utils.is_prod", return_value=False):
                 importlib.reload(src.main)
 
         with patch.dict("os.environ", {"CORS_ORIGINS": "http://localhost:5173", "ENV": "test"}):

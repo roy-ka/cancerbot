@@ -110,6 +110,14 @@ if is_prod() and os.getenv("DEV_EMAIL_SHORTCUTS", "").strip().lower() in ("1", "
         "password-reset tokens in API responses — local development only."
     )
 
+# Local development runs OpenSearch over plain HTTP (docker-compose.yml);
+# production must use the TLS cluster from docker-compose.prod.yml.
+if is_prod() and not os.getenv("OPENSEARCH_URL", "").strip().lower().startswith("https://"):
+    raise RuntimeError(
+        "OPENSEARCH_URL must be https:// in production. Plain-HTTP OpenSearch is for local "
+        "development only — deploy with docker-compose.prod.yml (scripts/deploy.sh does)."
+    )
+
 if is_prod() and not os.getenv("FRONTEND_URL", "").strip():
     raise RuntimeError(
         "FRONTEND_URL is not set. Production must set it to the public frontend origin "
