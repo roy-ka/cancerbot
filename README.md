@@ -45,7 +45,7 @@ flowchart LR
 
 ## Fastest way to try it
 
-You need Docker, [Ollama](https://ollama.com), Python 3.12, Node.js 20.19+, and a free [Groq API key](https://console.groq.com/keys).
+You need Docker, [Ollama](https://ollama.com), Python 3.12 and Node.js 20.19+, plus a model to write the answers: either a free [Groq API key](https://console.groq.com/keys), or a local Ollama chat model (no cloud account needed).
 
 **1. Clone and configure**
 
@@ -57,12 +57,19 @@ echo "VITE_BASE_URL=http://localhost:8000" > client/.env
 python3 -c "import secrets; print(secrets.token_hex(32))"   # copy the output for JWT_SECRET
 ```
 
-In `.env`, set these three lines (everything else can stay as it is for a local run):
+In `.env`, set these lines (everything else can stay as it is for a local run):
 
 ```
-GROQ_API_KEY=<your Groq key>
 JWT_SECRET=<the 64-character value printed above>
 DEV_EMAIL_SHORTCUTS=true
+GROQ_API_KEY=<your Groq key>
+```
+
+To use a local model instead of Groq, run `ollama pull llama3.1:8b` and replace the last line with these two (leaving `GROQ_API_KEY` empty means Groq is skipped entirely):
+
+```
+OLLAMA_GEN_MODEL=llama3.1:8b
+GROQ_API_KEY=
 ```
 
 `DEV_EMAIL_SHORTCUTS=true` skips email verification, so you can register and log in straight away without an email provider.
