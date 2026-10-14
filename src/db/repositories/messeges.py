@@ -157,7 +157,7 @@ def add_claims_and_sources(message: Message):
   add_claims_and_sources_bulk([message])
 
 
-def add_message(db, conversation_id, role, content, sources_ids='', urls=None, model_name=None, hidden_from_user=False, truncated=False):
+def add_message(db, conversation_id, role, content, sources_ids='', urls=None, model_name=None, hidden_from_user=False):
   # Convert string sources_ids to lists for JSON column compatibility
   if isinstance(sources_ids, str):
     sources_ids = [s.strip() for s in sources_ids.split(',') if s.strip()] if sources_ids else []
@@ -170,7 +170,6 @@ def add_message(db, conversation_id, role, content, sources_ids='', urls=None, m
     urls=urls if urls else None,
     model_name=model_name if role == 'assistant' else None,
     hidden_from_user=hidden_from_user,
-    truncated=truncated,
   )
   db.add(new_message)
   db.commit()
@@ -179,17 +178,6 @@ def add_message(db, conversation_id, role, content, sources_ids='', urls=None, m
     add_claims_and_sources(new_message)
 
   return new_message
-
-
-def append_to_message(db, message: Message, extra_content: str, truncated: bool) -> Message:
-  """Extend an existing (truncated) assistant message with a continuation's
-  text in place, rather than creating a new message row — the answer reads
-  as one continuous reply."""
-  message.content = message.content + extra_content
-  message.truncated = truncated
-  db.commit()
-  db.refresh(message)
-  return message
 
 
 def get_message_by_id(db, message_id):

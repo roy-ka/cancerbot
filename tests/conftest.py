@@ -22,9 +22,10 @@ os.environ.setdefault("REDIS_URL", "redis://:test-redis-password@localhost:6379/
 # Forced, not setdefault: a developer's local .env may enable it, and the
 # suite exercises the real verification/reset email flows.
 os.environ["DEV_EMAIL_SHORTCUTS"] = "false"
-# Forced blank for the same reason: a local .env may point generation at a
-# real Ollama model, and tests must never call it. Tests that cover the
-# Ollama path set it themselves.
+# Forced for the same reason: tests mock the Groq client, and a local .env
+# must never point them at a real provider. Tests covering other providers
+# set LLM_PROVIDER (and OLLAMA_GEN_MODEL) themselves.
+os.environ["LLM_PROVIDER"] = "groq"
 os.environ["OLLAMA_GEN_MODEL"] = ""
 # Off by default so existing retrieval tests don't each attempt a doomed
 # HTTP call to a nlp-service that isn't running in unit tests; reranking
@@ -207,32 +208,21 @@ def mock_enqueue():
     """Prevent tests from enqueueing against a real Redis.
 
     Without this, every code path that fires a background job (auth.py's
-    email sends, ollama_connector.py's fallback alert, conversation_helper's
-    URL classification) calls arq's create_pool against REDIS_URL, and
-    against no real Redis that isn't a fast failure — it's slow enough
-    under pytest's event loop to blow up a whole file's runtime (measured:
-    one file went from ~1s to 170s). Mirrors forcing SENDGRID_API_KEY/
-    BREVO_API_KEY empty above — no test should depend on live external
-    infrastructure by default.
+    email sends, conversation_helper's URL classification) calls arq's
+    create_pool against REDIS_URL, and against no real Redis that isn't a
+    fast failure — it's slow enough under pytest's event loop to blow up a
+    whole file's runtime (measured: one file went from ~1s to 170s).
 
-    auth.py and ollama_connector.py both do `from src.queue import
-    enqueue` at module level, binding their own local name — patching
-    src.queue.enqueue alone wouldn't reach those already-bound references,
-    so each needs its own patch target. conversation_helper.py imports it
-    fresh inside the function body instead, so patching src.queue.enqueue
-    (the source) is what reaches that one.
-
-    Yields the ollama_connector-side mock (the one tests most often want to
-    assert against, e.g. the fallback-alert enqueue). The others are
-    patched too but not returned here — tests asserting on their enqueue
-    calls open their own local `with patch("<module>.enqueue", ...)`, which
-    nests inside and overrides this one for that block.
+    auth.py does `from src.queue import enqueue` at module level, binding its
+    own local name, so it needs its own patch target; conversation_helper.py
+    imports it inside the function body, which patching src.queue.enqueue
+    reaches. Tests asserting on enqueue calls open their own local
+    `with patch("<module>.enqueue", ...)`, which overrides this one.
     """
     from unittest.mock import AsyncMock, patch
     with patch("src.routers.auth.enqueue", new=AsyncMock()), \
-         patch("src.queue.enqueue", new=AsyncMock()), \
-         patch("src.classes.ollama_connector.enqueue", new=AsyncMock()) as ollama_mock:
-        yield ollama_mock
+         patch("src.queue.enqueue", new=AsyncMock()) as queue_mock:
+        yield queue_mock
 
 
 @pytest.fixture()

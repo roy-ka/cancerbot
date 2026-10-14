@@ -2,7 +2,7 @@ from src.utils.email_templates import TEMPLATES, render
 
 
 class TestTemplatesShape:
-    def test_twelve_templates_present(self):
+    def test_eleven_templates_present(self):
         assert set(TEMPLATES) == {
             "verification",
             "password_reset",
@@ -10,7 +10,6 @@ class TestTemplatesShape:
             "delete_account_request",
             "delete_account_scheduled",
             "delete_account_cancelled",
-            "fallback_alert",
             "daily_admin_digest",
             "weekly_admin_digest",
             "email_change_request",
@@ -50,12 +49,6 @@ class TestRender:
             "delete_account_scheduled", name="Ada", date="August 3, 2026", link="https://x/login"
         )
         assert "August 3, 2026" in html
-
-    def test_model_substitution_in_subject_and_body(self):
-        subject, html = render("fallback_alert", model="gpt-4o")
-        assert "gpt-4o" in subject
-        assert "gpt-4o" in html
-
     def test_missing_field_raises(self):
         import pytest
         with pytest.raises(KeyError):

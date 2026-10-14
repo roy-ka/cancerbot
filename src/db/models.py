@@ -123,6 +123,8 @@ class Message(Base):
     urls = Column(JSON, nullable=True)
     model_name = Column(String(100), nullable=True)
     hidden_from_user = Column(Boolean, default=False, nullable=False)
+    # Legacy: set by the removed answer-length cap + "Continue" feature. Kept
+    # so the model matches the database; nothing reads or writes it now.
     truncated = Column(Boolean, default=False, nullable=False)
 
     # --- Virtual fields (not stored as separate DB columns) ---

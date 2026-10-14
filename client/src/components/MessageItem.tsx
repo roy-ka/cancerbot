@@ -1,4 +1,4 @@
-import { Box, Button, CircularProgress, IconButton, Link, Tooltip, Typography } from '@mui/material'
+import { Box, IconButton, Link, Tooltip, Typography } from '@mui/material'
 import TranslateIcon from '@mui/icons-material/Translate'
 import ThumbUpIcon from '@mui/icons-material/ThumbUp'
 import ThumbUpOffAltIcon from '@mui/icons-material/ThumbUpOffAlt'
@@ -63,18 +63,12 @@ export default function MessageItem({
   message,
   conversationId,
   onSplit,
-  onContinue,
   onAskAboutSource,
-  isContinuing,
-  continuingText,
 }: {
   message: Message
   conversationId?: string
   onSplit?: (conversation: NewConversation) => void
-  onContinue?: (messageId: string) => void
   onAskAboutSource?: (sourceId: string) => void
-  isContinuing?: boolean
-  continuingText?: string
 }) {
   const [feedback, setFeedback] = useState<1 | -1 | null>(message.feedback ?? null)
   const [splitting, setSplitting] = useState(false)
@@ -164,7 +158,7 @@ export default function MessageItem({
     )
   }, [message.sources])
   // Build a Typography node that contains text + clickable citation tokens like [C1], [pmid:...]
-  const displayContent = (message.content ?? '') + (isContinuing ? continuingText ?? '' : '')
+  const displayContent = message.content ?? ''
 
   const mesegeEnrichedText = useMemo(() => {
     const text = displayContent
@@ -293,7 +287,7 @@ export default function MessageItem({
     }
 
     return <Typography sx={{ whiteSpace: 'pre-wrap' }}>{parts}</Typography>
-  }, [displayContent, mergedSources, message.id, onAskAboutSource])
+  }, [displayContent, mergedSources, message.id, message.role, onAskAboutSource])
 
   const iconButtonSx = {
     color: 'rgba(255,255,255,0.4)',
@@ -351,29 +345,6 @@ export default function MessageItem({
           </Box>
         )}
         {mesegeEnrichedText}
-        {message.role === 'assistant' && message.truncated && !isContinuing && message.id && (
-          <Box sx={{ mt: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
-            <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.5)' }}>
-              Response was cut short.
-            </Typography>
-            <Button
-              size="small"
-              variant="text"
-              onClick={() => onContinue?.(message.id as string)}
-              sx={{ minWidth: 0, p: 0, textTransform: 'none' }}
-            >
-              Continue
-            </Button>
-          </Box>
-        )}
-        {isContinuing && (
-          <Box sx={{ mt: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
-            <CircularProgress size={12} />
-            <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.5)' }}>
-              Continuing...
-            </Typography>
-          </Box>
-        )}
         {message.role === 'assistant' && conversationId && (
           <Box
             sx={{

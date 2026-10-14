@@ -19,7 +19,6 @@ from src.utils.email import (
     send_delete_account_request_email,
     send_delete_account_scheduled_email,
     send_delete_account_cancelled_email,
-    send_fallback_alert,
     send_email_change_request_email,
     send_email_change_verification_email,
     send_email_changed_notice_email,
@@ -44,10 +43,6 @@ async def send_delete_account_scheduled_email_job(ctx, *, to, name, deletion_dat
 
 async def send_delete_account_cancelled_email_job(ctx, *, to, name) -> None:
     await send_delete_account_cancelled_email(to=to, name=name)
-
-
-async def send_fallback_alert_job(ctx, *, model) -> None:
-    await send_fallback_alert(model)
 
 
 

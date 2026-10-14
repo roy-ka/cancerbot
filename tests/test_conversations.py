@@ -709,47 +709,6 @@ class TestPersonalQuestionFastPath:
                         break
         assert "answering_from_profile" in stages
         assert "generating_answer" not in stages
-
-
-class TestTruncatedFlag:
-    def test_assistant_message_persists_truncated_true(self, client, test_conversation):
-        async def _gen(*a, **k):
-            yield "cut off mid"
-            yield {"_finish_reason": "length"}
-
-        with patch("src.routers.conversations.OllamaConnector.stream_text", new=_gen):
-            response = client.post(
-                f"/conversations/{test_conversation.id}/add_message",
-                json={"content": "What is glycolysis?"},
-            )
-        assert response.status_code == 200
-        assistant_msg = next(m for m in response.json()["messages"] if m["role"] == "assistant")
-        assert assistant_msg["truncated"] is True
-
-    def test_assistant_message_truncated_false_by_default(self, client, test_conversation):
-        response = client.post(
-            f"/conversations/{test_conversation.id}/add_message",
-            json={"content": "What is glycolysis?"},
-        )
-        assert response.status_code == 200
-        assistant_msg = next(m for m in response.json()["messages"] if m["role"] == "assistant")
-        assert assistant_msg["truncated"] is False
-
-    def test_get_messages_includes_truncated_field(self, client, test_conversation, db_session):
-        from src.db.repositories.messeges import add_message
-
-        add_message(
-            db_session, conversation_id=test_conversation.id, role="assistant",
-            content="cut off", truncated=True,
-        )
-        db_session.commit()
-
-        response = client.get(f"/conversations/{test_conversation.id}/messages/")
-        assert response.status_code == 200
-        msg = next(m for m in response.json()["messages"] if m["content"] == "cut off")
-        assert msg["truncated"] is True
-
-
 class TestListConversations:
     def test_get_conversations_list_returns_conversations(self, client, test_conversation):
         response = client.get("/conversations/")
@@ -1042,40 +1001,6 @@ class TestGenerateAnswerTimeout:
             getattr(r, "stage", None) == "generate_answer"
             for r in caplog.records if r.name == "src.utils.timing"
         )
-
-    def test_continue_message_times_out_with_error_frame_when_stream_hangs(
-        self, client, test_conversation, db_session,
-    ):
-        import asyncio
-        from src.db.repositories.messeges import add_message
-
-        msg = add_message(
-            db_session, conversation_id=test_conversation.id, role="assistant",
-            content="Cancer cells favor glycolysis [src-001]",
-            sources_ids=["src-001"], truncated=True,
-        )
-        db_session.commit()
-
-        async def _hanging_stream(*args, **kwargs):
-            await asyncio.sleep(10)
-            yield "unreachable"  # pragma: no cover
-
-        with (
-            patch("src.routers.conversations._GENERATE_ANSWER_TIMEOUT_SECONDS", 0.05),
-            patch("src.routers.conversations.OllamaConnector.stream_continuation", new=_hanging_stream),
-        ):
-            with client.websocket_connect(f"/conversations/{test_conversation.id}/add_message/ws") as ws:
-                ws.send_json({"continue_message_id": str(msg.id)})
-                messages = []
-                while True:
-                    m = ws.receive_json()
-                    messages.append(m)
-                    if m.get("type") in ("final", "error"):
-                        break
-
-        assert any(m.get("type") == "error" for m in messages)
-
-
 class TestWebSocket:
     def test_websocket_add_message_sends_stages_and_final(self, client, test_conversation):
         conv_id = str(test_conversation.id)
@@ -1102,96 +1027,6 @@ class TestWebSocket:
         with pytest.raises(Exception):  # Connection rejected or error message
             with anon_client.websocket_connect(f"/conversations/{conv_id}/add_message/ws") as ws:
                 ws.send_json({"content": "Any question"})
-
-
-class TestContinueMessage:
-    def _make_truncated_message(self, db_session, conversation_id):
-        from src.db.repositories.messeges import add_message
-
-        msg = add_message(
-            db_session, conversation_id=conversation_id, role="assistant",
-            content="Cancer cells favor glycolysis [src-001]",
-            sources_ids=["src-001"], truncated=True,
-        )
-        db_session.commit()
-        return msg
-
-    def _run_continue(self, client, conversation_id, message_id):
-        messages = []
-        with client.websocket_connect(f"/conversations/{conversation_id}/add_message/ws") as ws:
-            ws.send_json({"continue_message_id": str(message_id)})
-            while True:
-                msg = ws.receive_json()
-                messages.append(msg)
-                if msg.get("type") in ("final", "error"):
-                    break
-        return messages
-
-    def test_continue_appends_to_message_and_clears_truncated(self, client, test_conversation, db_session):
-        msg = self._make_truncated_message(db_session, test_conversation.id)
-
-        async def _gen(*a, **k):
-            yield " more evidence [src-001]."
-            yield {"_model": "test-model", "_finish_reason": "stop"}
-
-        with patch(
-            "src.routers.conversations.add_claims_and_sources",
-            lambda m: setattr(m, "sources", [{"id": "src-001", "text": "evidence text"}]),
-        ), patch("src.routers.conversations.OllamaConnector.stream_continuation", new=_gen):
-            messages = self._run_continue(client, test_conversation.id, msg.id)
-
-        final = next(m for m in messages if m["type"] == "final")
-        assert "continued_message" in final
-        continued = final["continued_message"]
-        assert continued["content"] == "Cancer cells favor glycolysis [src-001] more evidence [src-001]."
-        assert continued["truncated"] is False
-
-    def test_continue_still_truncated_keeps_flag_true(self, client, test_conversation, db_session):
-        msg = self._make_truncated_message(db_session, test_conversation.id)
-
-        async def _gen(*a, **k):
-            yield " still going"
-            yield {"_model": "test-model", "_finish_reason": "length"}
-
-        with patch(
-            "src.routers.conversations.add_claims_and_sources",
-            lambda m: setattr(m, "sources", [{"id": "src-001", "text": "evidence text"}]),
-        ), patch("src.routers.conversations.OllamaConnector.stream_continuation", new=_gen):
-            messages = self._run_continue(client, test_conversation.id, msg.id)
-
-        final = next(m for m in messages if m["type"] == "final")
-        assert final["continued_message"]["truncated"] is True
-
-    def test_continue_non_truncated_message_errors(self, client, test_conversation, db_session):
-        from src.db.repositories.messeges import add_message
-
-        msg = add_message(
-            db_session, conversation_id=test_conversation.id, role="assistant",
-            content="already complete", truncated=False,
-        )
-        db_session.commit()
-
-        messages = self._run_continue(client, test_conversation.id, msg.id)
-        assert messages[-1]["type"] == "error"
-
-    def test_continue_missing_message_errors(self, client, test_conversation):
-        import uuid
-        messages = self._run_continue(client, test_conversation.id, uuid.uuid4())
-        assert messages[-1]["type"] == "error"
-
-    def test_continue_wrong_users_message_errors(self, client, db_session):
-        import uuid
-        from src.db.repositories.conversations import create_conversation
-
-        other_user_id = uuid.uuid4()
-        conv = create_conversation(db_session, user_id=other_user_id, title="Other user's conv")
-        db_session.commit()
-        msg = self._make_truncated_message(db_session, conv.id)
-
-        messages = self._run_continue(client, conv.id, msg.id)
-        assert messages[-1]["type"] == "error"
-
-
 class TestAskAboutSource:
     """A question containing [pmid:...]-style references (inserted by the
     source popover's "Ask about this source" button) is answered with those

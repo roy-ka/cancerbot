@@ -64,6 +64,7 @@ jobs:
       REDIS_PASSWORD: test-redis-password
       REDIS_URL: redis://:test-redis-password@localhost:6379/0
       DEV_EMAIL_SHORTCUTS: "false"
+      LLM_PROVIDER: groq
       OLLAMA_GEN_MODEL: ""
       ADMIN_DIGEST_EMAILS: admin-test@example.com
       PYTHONPATH: ${{ github.workspace }}

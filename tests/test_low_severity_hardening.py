@@ -358,7 +358,7 @@ class TestEvidenceFence:
     def _build(self, context):
         from src.classes.ollama_connector import OllamaConnector
 
-        prompt, _, _ = OllamaConnector._build_prompt(context, "what helps?", [])
+        prompt, _ = OllamaConnector._build_prompt(context, "what helps?", [])
         return prompt
 
     def test_evidence_is_fenced(self):
@@ -415,7 +415,7 @@ class TestMultiPartCitationRule:
     def test_prompt_instructs_per_part_answers(self):
         from src.classes.ollama_connector import OllamaConnector, NO_DATA_RESPONSE
 
-        prompt, _, _ = OllamaConnector._build_prompt(
+        prompt, _ = OllamaConnector._build_prompt(
             [{"id": "s1", "content_for_embedding": "Gabapentin blocks thrombospondin-1."}],
             "what drugs block each of these pathways?",
             [],
@@ -431,7 +431,7 @@ class TestMultiPartCitationRule:
         # how to search better plus a concrete example question.
         from src.classes.ollama_connector import OllamaConnector
 
-        prompt, _, _ = OllamaConnector._build_prompt(
+        prompt, _ = OllamaConnector._build_prompt(
             [{"id": "s1", "content_for_embedding": "Gabapentin blocks thrombospondin-1."}],
             "what drugs block each of these pathways?",
             [],

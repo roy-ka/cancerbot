@@ -6,51 +6,17 @@ from src.classes.ollama_connector import OllamaConnector, NO_DATA_RESPONSE
 
 CONTEXT = [{"id": "src-001", "content_for_embedding": "Cancer cells exhibit the Warburg effect."}]
 
-# mock_enqueue (autouse) comes from conftest.py — it patches
-# src.classes.ollama_connector.enqueue globally so the Groq-failure path's
-# fallback-alert enqueue never hits a real Redis in tests.
-
-
-def _make_gemini_response(content, finish_reason=None):
-    response = MagicMock()
-    response.text = content
-    if finish_reason is None:
-        response.candidates = []
-    else:
-        candidate = MagicMock()
-        candidate.finish_reason = finish_reason
-        response.candidates = [candidate]
-    return response
-
-
-def _gemini_mock(content=None, raises=None, finish_reason=None):
-    """Mock for OllamaConnector.gemini. The fallback call goes through the
-    async client surface (.aio.models.generate_content), not the sync one
-    (.models.generate_content) — the sync call would block the whole event
-    loop for as long as it took, not just the one request, while stalled."""
-    m = MagicMock()
-    if raises is not None:
-        m.aio.models.generate_content = AsyncMock(side_effect=raises)
-    else:
-        m.aio.models.generate_content = AsyncMock(
-            return_value=_make_gemini_response(content, finish_reason=finish_reason)
-        )
-    return m
-
-
-def _make_groq_stream(tokens, finish_reason=None):
+def _make_groq_stream(tokens):
     async def _stream():
-        for i, token in enumerate(tokens):
+        for token in tokens:
             chunk = MagicMock()
             chunk.choices = [MagicMock()]
             chunk.choices[0].delta.content = token
-            # Real API sends finish_reason on the terminal chunk only.
-            chunk.choices[0].finish_reason = finish_reason if i == len(tokens) - 1 else None
             yield chunk
     return _stream()
 
 
-def _async_groq_mock(tokens=None, raises=None, finish_reason=None):
+def _async_groq_mock(tokens=None, raises=None):
     """Mock for `AsyncGroq(...)` — patch target is groq.AsyncGroq itself, since
     stream_text does `from groq import AsyncGroq` locally at call time."""
     instance = MagicMock()
@@ -58,7 +24,7 @@ def _async_groq_mock(tokens=None, raises=None, finish_reason=None):
         instance.chat.completions.create = AsyncMock(side_effect=raises)
     else:
         instance.chat.completions.create = AsyncMock(
-            return_value=_make_groq_stream(tokens or [], finish_reason=finish_reason)
+            return_value=_make_groq_stream(tokens or [])
         )
     factory = MagicMock(return_value=instance)
     return factory, instance
@@ -68,14 +34,6 @@ def _rate_limit_exc():
     return groq.RateLimitError(
         "Rate limit exceeded",
         response=MagicMock(status_code=429, headers={}),
-        body={},
-    )
-
-
-def _server_error_exc():
-    return groq.InternalServerError(
-        "Internal server error",
-        response=MagicMock(status_code=500, headers={}),
         body={},
     )
 
@@ -104,114 +62,6 @@ def _async_groq_completion_mock(content=None, raises=None):
         instance.chat.completions.create = AsyncMock(return_value=_make_groq_completion(content))
     factory = MagicMock(return_value=instance)
     return factory, instance
-
-
-class TestGroqGeminiFallback:
-    """Tests for stream_text's Groq -> Gemini fallback (the actual production
-    generation path used by conversations.py; the old blocking generate_text
-    method has been removed since streaming replaced it)."""
-
-    @pytest.mark.asyncio
-    async def test_groq_success_streams_tokens(self):
-        factory, instance = _async_groq_mock(tokens=["Warburg ", "effect ", "answer."])
-        with patch("groq.AsyncGroq", factory):
-            chunks = await _collect(OllamaConnector.stream_text(CONTEXT, "What is the Warburg effect?", []))
-        text_chunks = [c for c in chunks if isinstance(c, str)]
-        sentinel = [c for c in chunks if isinstance(c, dict)]
-        assert "".join(text_chunks) == "Warburg effect answer."
-        assert len(sentinel) == 1
-        instance.chat.completions.create.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_groq_rate_limit_falls_back_to_gemini(self):
-        factory, _ = _async_groq_mock(raises=_rate_limit_exc())
-        mock_gemini = _gemini_mock(content="Gemini fallback answer.")
-        with patch("groq.AsyncGroq", factory), \
-             patch.object(OllamaConnector, "gemini", mock_gemini):
-            chunks = await _collect(OllamaConnector.stream_text(CONTEXT, "What is cancer?", []))
-        text_chunks = [c for c in chunks if isinstance(c, str)]
-        assert "Gemini fallback answer" in "".join(text_chunks)
-        mock_gemini.aio.models.generate_content.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_groq_failure_enqueues_fallback_alert(self, mock_enqueue):
-        factory, _ = _async_groq_mock(raises=_rate_limit_exc())
-        mock_gemini = _gemini_mock(content="Gemini fallback answer.")
-        with patch("groq.AsyncGroq", factory), \
-             patch.object(OllamaConnector, "gemini", mock_gemini):
-            await _collect(OllamaConnector.stream_text(CONTEXT, "What is cancer?", []))
-        mock_enqueue.assert_awaited_once_with("send_fallback_alert_job", model=OllamaConnector.groq_model)
-
-    @pytest.mark.asyncio
-    async def test_groq_server_error_falls_back_to_gemini(self):
-        factory, _ = _async_groq_mock(raises=_server_error_exc())
-        mock_gemini = _gemini_mock(content="Gemini server fallback.")
-        with patch("groq.AsyncGroq", factory), \
-             patch.object(OllamaConnector, "gemini", mock_gemini):
-            chunks = await _collect(OllamaConnector.stream_text(CONTEXT, "What is cancer?", []))
-        text_chunks = [c for c in chunks if isinstance(c, str)]
-        assert "Gemini server fallback" in "".join(text_chunks)
-
-    @pytest.mark.asyncio
-    async def test_gemini_not_called_on_groq_success(self):
-        factory, _ = _async_groq_mock(tokens=["Groq answer."])
-        mock_gemini = _gemini_mock()
-        with patch("groq.AsyncGroq", factory), \
-             patch.object(OllamaConnector, "gemini", mock_gemini):
-            await _collect(OllamaConnector.stream_text(CONTEXT, "What is cancer?", []))
-        mock_gemini.aio.models.generate_content.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_both_providers_fail_raises_value_error(self):
-        factory, _ = _async_groq_mock(raises=_rate_limit_exc())
-        mock_gemini = _gemini_mock(raises=Exception("Gemini unavailable"))
-        with patch("groq.AsyncGroq", factory), \
-             patch.object(OllamaConnector, "gemini", mock_gemini), \
-             pytest.raises(ValueError, match="AI generation unavailable"):
-            await _collect(OllamaConnector.stream_text(CONTEXT, "What is cancer?", []))
-
-    @pytest.mark.asyncio
-    async def test_alias_to_id_sentinel_correct_on_fallback_path(self):
-        """stream_text yields raw [sourceN] aliases (the caller runs _post_process
-        on the assembled text); it must still yield a correct alias_to_id sentinel
-        for the caller to substitute stable source IDs afterward."""
-        factory, _ = _async_groq_mock(raises=_rate_limit_exc())
-        mock_gemini = _gemini_mock(content="Cancer uses glucose [source1].")
-        with patch("groq.AsyncGroq", factory), \
-             patch.object(OllamaConnector, "gemini", mock_gemini):
-            chunks = await _collect(OllamaConnector.stream_text(CONTEXT, "What is cancer?", []))
-        text_chunks = [c for c in chunks if isinstance(c, str)]
-        assert "[source1]" in "".join(text_chunks)
-        sentinel = next(c for c in chunks if isinstance(c, dict))
-        assert sentinel.get("source1") == "src-001"
-
-    @pytest.mark.asyncio
-    async def test_finish_reason_length_on_groq_path(self):
-        factory, _ = _async_groq_mock(tokens=["Cut off mid"], finish_reason="length")
-        with patch("groq.AsyncGroq", factory):
-            chunks = await _collect(OllamaConnector.stream_text(CONTEXT, "What is cancer?", []))
-        sentinel = next(c for c in chunks if isinstance(c, dict))
-        assert sentinel["_finish_reason"] == "length"
-
-    @pytest.mark.asyncio
-    async def test_finish_reason_stop_on_groq_path(self):
-        factory, _ = _async_groq_mock(tokens=["Complete answer."], finish_reason="stop")
-        with patch("groq.AsyncGroq", factory):
-            chunks = await _collect(OllamaConnector.stream_text(CONTEXT, "What is cancer?", []))
-        sentinel = next(c for c in chunks if isinstance(c, dict))
-        assert sentinel["_finish_reason"] == "stop"
-
-    @pytest.mark.asyncio
-    async def test_finish_reason_max_tokens_on_gemini_fallback_path(self):
-        factory, _ = _async_groq_mock(raises=_rate_limit_exc())
-        mock_gemini = _gemini_mock(content="Cut off", finish_reason="MAX_TOKENS")
-        with patch("groq.AsyncGroq", factory), \
-             patch.object(OllamaConnector, "gemini", mock_gemini):
-            chunks = await _collect(OllamaConnector.stream_text(CONTEXT, "What is cancer?", []))
-        sentinel = next(c for c in chunks if isinstance(c, dict))
-        assert sentinel["_finish_reason"] == "MAX_TOKENS"
-
-
 class TestProfileContextInPrompt:
     @pytest.mark.asyncio
     async def test_profile_context_included_when_given(self):
@@ -232,60 +82,6 @@ class TestProfileContextInPrompt:
             await _collect(OllamaConnector.stream_text(CONTEXT, "What is cancer?", []))
         prompt = instance.chat.completions.create.call_args.kwargs["messages"][0]["content"]
         assert "PATIENT CONTEXT" not in prompt
-
-
-class TestIsTruncatedFinishReason:
-    def test_length_is_truncated(self):
-        from src.classes.ollama_connector import is_truncated_finish_reason
-        assert is_truncated_finish_reason("length") is True
-
-    def test_max_tokens_is_truncated(self):
-        from src.classes.ollama_connector import is_truncated_finish_reason
-        assert is_truncated_finish_reason("MAX_TOKENS") is True
-
-    def test_stop_is_not_truncated(self):
-        from src.classes.ollama_connector import is_truncated_finish_reason
-        assert is_truncated_finish_reason("stop") is False
-
-    def test_none_is_not_truncated(self):
-        from src.classes.ollama_connector import is_truncated_finish_reason
-        assert is_truncated_finish_reason(None) is False
-
-
-class TestStreamContinuation:
-    @pytest.mark.asyncio
-    async def test_continues_using_real_source_ids_not_aliases(self):
-        """Continuation must cite the actual stable IDs directly — no
-        source1/source2 alias indirection, since the prior answer already
-        used real IDs and there's nothing to remap."""
-        factory, instance = _async_groq_mock(tokens=["more evidence [src-001]."])
-        sources = [{"id": "src-001", "text": "Cancer cells favor glycolysis."}]
-        with patch("groq.AsyncGroq", factory):
-            chunks = await _collect(OllamaConnector.stream_continuation(
-                sources=sources,
-                original_question="What is the Warburg effect?",
-                prior_answer="Cancer cells exhibit the Warburg effect [src-001]",
-            ))
-        text_chunks = [c for c in chunks if isinstance(c, str)]
-        assert "".join(text_chunks) == "more evidence [src-001]."
-        prompt = instance.chat.completions.create.call_args.kwargs["messages"][0]["content"]
-        assert "[src-001] Cancer cells favor glycolysis." in prompt
-        assert "source1" not in prompt
-
-    @pytest.mark.asyncio
-    async def test_sentinel_has_no_alias_to_id(self):
-        factory, _ = _async_groq_mock(tokens=["more."], finish_reason="stop")
-        with patch("groq.AsyncGroq", factory):
-            chunks = await _collect(OllamaConnector.stream_continuation(
-                sources=[{"id": "src-001", "text": "x"}],
-                original_question="q",
-                prior_answer="partial",
-            ))
-        sentinel = next(c for c in chunks if isinstance(c, dict))
-        assert set(sentinel.keys()) == {"_model", "_finish_reason"}
-        assert sentinel["_finish_reason"] == "stop"
-
-
 class TestGenerateTitle:
     @pytest.mark.asyncio
     async def test_uses_groq_generated_title(self):
@@ -337,10 +133,8 @@ class TestGenerateTitle:
 
     @pytest.mark.asyncio
     async def test_requests_low_reasoning_effort(self):
-        # cls.groq_model is a reasoning model whose chain-of-thought counts
-        # against max_tokens — this call's budget (20) is the tightest of
-        # any Groq call in this file, so it's the most exposed to reasoning
-        # tokens silently eating the whole thing before any title is written.
+        # cls.groq_model is a reasoning model; short utility calls keep its
+        # hidden reasoning low so they stay fast.
         factory, instance = _async_groq_completion_mock(content="Some Title")
         with patch("groq.AsyncGroq", factory):
             await OllamaConnector.generate_title("what is apoptosis?")
@@ -414,9 +208,7 @@ class TestRewriteQueryWithHistory:
 
     @pytest.mark.asyncio
     async def test_requests_low_reasoning_effort(self):
-        # cls.groq_model is a reasoning model whose chain-of-thought counts
-        # against max_tokens — same defensive fix as generate_title/
-        # classify_personal_question (see their test comments).
+        # Same as generate_title: short utility calls keep reasoning low.
         factory, instance = _async_groq_completion_mock(content="Rewritten question")
         history = [("user", "what are the Glioma pathways")]
         with patch("groq.AsyncGroq", factory):
@@ -485,24 +277,10 @@ class TestSummarizeConversation:
         sent_prompt = instance.chat.completions.create.call_args.kwargs["messages"][0]["content"]
         assert "User: What is the Warburg effect?" in sent_prompt
         assert "do not add citations" in sent_prompt
-
     @pytest.mark.asyncio
-    async def test_falls_back_to_gemini_on_groq_error(self):
+    async def test_raises_when_the_provider_fails(self):
         factory, _ = _async_groq_mock(raises=_rate_limit_exc())
-        with (
-            patch("groq.AsyncGroq", factory),
-            patch.object(OllamaConnector, "gemini", _gemini_mock("Gemini summary")),
-        ):
-            summary = await OllamaConnector.summarize_conversation("User: hi")
-        assert summary == "Gemini summary"
-
-    @pytest.mark.asyncio
-    async def test_raises_when_both_providers_fail(self):
-        factory, _ = _async_groq_mock(raises=_rate_limit_exc())
-        with (
-            patch("groq.AsyncGroq", factory),
-            patch.object(OllamaConnector, "gemini", _gemini_mock(raises=RuntimeError("down"))),
-        ):
+        with patch("groq.AsyncGroq", factory):
             with pytest.raises(ValueError):
                 await OllamaConnector.summarize_conversation("User: hi")
 
@@ -644,11 +422,7 @@ class TestClassifyPersonalQuestion:
 
     @pytest.mark.asyncio
     async def test_empty_content_fails_safe_to_general_question(self):
-        # cls.groq_model is a reasoning model whose chain-of-thought counts
-        # against max_tokens — found live: a multi-step classification
-        # prompt burned the entire budget on reasoning, leaving `content`
-        # empty (finish_reason="length") before any JSON was ever written.
-        # Must degrade to the safe default, not crash on the empty string.
+        # An empty reply must degrade to the safe default, not crash.
         factory, _ = _async_groq_completion_mock(content="")
         with patch("groq.AsyncGroq", factory):
             result = await OllamaConnector.classify_personal_question("What's my cancer type?")

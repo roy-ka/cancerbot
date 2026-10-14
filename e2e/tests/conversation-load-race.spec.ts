@@ -16,8 +16,8 @@ function messagesResponse(id: string, title: string, answer: string) {
   return {
     conversation: { id, title, updatedAt: new Date().toISOString(), use_profile_context: true, shared: false },
     messages: [
-      { id: `${id}-q`, role: 'user', content: `Question for ${title}`, created_at: new Date().toISOString(), sources: [], truncated: false },
-      { id: `${id}-a`, role: 'assistant', content: answer, created_at: new Date().toISOString(), sources: [], truncated: false },
+      { id: `${id}-q`, role: 'user', content: `Question for ${title}`, created_at: new Date().toISOString(), sources: [] },
+      { id: `${id}-a`, role: 'assistant', content: answer, created_at: new Date().toISOString(), sources: [] },
     ],
     next_before: null,
   }

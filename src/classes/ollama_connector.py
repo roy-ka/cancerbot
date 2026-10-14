@@ -9,45 +9,52 @@ import json
 import logging
 from typing import Any, AsyncIterator, Mapping, Sequence
 from src.db.models import Message
-from src.queue import enqueue
 
 logger = logging.getLogger(__name__)
 
 NO_DATA_RESPONSE = "I couldn't find relevant data in my searches."
 
-# Groq (OpenAI-compatible) reports a length-capped stream as "length"; Gemini
-# reports it as the FinishReason.MAX_TOKENS enum, normalized to its .value
-# string "MAX_TOKENS" in _stream_completion. Anything else (None, "stop",
-# Gemini's "STOP", a safety block, etc.) means the model actually finished
-# or stopped for a reason continuing wouldn't fix.
-_TRUNCATED_FINISH_REASONS = {"length", "MAX_TOKENS"}
+# LLM_PROVIDER picks the one provider every LLM call uses — answers, titles,
+# query rewriting, classification. There is deliberately no fallback between
+# providers: if the chosen one fails, the call fails (answers) or the caller
+# applies its own safe default (short utility calls).
+LLM_PROVIDERS = ("ollama", "groq", "gemini")
+_DEFAULT_LLM_PROVIDER = "ollama"
 
 
-def is_truncated_finish_reason(reason: str | None) -> bool:
-  return reason in _TRUNCATED_FINISH_REASONS
+class LLMUnavailableError(ValueError):
+  """The configured provider couldn't produce an answer. A ValueError so the
+  routers' existing generation-failure handling catches it."""
 
-# Network timeouts for the two LLM providers. Without these, a connection
-# that's accepted but never sends data (or a stalled stream) hangs the
-# awaiting coroutine forever — no exception is raised, so `except
-# groq.GroqError` below never fires, the Gemini fallback never triggers,
-# and nothing gets logged (timed_stage's `finally` only runs once its
-# `async with` block exits, which a true hang never does). Groq's own SDK
-# raises `groq.APITimeoutError` on this timeout, which subclasses
-# `GroqError` (APITimeoutError -> APIConnectionError -> APIError ->
-# GroqError), so the existing `except groq.GroqError` already catches it
-# once the client is configured with a timeout — no need to broaden it.
-# Plain constants rather than env vars: these aren't expected to need
-# per-environment tuning the way GROQ_MAX_TOKENS etc. do.
+
+def llm_provider() -> str:
+  """LLM_PROVIDER, read per call (tests and scripts set it at runtime)."""
+  return os.getenv("LLM_PROVIDER", "").strip().lower() or _DEFAULT_LLM_PROVIDER
+
+
+def llm_config_errors() -> list[str]:
+  """What's missing for the configured provider; empty when it's usable.
+  src/main.py refuses to start on any of these."""
+  provider = llm_provider()
+  if provider not in LLM_PROVIDERS:
+    return [f"LLM_PROVIDER={provider!r} is not one of {', '.join(LLM_PROVIDERS)}"]
+  required = {
+    "ollama": ["OLLAMA_GEN_MODEL"],
+    "groq": ["GROQ_API_KEY", "GROQ_MODEL_NAME"],
+    "gemini": ["GEMINI_API_KEY"],
+  }[provider]
+  return [f"{var} must be set when LLM_PROVIDER={provider}" for var in required if not os.getenv(var, "").strip()]
+
+
+# Network timeouts. Without these, a connection that's accepted but never
+# sends data (or a stalled stream) hangs the awaiting coroutine forever with
+# nothing logged. Groq's SDK raises groq.APITimeoutError (a GroqError) on its
+# timeout. Ollama's covers each read, including the first one — which can
+# include loading a local model into memory, hence the longer budget.
 _GROQ_TIMEOUT_SECONDS = 60.0
-_GEMINI_TIMEOUT_SECONDS = 30.0
-# Local Ollama generation (OLLAMA_GEN_MODEL) is tried first when configured.
-# A local model that never starts must not eat the caller's whole budget
-# (conversations.py's _GENERATE_ANSWER_TIMEOUT_SECONDS, 120s) and leave no
-# time for the Groq/Gemini fallback, so the first streamed chunk gets its own
-# shorter deadline. _OLLAMA_TIMEOUT_SECONDS bounds each read after that, and
-# whole non-streamed calls.
-_OLLAMA_FIRST_CHUNK_TIMEOUT_SECONDS = 30.0
-_OLLAMA_TIMEOUT_SECONDS = 60.0
+_GEMINI_TIMEOUT_SECONDS = 60.0
+_OLLAMA_TIMEOUT_SECONDS = 120.0
+_DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 
 # The literal delimiters wrapping retrieved evidence in the prompt. They carry
 # the `=====` decoration so they stay distinguishable from the instruction text
@@ -83,7 +90,7 @@ class _OllamaClientProxy:
 
 
 class _GeminiClientProxy:
-  """Lazy proxy for Google Gemini client (second-tier fallback)."""
+  """Lazy proxy for the Google Gemini client (LLM_PROVIDER=gemini)."""
   _client = None
 
   def _ensure_client(self):
@@ -91,7 +98,7 @@ class _GeminiClientProxy:
       load_dotenv()
       api_key = os.getenv('GEMINI_API_KEY')
       if not api_key:
-        raise ValueError("GEMINI_API_KEY is not set — Gemini fallback unavailable.")
+        raise ValueError("GEMINI_API_KEY is not set.")
       _GeminiClientProxy._client = google_genai.Client(
         api_key=api_key,
         # HttpOptions.timeout is in milliseconds.
@@ -117,26 +124,25 @@ class OllamaConnector:
 
   @classmethod
   def _get_async_groq(cls):
-    """One shared AsyncGroq client for the process, or None when
-    GROQ_API_KEY is unset — callers treat that as "skip Groq", so a
-    local-only setup (OLLAMA_GEN_MODEL, no Groq key) works.
+    """One shared AsyncGroq client for the process.
 
     Constructing AsyncGroq per call builds a fresh httpx client each time, so
     every message and every title paid for a new TLS handshake instead of
     reusing a pooled connection.
     """
     if cls._async_groq is None:
-      api_key = os.getenv("GROQ_API_KEY")
-      if not api_key:
-        return None
       from groq import AsyncGroq
-      cls._async_groq = AsyncGroq(api_key=api_key, timeout=_GROQ_TIMEOUT_SECONDS)
+      cls._async_groq = AsyncGroq(api_key=os.getenv("GROQ_API_KEY"), timeout=_GROQ_TIMEOUT_SECONDS)
     return cls._async_groq
 
   @staticmethod
   def _ollama_gen_model() -> str | None:
-    """OLLAMA_GEN_MODEL, read per call. Unset/blank = skip local generation."""
+    """OLLAMA_GEN_MODEL, read per call."""
     return os.getenv("OLLAMA_GEN_MODEL", "").strip() or None
+
+  @staticmethod
+  def _gemini_model() -> str:
+    return os.getenv("GEMINI_MODEL_NAME", "").strip() or _DEFAULT_GEMINI_MODEL
 
   @classmethod
   def _get_async_ollama(cls):
@@ -180,7 +186,7 @@ class OllamaConnector:
     first_message: str | None = None,
     profile_context: str | None = None,
   ) -> tuple[str, dict[str, str], int]:
-    """Build the full prompt and return (full_prompt, alias_to_id, max_tokens).
+    """Build the full prompt and return (full_prompt, alias_to_id).
 
     Context items must be dict-like with 'id' and 'content_for_embedding' fields.
     alias_to_id maps short aliases like 'source1' to the stable original IDs.
@@ -373,112 +379,15 @@ QUESTION:
 ANSWER (every sentence must have a [source#] citation):
 """.strip()
 
-    if not cls.groq_model:
-      raise ValueError(
-        "GROQ_MODEL_NAME is not set. Set it to a Groq-hosted model (e.g., openai/gpt-oss-120b)."
-      )
-
-    max_tokens = int(os.getenv('GROQ_MAX_TOKENS', '1024'))
-
-    return full_prompt, alias_to_id, max_tokens
-
-  @classmethod
-  def _build_continuation_prompt(
-    cls,
-    sources: Sequence[Mapping],
-    original_question: str,
-    prior_answer: str,
-    first_message: str | None = None,
-  ) -> tuple[str, int]:
-    """Build a prompt asking the model to continue a truncated answer.
-
-    Unlike _build_prompt, sources are cited by their real stable IDs
-    directly (e.g. [pmid:12345]) rather than a source1/source2 alias —
-    prior_answer already contains those real IDs, so there's no alias
-    table to keep in sync, and _post_process is a no-op on the result.
-    `sources` items must be dict-like with 'id' (or 'source_id') and
-    'full_text' — or the display-entry shape from
-    src/db/repositories/messeges.py:_hit_to_entry, which uses 'text' for
-    the same content (that's what message.sources actually holds)."""
-    max_evidence_chars = int(os.getenv('OLLAMA_EVIDENCE_CHARS', '900'))
-
-    def render_item(item: Mapping) -> str:
-      src = item.get("_source") if isinstance(item.get("_source"), Mapping) else item
-      raw_id = src.get('id') or src.get('source_id')
-      if not raw_id:
-        return ""
-      original_id = re.sub(r':c\d+$', '', str(raw_id).strip())
-      text = ' '.join(str(src.get('full_text') or src.get('text') or '').split())
-      if len(text) > max_evidence_chars:
-        text = text[:max_evidence_chars] + '…'
-      text = _EVIDENCE_FENCE_RE.sub('[filtered]', text)
-      return f"[{original_id}] {text}" if text else f"[{original_id}]"
-
-    rendered = [r for r in (render_item(item) for item in sources) if r]
-    context_block = "\n".join(rendered) if rendered else "(no context provided)"
-
-    language_block = ""
-    if first_message:
-      language_block = f"""
-LANGUAGE:
-Respond in the same language as the conversation's first message below (English if that message is in English).
-First message: "{' '.join(str(first_message).split())[:200]}"
-"""
-
-    full_prompt = f"""
-You are a doctor specializing in cancer research and treatment, metabolism, and integrative medicine.
-
-Your previous answer to the question below was cut off by a length limit partway through. Continue writing
-it from exactly where it left off — do not repeat any text already written, do not restart, do not add a
-preamble. Keep using the same [source_id] citation style already present in the previous answer, citing only
-the source IDs that appear in the Scientific Evidence below. Use ONLY that evidence as factual grounding, not
-your training knowledge.
-{language_block}
-Scientific Evidence:
-{_EVIDENCE_BEGIN}
-{context_block}
-{_EVIDENCE_END}
-
-QUESTION:
-{original_question}
-
-PREVIOUS ANSWER (cut off — continue from exactly here):
-{prior_answer}
-""".strip()
-
-    if not cls.groq_model:
-      raise ValueError(
-        "GROQ_MODEL_NAME is not set. Set it to a Groq-hosted model (e.g., openai/gpt-oss-120b)."
-      )
-
-    max_tokens = int(os.getenv('GROQ_MAX_TOKENS', '1024'))
-    return full_prompt, max_tokens
-
-  @classmethod
-  async def stream_continuation(
-    cls,
-    sources: Sequence[Mapping],
-    original_question: str,
-    prior_answer: str,
-    first_message: str | None = None,
-  ) -> AsyncIterator[str | dict]:
-    """Async generator — same token/sentinel contract as stream_text, but
-    extending a truncated answer instead of starting a fresh one. The
-    sentinel carries "_model"/"_finish_reason" only (no alias_to_id, since
-    continuation cites real IDs directly — see _build_continuation_prompt)."""
-    full_prompt, max_tokens = cls._build_continuation_prompt(
-      sources, original_question, prior_answer, first_message,
-    )
-    async for chunk in cls._stream_completion(full_prompt, max_tokens):
-      yield chunk
+    return full_prompt, alias_to_id
 
   @classmethod
   async def summarize_conversation(cls, transcript: str) -> str:
     """Plain-language summary of a conversation that already happened.
     Not a new answer — the transcript already carries whatever citations
     the original answers had, so this recaps in prose rather than
-    re-grounding in evidence. Raises ValueError (via _stream_completion)
-    if both Groq and Gemini are unavailable, same as stream_text.
+    re-grounding in evidence. Raises LLMUnavailableError (a ValueError)
+    if the configured provider fails, same as stream_text.
 
     The transcript is untrusted the same way retrieved evidence is: it
     includes the user's own prior messages, but also prior assistant
@@ -511,7 +420,7 @@ CONVERSATION:
 SUMMARY:
 """.strip()
     raw_tokens: list[str] = []
-    async for chunk in cls._stream_completion(prompt, max_tokens=300):
+    async for chunk in cls._stream_completion(prompt):
       if isinstance(chunk, str):
         raw_tokens.append(chunk)
     return "".join(raw_tokens).strip()
@@ -555,9 +464,7 @@ SUMMARY:
     Tokens are raw LLM output (with [source1] aliases); caller must call _post_process
     on the assembled text to substitute stable IDs before persisting.
 
-    The sentinel also carries "_finish_reason": "length" when the response was
-    cut off by max_tokens rather than the model actually finishing — the
-    caller persists this so the frontend can offer to continue the answer.
+    The sentinel also carries "_model", the model that wrote the answer.
 
     first_message, when given, is the conversation's first (non-hidden) user
     message — used to instruct the LLM to answer in that language rather than
@@ -568,218 +475,120 @@ SUMMARY:
     the answer generally (age/stage-appropriate), never for individualized
     treatment recommendations (see _build_prompt's PATIENT CONTEXT block).
     """
-    full_prompt, alias_to_id, max_tokens = cls._build_prompt(
+    full_prompt, alias_to_id = cls._build_prompt(
       context, question, history, first_message, profile_context,
     )
 
-    async for chunk in cls._stream_completion(full_prompt, max_tokens):
+    async for chunk in cls._stream_completion(full_prompt):
       if isinstance(chunk, dict):
         yield {**alias_to_id, **chunk}
       else:
         yield chunk
 
   @classmethod
-  async def _stream_completion(
-    cls,
-    full_prompt: str,
-    max_tokens: int,
-  ) -> AsyncIterator[str | dict]:
-    """Shared streaming core with a provider chain — local Ollama (only
-    when OLLAMA_GEN_MODEL is set), then Groq, then Gemini. Used by
-    stream_text (a fresh answer), stream_continuation (extending a truncated
-    one) and summarize_conversation — they differ only in how full_prompt is
-    built.
+  async def _stream_completion(cls, full_prompt: str) -> AsyncIterator[str | dict]:
+    """Shared streaming core for answers and summaries, on the one provider
+    LLM_PROVIDER selects. No length cap is sent: answers run to completion.
 
-    A provider is abandoned for the next one only if it fails before
-    emitting any text: once tokens have reached the user the stream can't
-    restart cleanly, so a mid-stream failure just closes it.
+    Yields tokens, then a final {"_model": ...} dict (callers merge in
+    whatever context-specific fields they need on top of this). Raises
+    LLMUnavailableError if the provider fails before any text was produced;
+    a failure after that keeps the partial answer and just ends the stream,
+    since tokens already shown to the user can't be taken back."""
+    provider = llm_provider()
+    streams = {"ollama": cls._stream_ollama, "groq": cls._stream_groq, "gemini": cls._stream_gemini}
+    if provider not in streams:
+      raise LLMUnavailableError(f"LLM_PROVIDER={provider!r} is not one of {', '.join(LLM_PROVIDERS)}")
 
-    Yields tokens, then a final {"_model": ..., "_finish_reason": ...} dict
-    (no alias_to_id — callers merge in whatever context-specific fields they
-    need on top of this)."""
-    ollama_exc = None
-    ollama_model = cls._ollama_gen_model()
-    if ollama_model:
-      logger.debug("[ollama] stream model=%s max_tokens=%d", ollama_model, max_tokens)
-      streaming_started = False
-      finish_reason: str | None = None
-      try:
-        stream = await cls._get_async_ollama().chat(
-          model=ollama_model,
-          messages=[{"role": "user", "content": full_prompt}],
-          stream=True,
-          options={"num_predict": max_tokens},
-        )
-        chunks = stream.__aiter__()
-        first = True
-        while True:
-          try:
-            if first:
-              chunk = await asyncio.wait_for(chunks.__anext__(), timeout=_OLLAMA_FIRST_CHUNK_TIMEOUT_SECONDS)
-              first = False
-            else:
-              chunk = await chunks.__anext__()
-          except StopAsyncIteration:
-            break
-          token = (chunk.message.content or "") if chunk.message else ""
-          if chunk.done:
-            # "length" when num_predict cut it off — the same value Groq
-            # reports, so the Continue button works for local answers too.
-            finish_reason = chunk.done_reason
-          if token:
-            streaming_started = True
-            yield token
-        yield {"_model": ollama_model, "_finish_reason": finish_reason}
-        return
-      except Exception as exc:
-        # Ollama not running, model not pulled, or too slow to start are all
-        # normal in local dev — log and fall through, no alert email.
-        ollama_exc = exc
-        logger.warning("[ollama] stream error (%s: %s), falling back to Groq", type(exc).__name__, exc)
-        if streaming_started:
-          yield {"_model": ollama_model, "_finish_reason": finish_reason}
-          return
-
-    groq_exc = None
-    groq_client = cls._get_async_groq()
-    if groq_client is None:
-      groq_exc = "GROQ_API_KEY is not set"
-      logger.info("[groq] skipped — GROQ_API_KEY is not set")
-    else:
-      logger.debug(
-        "[groq] stream model=%s max_tokens=%d prompt_len=%d",
-        cls.groq_model, max_tokens, len(full_prompt),
-      )
-      streaming_started = False
-      finish_reason = None
-      try:
-        stream = await groq_client.chat.completions.create(
-          model=cls.groq_model,
-          messages=[{"role": "user", "content": full_prompt}],
-          max_tokens=max_tokens,
-          stream=True,
-        )
-        async for chunk in stream:
-          choice = chunk.choices[0] if chunk.choices else None
-          token = (choice.delta.content or "") if choice else ""
-          if choice and choice.finish_reason:
-            finish_reason = choice.finish_reason
-          if token:
-            streaming_started = True
-            yield token
-        yield {"_model": cls.groq_model, "_finish_reason": finish_reason}
-        return
-      except groq.GroqError as exc:
-        groq_exc = exc
-        logger.warning("[groq] stream error (%s: %s), falling back to Gemini", type(exc).__name__, exc)
-        await enqueue("send_fallback_alert_job", model=cls.groq_model)
-
-      if streaming_started:
-        # Already emitted partial tokens; can't restart cleanly — just close the stream
-        yield {"_model": cls.groq_model, "_finish_reason": finish_reason}
-        return
-
-    # Gemini fallback — no streaming SDK support; yield full response as one chunk.
-    # Uses the async client surface (.aio), not the sync one: the sync call
-    # would block the entire event loop (every request on the process, not
-    # just this one) for as long as it took, which is strictly worse than
-    # the single-request hang this timeout work is meant to fix.
-    gemini_exc = None
+    model = None
+    started = False
     try:
-      gemini_model = os.getenv("GEMINI_FALLBACK_MODEL", "gemini-2.5-flash")
-      response = await cls.gemini.aio.models.generate_content(
-        model=gemini_model,
-        contents=full_prompt,
-        config=google_genai.types.GenerateContentConfig(max_output_tokens=max_tokens),
-      )
-      raw_answer = response.text or ""
-      logger.info("[gemini-fallback] model=%s", gemini_model)
-      if raw_answer:
-        yield raw_answer
-      gemini_finish_reason = None
-      candidates = getattr(response, "candidates", None)
-      if candidates:
-        reason = getattr(candidates[0], "finish_reason", None)
-        gemini_finish_reason = reason.value if hasattr(reason, "value") else reason
-      yield {"_model": gemini_model, "_finish_reason": gemini_finish_reason}
-      return
+      async for chunk in streams[provider](full_prompt):
+        if isinstance(chunk, dict):
+          model = chunk.get("_model")
+          continue
+        started = True
+        yield chunk
     except Exception as exc:
-      gemini_exc = exc
-      logger.warning("[gemini-fallback] API error (%s: %s)", type(exc).__name__, exc)
-
-    raise ValueError(
-      "AI generation unavailable — "
-      f"Ollama: {ollama_exc if ollama_model else 'not configured'}, Groq: {groq_exc}, Gemini: {gemini_exc}"
-    )
+      logger.warning("[%s] generation error (%s: %s)", provider, type(exc).__name__, exc)
+      if not started:
+        raise LLMUnavailableError(f"AI generation unavailable ({provider}: {exc})") from exc
+    yield {"_model": model}
 
   @classmethod
-  async def complete(cls, prompt: str, max_tokens: int, *, label: str) -> str | None:
+  async def _stream_ollama(cls, prompt: str) -> AsyncIterator[str | dict]:
+    model = cls._ollama_gen_model()
+    if not model:
+      raise LLMUnavailableError("OLLAMA_GEN_MODEL is not set")
+    stream = await cls._get_async_ollama().chat(
+      model=model, messages=[{"role": "user", "content": prompt}], stream=True,
+    )
+    async for chunk in stream:
+      token = (chunk.message.content or "") if chunk.message else ""
+      if token:
+        yield token
+    yield {"_model": model}
+
+  @classmethod
+  async def _stream_groq(cls, prompt: str) -> AsyncIterator[str | dict]:
+    stream = await cls._get_async_groq().chat.completions.create(
+      model=cls.groq_model, messages=[{"role": "user", "content": prompt}], stream=True,
+    )
+    async for chunk in stream:
+      choice = chunk.choices[0] if chunk.choices else None
+      token = (choice.delta.content or "") if choice else ""
+      if token:
+        yield token
+    yield {"_model": cls.groq_model}
+
+  @classmethod
+  async def _stream_gemini(cls, prompt: str) -> AsyncIterator[str | dict]:
+    # Async client surface (.aio): the sync call would block the whole event
+    # loop, not just this request. Returned as a single chunk.
+    model = cls._gemini_model()
+    response = await cls.gemini.aio.models.generate_content(model=model, contents=prompt)
+    if response.text:
+      yield response.text
+    yield {"_model": model}
+
+  @classmethod
+  async def complete(cls, prompt: str, *, label: str) -> str | None:
     """Non-streaming completion for short utility calls (query rewrite,
-    personal-question classification, titles, URL classification), using
-    the same provider chain as _stream_completion: Ollama (if
-    OLLAMA_GEN_MODEL is set), then Groq, then Gemini.
+    personal-question classification, titles, URL classification), on the
+    one provider LLM_PROVIDER selects.
 
-    Returns the first non-empty text, or None if every provider failed or
-    returned nothing — callers apply their own fail-safe default. An empty
-    reply counts as a failure because reasoning models (gpt-oss-120b on Groq,
-    and some local ones) can spend a small max_tokens budget entirely on
-    hidden reasoning and return no content. Never raises.
-    """
+    Returns the reply text, or None if the provider failed or returned
+    nothing — callers apply their own fail-safe default. Never raises."""
+    provider = llm_provider()
     messages = [{"role": "user", "content": prompt}]
-
-    ollama_model = cls._ollama_gen_model()
-    if ollama_model:
-      try:
-        response = await asyncio.wait_for(
-          cls._get_async_ollama().chat(
-            model=ollama_model, messages=messages, options={"num_predict": max_tokens},
-          ),
-          timeout=_OLLAMA_TIMEOUT_SECONDS,
-        )
-        text = ((response.message.content if response.message else "") or "").strip()
-        if text:
-          return text
-        logger.warning("[%s] Ollama returned no content, trying Groq", label)
-      except Exception as exc:
-        logger.warning("[%s] Ollama error (%s: %s), trying Groq", label, type(exc).__name__, exc)
-
-    groq_client = cls._get_async_groq()
-    if groq_client is not None:
-      try:
-        completion = await groq_client.chat.completions.create(
+    try:
+      if provider == "ollama":
+        model = cls._ollama_gen_model()
+        if not model:
+          raise LLMUnavailableError("OLLAMA_GEN_MODEL is not set")
+        response = await cls._get_async_ollama().chat(model=model, messages=messages)
+        text = (response.message.content if response.message else "") or ""
+      elif provider == "groq":
+        completion = await cls._get_async_groq().chat.completions.create(
           model=cls.groq_model,
           messages=messages,
-          max_tokens=max_tokens,
-          # cls.groq_model (openai/gpt-oss-120b) is a reasoning model: its
-          # chain-of-thought lands in a separate `reasoning` field but still
-          # counts against max_tokens, and with these small budgets it can
-          # burn all of it before writing any content — found live (empty
-          # content, finish_reason="length", 148/150 tokens spent on
-          # reasoning). "low" keeps reasoning short enough for content to be
-          # written; verified against the real API.
+          # gpt-oss-120b is a reasoning model; these are quick classify/rewrite
+          # calls, so keep its hidden reasoning short.
           reasoning_effort="low",
         )
-        text = ((completion.choices[0].message.content if completion.choices else "") or "").strip()
-        if text:
-          return text
-        logger.warning("[%s] Groq returned no content, trying Gemini", label)
-      except Exception as exc:
-        logger.warning("[%s] Groq error (%s: %s), trying Gemini", label, type(exc).__name__, exc)
-
-    try:
-      gemini_model = os.getenv("GEMINI_FALLBACK_MODEL", "gemini-2.5-flash")
-      response = await cls.gemini.aio.models.generate_content(
-        model=gemini_model,
-        contents=prompt,
-        config=google_genai.types.GenerateContentConfig(max_output_tokens=max_tokens),
-      )
-      text = (response.text or "").strip()
-      if text:
-        return text
-      logger.warning("[%s] Gemini returned no content", label)
+        text = (completion.choices[0].message.content if completion.choices else "") or ""
+      elif provider == "gemini":
+        response = await cls.gemini.aio.models.generate_content(model=cls._gemini_model(), contents=prompt)
+        text = response.text or ""
+      else:
+        raise LLMUnavailableError(f"LLM_PROVIDER={provider!r} is not one of {', '.join(LLM_PROVIDERS)}")
     except Exception as exc:
-      logger.warning("[%s] Gemini error (%s: %s)", label, type(exc).__name__, exc)
-    return None
+      logger.warning("[%s] %s error (%s: %s)", label, provider, type(exc).__name__, exc)
+      return None
+    text = text.strip()
+    if not text:
+      logger.warning("[%s] %s returned no content", label, provider)
+    return text or None
 
   @classmethod
   async def rewrite_query_with_history(cls, history: list[tuple[str, str]], text: str) -> str:
@@ -813,7 +622,7 @@ SUMMARY:
       f"Conversation so far:\n{history_lines}\n\n"
       f"Latest user message: {text[:500]}"
     )
-    raw = await cls.complete(prompt, max_tokens=120, label="query_rewrite")
+    raw = await cls.complete(prompt, label="query_rewrite")
     rewritten = (raw or '').strip().strip('"\'')
     return rewritten if rewritten else text
 
@@ -875,7 +684,7 @@ SUMMARY:
       f"{list(cls._PERSONAL_QUESTION_FIELDS)} — empty list if none apply. "
       'general_question is "" when there is no general question.'
     )
-    raw = await cls.complete(prompt, max_tokens=300, label="personal_question")
+    raw = await cls.complete(prompt, label="personal_question")
     if not raw:
       return fallback
     try:
@@ -924,6 +733,6 @@ SUMMARY:
       "for a conversation that starts with this message:\n\n"
       f"{text.strip()[:500]}"
     )
-    raw_title = await cls.complete(prompt, max_tokens=20, label="title")
+    raw_title = await cls.complete(prompt, label="title")
     title = (raw_title or '').strip('"\' \n').rstrip('.')
     return title[:60] if title else fallback

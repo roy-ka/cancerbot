@@ -37,16 +37,14 @@ STALE_PROCESSING_MINUTES = 15
 
 
 async def _classify(content_text: str) -> tuple[bool, str]:
-    """LLM-classify content via the shared provider chain (Ollama if
-    configured, then Groq, then Gemini). Returns (is_cancer_related,
-    raw_response). Raises if no provider answered, so the job is marked
-    failed rather than silently recorded as "not cancer-related"."""
+    """LLM-classify content with the configured provider (LLM_PROVIDER).
+    Returns (is_cancer_related, raw_response). Raises if the provider gave
+    no answer, so the job is marked failed rather than silently recorded as
+    "not cancer-related"."""
     from src.classes.ollama_connector import OllamaConnector
 
     prompt = CLASSIFICATION_PROMPT.format(text=content_text[:3000])
-    # Not 10: the budget must leave room for a reasoning model's hidden
-    # reasoning, or the one-word answer is never written at all.
-    raw = await OllamaConnector.complete(prompt, max_tokens=200, label="url_classification")
+    raw = await OllamaConnector.complete(prompt, label="url_classification")
     if raw is None:
         raise RuntimeError("no LLM provider returned a classification")
     raw = raw.strip().lower()

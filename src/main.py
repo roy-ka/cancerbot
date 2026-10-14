@@ -118,6 +118,14 @@ if is_prod() and not os.getenv("OPENSEARCH_URL", "").strip().lower().startswith(
         "development only — deploy with docker-compose.prod.yml (scripts/deploy.sh does)."
     )
 
+# The one LLM provider every call uses (LLM_PROVIDER, default ollama) must be
+# fully configured — otherwise every answer would fail at request time.
+from src.classes.ollama_connector import llm_config_errors
+
+_llm_errors = llm_config_errors()
+if _llm_errors:
+    raise RuntimeError("LLM configuration is incomplete: " + "; ".join(_llm_errors) + " (see example.env).")
+
 if is_prod() and not os.getenv("FRONTEND_URL", "").strip():
     raise RuntimeError(
         "FRONTEND_URL is not set. Production must set it to the public frontend origin "

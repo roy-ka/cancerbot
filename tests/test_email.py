@@ -158,7 +158,6 @@ class TestDeliveryFailureIsContained:
                 as_prod.send_delete_account_scheduled_email(
                     to="a@b.c", name="N", deletion_date="January 1, 2027"),
                 as_prod.send_delete_account_cancelled_email(to="a@b.c", name="N"),
-                as_prod.send_fallback_alert("gpt-4o"),
             ]
             for coro in calls:
                 assert asyncio.run(coro) is False
@@ -208,43 +207,11 @@ class TestEveryPublicSenderRendersSuccessfully:
                 as_prod.send_delete_account_scheduled_email(
                     to="a@b.c", name="N", deletion_date="January 1, 2027"),
                 as_prod.send_delete_account_cancelled_email(to="a@b.c", name="N"),
-                as_prod.send_fallback_alert("gpt-4o"),
             ]
             for coro in calls:
                 assert asyncio.run(coro) is True
 
             assert mock_post.call_count == len(calls)
-
-    def test_fallback_alert_renders_model_name(self, as_prod, monkeypatch):
-        monkeypatch.setenv("BREVO_API_KEY", "test-key")
-
-        with patch("src.utils.email_brevo.requests.post") as mock_post:
-            mock_post.return_value = _mock_post_response()
-            assert asyncio.run(as_prod.send_fallback_alert("gpt-4o")) is True
-
-        mock_post.assert_called_once()
-        assert "gpt-4o" in mock_post.call_args.kwargs["json"]["htmlContent"]
-
-    def test_fallback_alert_goes_to_every_admin_recipient(self, as_prod, monkeypatch):
-        monkeypatch.setenv("BREVO_API_KEY", "test-key")
-        monkeypatch.setenv("ADMIN_DIGEST_EMAILS", "one@example.com, two@example.com")
-
-        with patch("src.utils.email_brevo.requests.post") as mock_post:
-            mock_post.return_value = _mock_post_response()
-            assert asyncio.run(as_prod.send_fallback_alert("gpt-4o")) is True
-
-        recipients = [c.kwargs["json"]["to"][0]["email"] for c in mock_post.call_args_list]
-        assert recipients == ["one@example.com", "two@example.com"]
-
-    def test_fallback_alert_is_a_no_op_without_admin_recipients(self, as_prod, monkeypatch):
-        monkeypatch.setenv("BREVO_API_KEY", "test-key")
-        monkeypatch.setenv("ADMIN_DIGEST_EMAILS", "")
-
-        with patch("src.utils.email_brevo.requests.post") as mock_post:
-            assert asyncio.run(as_prod.send_fallback_alert("gpt-4o")) is False
-            mock_post.assert_not_called()
-
-
 class TestAdminDigestEmails:
     _daily_fields = {
         "date": "September 6, 2026", "new_users": 1, "new_conversations": 2,

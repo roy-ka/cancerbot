@@ -41,11 +41,11 @@ flowchart LR
 2. **Search live.** PubMed, CrossRef, Wikipedia and ClinicalTrials.gov are queried in parallel with those terms.
 3. **Index.** New results are chunked, embedded with `nomic-embed-text` (Ollama), and added to OpenSearch.
 4. **Retrieve.** A hybrid search runs dense (vector) and lexical (BM25) queries, fuses them with Reciprocal Rank Fusion, keeps only sources above a cosine-similarity floor, and reorders them with a cross-encoder.
-5. **Generate.** An LLM writes a streamed answer citing `[source1]`, `[source2]`…, which are rewritten to stable IDs such as `pmid:12345`. Providers are tried in order: a local Ollama model (only if `OLLAMA_GEN_MODEL` is set), then Groq (`openai/gpt-oss-120b`), then Gemini.
+5. **Generate.** An LLM writes a streamed answer citing `[source1]`, `[source2]`…, which are rewritten to stable IDs such as `pmid:12345`. `LLM_PROVIDER` picks the one model that writes it: a local Ollama model (the default), Groq (`openai/gpt-oss-120b`) or Gemini.
 
 ## Fastest way to try it
 
-You need Docker, [Ollama](https://ollama.com), Python 3.12 and Node.js 20.19+, plus a model to write the answers: either a free [Groq API key](https://console.groq.com/keys), or a local Ollama chat model (no cloud account needed).
+You need Docker, [Ollama](https://ollama.com), Python 3.12 and Node.js 20.19+, plus a model to write the answers: a local Ollama chat model (the default, no cloud account needed), or a free [Groq API key](https://console.groq.com/keys).
 
 **1. Clone and configure**
 
@@ -62,14 +62,13 @@ In `.env`, set these lines (everything else can stay as it is for a local run):
 ```
 JWT_SECRET=<the 64-character value printed above>
 DEV_EMAIL_SHORTCUTS=true
+```
+
+Answers come from the local model in `OLLAMA_GEN_MODEL` (`llama3.1:8b` by default — run `ollama pull llama3.1:8b`). To use Groq instead, set these two:
+
+```
+LLM_PROVIDER=groq
 GROQ_API_KEY=<your Groq key>
-```
-
-To use a local model instead of Groq, run `ollama pull llama3.1:8b` and replace the last line with these two (leaving `GROQ_API_KEY` empty means Groq is skipped entirely):
-
-```
-OLLAMA_GEN_MODEL=llama3.1:8b
-GROQ_API_KEY=
 ```
 
 `DEV_EMAIL_SHORTCUTS=true` skips email verification, so you can register and log in straight away without an email provider.
@@ -110,7 +109,7 @@ Open http://localhost:5173, register, and ask a question. The first answer on a 
 - An optional health profile (cancer type, stage, biomarkers, age band, treatment status) that frames answers; questions about the profile itself are answered from it directly
 - Shareable read-only conversation links, and export to Markdown or print-to-PDF
 - A clinical-trial finder that opens a recruiting-filtered ClinicalTrials.gov search
-- Answer feedback, conversation splitting, and continuing an answer that was cut off
+- Answer feedback and conversation splitting
 - Email-verified accounts with password reset, email change and account deletion
 - An admin console for browsing users and conversations
 
@@ -124,13 +123,13 @@ Open http://localhost:5173, register, and ask a question. The first answer on a 
 | Database | PostgreSQL + Alembic | 5432 |
 | NLP service | scispaCy `en_core_sci_sm` + cross-encoder reranker | 8100 |
 | Embeddings | Ollama `nomic-embed-text` (runs natively) | 11434 |
-| Generation | Optional local Ollama model, then Groq, then Gemini | — |
+| Generation | One of: local Ollama model (default), Groq, Gemini — set by `LLM_PROVIDER` | — |
 | Background jobs | arq + Redis (emails, scheduled deletions, cleanup) | 6379 |
 | Email | Brevo | — |
 
 ## More local options
 
-**Running without cloud LLMs.** Pull a chat model (`ollama pull llama3.1:8b`) and set `OLLAMA_GEN_MODEL=llama3.1:8b`. Every LLM call then tries it first, falling back to Groq and then Gemini only if it fails; with no `GROQ_API_KEY` set, Groq is simply skipped.
+**Choosing the model.** `LLM_PROVIDER` is `ollama` (default, uses `OLLAMA_GEN_MODEL`), `groq` (needs `GROQ_API_KEY`) or `gemini` (needs `GEMINI_API_KEY`). Only the chosen provider is ever called — there is no fallback — and the backend refuses to start if its settings are missing.
 
 **Email flows.** No email is sent outside production. With `DEV_EMAIL_SHORTCUTS=true`, registration creates an already-verified account and "Forgot password" goes straight to the set-new-password page; it's refused when `ENV=production`, and the backend test suite runs with it off. Without it, the `POST /auth/register/` response includes a `verification_token` (visible in your browser's network tab); open `http://localhost:5173/verify-email?token=<token>` to verify.
 
@@ -173,7 +172,7 @@ scripts/        Deploy, backup and one-off data-migration scripts
 
 Production uses `docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile prod up -d --build`: the second file turns on OpenSearch TLS (local development runs it over plain HTTP), and the `prod` profile adds the backend, worker and Redis containers. `scripts/deploy.sh` is the full deploy (image build, Trivy scan, migrations, health check, nginx reload). See [DEPLOY_EC2.md](DEPLOY_EC2.md), [DEPLOY_ORACLE_CLOUD.md](DEPLOY_ORACLE_CLOUD.md) and [BACKUP.md](BACKUP.md).
 
-Set `ENV=production` (outside production, token-issuing endpoints return their tokens in the response for test automation) and `FRONTEND_URL` to your public origin; the backend refuses to start in production without it, or without an `https://` `OPENSEARCH_URL`.
+Set `LLM_PROVIDER=groq` (or `gemini`), `ENV=production` (outside production, token-issuing endpoints return their tokens in the response for test automation) and `FRONTEND_URL` to your public origin; the backend refuses to start in production without it, or without an `https://` `OPENSEARCH_URL`.
 
 ## Contributing
 

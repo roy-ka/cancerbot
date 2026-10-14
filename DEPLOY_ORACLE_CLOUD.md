@@ -32,8 +32,8 @@ Required in production:
 - `FRONTEND_URL` — your public origin, e.g. `https://your-domain.com` (the backend refuses to start without it)
 - `CORS_ORIGINS` — the same origin
 - `JWT_SECRET`, `POSTGRES_PASSWORD`, `OPENSEARCH_INITIAL_ADMIN_PASSWORD`, `REDIS_PASSWORD`
-- `GROQ_API_KEY` (and optionally `GEMINI_API_KEY` for fallback), `BREVO_API_KEY`
-- `ADMIN_DIGEST_EMAILS` — where admin digests and LLM-fallback alerts go
+- `LLM_PROVIDER=groq` and `GROQ_API_KEY`, `BREVO_API_KEY`
+- `ADMIN_DIGEST_EMAILS` — where admin digests go
 
 Don't set `POSTGRES_URL`, `OPENSEARCH_URL`, `OLLAMA_URL`, `NLP_SERVICE_URL` or `REDIS_URL` for production — `docker-compose.yml` and `docker-compose.prod.yml` set the in-network values for the backend and worker containers.
 

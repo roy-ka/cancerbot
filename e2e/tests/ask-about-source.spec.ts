@@ -19,14 +19,13 @@ test.describe('Ask about a source', () => {
         json: {
           conversation: { id: 'ask-conv', title: 'Ask about source', updatedAt: now, use_profile_context: true, shared: false },
           messages: [
-            { id: 'ask-q', role: 'user', content: 'What is the Warburg effect?', created_at: now, sources: [], truncated: false },
+            { id: 'ask-q', role: 'user', content: 'What is the Warburg effect?', created_at: now, sources: [] },
             {
               id: 'ask-a',
               role: 'assistant',
               content: 'Cancer cells favour glycolysis [pmid:12345].',
               created_at: now,
               sources: [{ id: 'pmid:12345', url: null, name: 'Warburg Paper', text: 'Abstract of the Warburg paper.' }],
-              truncated: false,
             },
           ],
           next_before: null,
@@ -84,8 +83,8 @@ test.describe('Ask about a source', () => {
         json: {
           conversation: { id: 'ask-shown', title: 'Ask shown', updatedAt: now, use_profile_context: true, shared: false },
           messages: [
-            { id: 'shown-q', role: 'user', content: '[pmid:12345] what about [the second trial]?', created_at: now, sources: [], truncated: false },
-            { id: 'shown-a', role: 'assistant', content: 'It enrolled 40 patients [pmid:99999].', created_at: now, sources: [], truncated: false },
+            { id: 'shown-q', role: 'user', content: '[pmid:12345] what about [the second trial]?', created_at: now, sources: [] },
+            { id: 'shown-a', role: 'assistant', content: 'It enrolled 40 patients [pmid:99999].', created_at: now, sources: [] },
           ],
           next_before: null,
         },

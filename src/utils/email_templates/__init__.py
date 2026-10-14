@@ -27,7 +27,6 @@ from . import (
     delete_account_request,
     delete_account_scheduled,
     delete_account_cancelled,
-    fallback_alert,
     daily_admin_digest,
     weekly_admin_digest,
     email_change_request,
@@ -59,10 +58,6 @@ TEMPLATES = {
   "delete_account_cancelled": {
     "subject": delete_account_cancelled.SUBJECT,
     "html": delete_account_cancelled.HTML,
-  },
-  "fallback_alert": {
-    "subject": fallback_alert.SUBJECT,
-    "html": fallback_alert.HTML,
   },
   "daily_admin_digest": {
     "subject": daily_admin_digest.SUBJECT,

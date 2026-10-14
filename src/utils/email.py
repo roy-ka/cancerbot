@@ -148,24 +148,6 @@ async def _deliver(
         return False
 
 
-async def send_fallback_alert(model: str) -> bool:
-    """Alert when Groq fails and generation falls back to Gemini.
-
-    Enqueued via src.jobs.email_jobs.send_fallback_alert_job (see
-    src/classes/ollama_connector.py's Groq-failure path) rather than
-    called inline — it previously spawned its own background thread here
-    to avoid blocking the streaming response; now the queue does that job.
-
-    Goes to the same ADMIN_DIGEST_EMAILS list as the digests; a no-op
-    returning False when that's unset.
-    """
-    delivered = False
-    for to in _admin_digest_recipients():
-        if await _deliver(to, "fallback_alert", {"model": model}):
-            delivered = True
-    return delivered
-
-
 def _admin_digest_recipients() -> list[str]:
     raw = os.getenv("ADMIN_DIGEST_EMAILS", "").strip()
     return [addr.strip() for addr in raw.split(",") if addr.strip()]
