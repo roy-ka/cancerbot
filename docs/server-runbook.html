@@ -407,8 +407,8 @@ cp example.env .env</pre>
 <span class="v">POSTGRES_PASSWORD</span>=...
 <span class="v">OPENSEARCH_INITIAL_ADMIN_PASSWORD</span>=...        <span class="c"># 8+ chars with upper, lower, digit and symbol</span>
 <span class="v">REDIS_PASSWORD</span>=...
-<span class="v">BREVO_API_KEY</span>=...</pre>
-      <p>Optional: <code class="inline">NINJA_EMAIL</code> / <code class="inline">NINJA_PASSWORD</code> (admin console), <code class="inline">ADMIN_DIGEST_EMAILS</code> (daily/weekly digests), <code class="inline">UNPAYWALL_EMAIL</code>, and the Axiom trio <code class="inline">AXIOM_TOKEN_WRITE</code> / <code class="inline">AXIOM_TOKEN_READ</code> / <code class="inline">AXIOM_DATASET</code>. <code class="inline">OPENSEARCH_CA_CERT</code> is set in Phase 6.</p>
+<span class="v">BREVO_API_KEY</span>=...                            <span class="c"># required: every sign-in is a code sent by email</span></pre>
+      <p>Optional: <code class="inline">NINJA_EMAIL</code> (admin console — it signs in with a code sent to that address, so it must be a real inbox; <code class="inline">NINJA_PASSWORD</code> is no longer used and can be removed), <code class="inline">ADMIN_DIGEST_EMAILS</code> (daily/weekly digests), <code class="inline">UNPAYWALL_EMAIL</code>, and the Axiom trio <code class="inline">AXIOM_TOKEN_WRITE</code> / <code class="inline">AXIOM_TOKEN_READ</code> / <code class="inline">AXIOM_DATASET</code>. <code class="inline">OPENSEARCH_CA_CERT</code> is set in Phase 6.</p>
       <p><b>Don't set</b> <code class="inline">POSTGRES_URL</code>, <code class="inline">OPENSEARCH_URL</code>, <code class="inline">OLLAMA_URL</code>, <code class="inline">NLP_SERVICE_URL</code> or <code class="inline">REDIS_URL</code> — the compose files give the containers the in-network values. <b>Never set</b> <code class="inline">DEV_EMAIL_SHORTCUTS</code> here.</p>
       <div class="callout">
         <span class="label">The backend refuses to start when</span>
@@ -549,7 +549,7 @@ sudo ss -tlnp | grep 11434   <span class="c"># should now read 0.0.0.0:11434, no
       <div class="phase-head"><span class="phase-num">08</span><h2>Verify end to end</h2></div>
       <pre>curl -sL http://localhost:8000/health
 <span class="c"># expect: {"status":"ok","checks":{"database":{"status":"ok"},"ollama":{"status":"ok",...}},"status_code":200}</span></pre>
-      <p>Then load <code class="inline">https://cancer-bot.com</code> in a browser and confirm the app itself renders, not just the health endpoint.</p>
+      <p>Then load <code class="inline">https://cancer-bot.com</code> in a browser and confirm the app itself renders, not just the health endpoint. Sign in once: the 6-digit code arriving by email proves Brevo and the worker are both working — without them nobody can log in.</p>
     </section>
 
     <section class="phase" id="fixes">
@@ -658,6 +658,11 @@ sudo ss -tlnp | grep 11434   <span class="c"># should now read 0.0.0.0:11434, no
           <td class="sym">Site loads: bare nginx <code class="inline">500 Internal Server Error</code></td>
           <td><code class="inline">~</code> (home directory) not traversable by <code class="inline">www-data</code></td>
           <td class="fix">Phase 3</td>
+        </tr>
+        <tr>
+          <td class="sym">Sign-in code email never arrives</td>
+          <td>The arq <code class="inline">worker</code> container is down (codes are sent as jobs), or <code class="inline">BREVO_API_KEY</code> is wrong — check <code class="inline">docker logs cancerbot-worker-1</code></td>
+          <td class="fix">Phase 1 / Phase 7</td>
         </tr>
         <tr>
           <td class="sym">deploy.sh: <code class="inline">SUDO_USER: unbound variable</code></td>

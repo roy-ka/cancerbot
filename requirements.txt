@@ -11,7 +11,6 @@ uvicorn==0.52.4
 psycopg[binary]==3.3.5
 sqlalchemy==2.0.52
 alembic==1.19.2
-passlib[bcrypt]==1.7.4
 PyJWT==2.15.1
 beautifulsoup4==4.15.0
 wikipedia-api==0.16.0

@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { Box, Button, Link, Typography } from '@mui/material'
 import LoginForm from './LoginForm'
 import RegistrationForm from './RegistrationForm'
-import ForgotPasswordForm from './ForgotPasswordForm'
 import type { AuthButtonsProps } from '../types'
 
 function AuthButtons({ isLogin, setIsLogin }: AuthButtonsProps) {
@@ -27,7 +26,7 @@ function AuthButtons({ isLogin, setIsLogin }: AuthButtonsProps) {
   )
 }
 
-type View = 'login' | 'register' | 'forgot'
+type View = 'login' | 'register'
 
 export default function AuthPanel() {
   const [view, setView] = useState<View>('login')
@@ -35,12 +34,10 @@ export default function AuthPanel() {
   const titles: Record<View, string> = {
     login: 'Welcome back',
     register: 'Create your account',
-    forgot: 'Reset your password',
   }
   const subtitles: Record<View, string> = {
-    login: 'Log in to continue to cancerbot.',
+    login: "Log in with a code we'll email you — no password needed.",
     register: 'Register to start saving sources and exploring evidence.',
-    forgot: "We'll send a reset link to your email.",
   }
 
   return (
@@ -54,22 +51,15 @@ export default function AuthPanel() {
         </Typography>
       </Box>
 
-      {view !== 'forgot' && (
-        <AuthButtons
-          isLogin={view === 'login'}
-          setIsLogin={(v) => setView(v ? 'login' : 'register')}
-        />
-      )}
+      <AuthButtons
+        isLogin={view === 'login'}
+        setIsLogin={(v) => setView(v ? 'login' : 'register')}
+      />
 
       <Box className="auth-form-container">
-        {view === 'login' && (
-          <LoginForm onForgotPassword={() => setView('forgot')} />
-        )}
+        {view === 'login' && <LoginForm />}
         {view === 'register' && (
           <RegistrationForm changeToLogin={() => setView('login')} />
-        )}
-        {view === 'forgot' && (
-          <ForgotPasswordForm onBack={() => setView('login')} />
         )}
       </Box>
 

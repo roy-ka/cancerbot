@@ -384,14 +384,14 @@ class TestResetLinkLogging:
     async def test_links_are_not_logged_in_any_production_spelling(self, env, monkeypatch, caplog):
         """email.py used to compare ENV != "production" while everything else
         used is_prod(), which also accepts "prod" — so ENV=prod logged live
-        password-reset links straight to the shipping log handler."""
+        account links straight to the shipping log handler."""
         import src.utils.email as email_module
 
         monkeypatch.setattr(email_module, "is_prod", lambda: env.lower() in ("prod", "production"))
         monkeypatch.setattr(email_module, "_send_sendgrid", MagicMock())
 
         with caplog.at_level("INFO"):
-            await email_module.send_password_reset_email(
+            await email_module.send_delete_account_request_email(
                 to="user@example.com", name="User", link="https://app/reset?token=SECRET123"
             )
 
@@ -409,7 +409,7 @@ class TestResetLinkLogging:
         monkeypatch.setattr(email_module, "_send_sendgrid", MagicMock())
 
         with caplog.at_level("INFO"):
-            await email_module.send_password_reset_email(
+            await email_module.send_delete_account_request_email(
                 to="user@example.com", name="User", link="https://app/reset?token=DEVTOKEN"
             )
 
@@ -470,27 +470,25 @@ class TestLocalLinksAreNotRedacted:
         monkeypatch.setattr(email_module, "is_prod", lambda: False)
 
         with caplog.at_level("INFO"):
-            asyncio.run(email_module.send_verification_email(
+            asyncio.run(email_module.send_delete_account_request_email(
                 to="az@a.com",
                 name="Dev",
-                token="CLICKABLE",
-                frontend_url="http://localhost:5173",
+                link="http://localhost:5173/confirm-delete?token=CLICKABLE",
             ))
 
         # Both the dedicated link log and the dev-mode payload log carry it
         assert "CLICKABLE" in caplog.text
-        assert "http://localhost:5173/verify-email?token=CLICKABLE" in caplog.text
+        assert "http://localhost:5173/confirm-delete?token=CLICKABLE" in caplog.text
 
     def test_dev_payload_log_still_masks_a_remote_link(self, monkeypatch, caplog):
         import src.utils.email as email_module
         monkeypatch.setattr(email_module, "is_prod", lambda: False)
 
         with caplog.at_level("INFO"):
-            asyncio.run(email_module.send_verification_email(
+            asyncio.run(email_module.send_delete_account_request_email(
                 to="az@a.com",
                 name="Dev",
-                token="STAGINGSECRET",
-                frontend_url="https://staging.cancer-bot.com",
+                link="https://staging.cancer-bot.com/confirm-delete?token=STAGINGSECRET",
             ))
 
         assert "STAGINGSECRET" not in caplog.text

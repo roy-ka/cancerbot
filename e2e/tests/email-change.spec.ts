@@ -1,6 +1,6 @@
 /**
  * Email change flow: request (proves control of the current inbox) →
- * enter new email + password → confirm (proves control of the new inbox,
+ * enter new email → confirm (proves control of the new inbox,
  * swaps the email) → optional revert (undoes the swap).
  *
  * Uses a dedicated throwaway account (not the shared E2E_EMAIL) — this flow
@@ -8,7 +8,7 @@
  * on the shared account's persisted storageState.
  */
 import { test, expect, request as playwrightRequest } from '@playwright/test'
-import { verifyRegisteredUser } from '../helpers'
+import { registerUser, signInViaApi, signInViaUi } from '../helpers'
 
 const E2E_API_URL = process.env.E2E_API_URL ?? 'http://localhost:8000'
 
@@ -45,21 +45,13 @@ test.describe('Email change', () => {
   test('request, enter new email, confirm, and log in with the new address', async ({ page }) => {
     const oldEmail = `email-change-e2e-${Date.now()}@example.com`
     const newEmail = `email-change-e2e-new-${Date.now()}@example.com`
-    const password = 'EmailChangeE2e123!'
 
     const api = await playwrightRequest.newContext({ baseURL: E2E_API_URL })
-    const reg = await api.post('/auth/register/', {
-      data: { first_name: 'Email', last_name: 'Change E2E', email: oldEmail, password },
-    })
-    expect(reg.status()).toBe(201)
-    await verifyRegisteredUser(api, reg)
+    await registerUser(api, { first_name: 'Email', last_name: 'Change E2E', email: oldEmail })
     await api.dispose()
 
-    // Log in and land on /chat.
-    await page.goto('/login')
-    await page.fill('input[name="email"]', oldEmail)
-    await page.fill('input[name="password"]', password)
-    await page.click('button[type="submit"]')
+    // Sign in and land on /chat.
+    await signInViaUi(page, oldEmail)
     await page.waitForLoadState('networkidle', { timeout: 15_000 })
     await expect(page).toHaveURL(/terms/, { timeout: 10_000 })
     await page.locator('input[type="checkbox"]').check()
@@ -81,10 +73,11 @@ test.describe('Email change', () => {
     await expect(page.getByText(/sent a link to your current email/i)).toBeVisible()
     await page.getByRole('button', { name: /^close$/i }).click()
 
-    // Step 2: the /change-email page — enter the new address + password.
+    // Step 2: the /change-email page — enter the new address. The link
+    // arriving in the current inbox is the proof; there's no password.
     await page.goto(`/change-email?token=${requestToken}`)
+    await expect(page.locator('input[type="password"]')).toHaveCount(0)
     await page.fill('input[type="email"]', newEmail)
-    await page.fill('input[type="password"]', password)
 
     const [submitResponse] = await Promise.all([
       page.waitForResponse('**/auth/change-email/'),
@@ -103,11 +96,8 @@ test.describe('Email change', () => {
     expect(confirmResponse.ok()).toBeTruthy()
     await expect(page.getByRole('heading', { name: /email updated/i })).toBeVisible({ timeout: 10_000 })
 
-    // Logging in now requires the new address.
-    await page.goto('/login')
-    await page.fill('input[name="email"]', newEmail)
-    await page.fill('input[name="password"]', password)
-    await page.click('button[type="submit"]')
+    // Sign-in codes now go to the new address.
+    await signInViaUi(page, newEmail)
     await page.waitForLoadState('networkidle', { timeout: 15_000 })
     await expect(page).not.toHaveURL(/\/login/, { timeout: 10_000 })
   })
@@ -115,23 +105,17 @@ test.describe('Email change', () => {
   test('revert restores the old address', async ({ page }) => {
     const oldEmail = `email-change-e2e-revert-${Date.now()}@example.com`
     const newEmail = `email-change-e2e-revert-new-${Date.now()}@example.com`
-    const password = 'EmailChangeE2e123!'
 
     const api = await playwrightRequest.newContext({ baseURL: E2E_API_URL })
-    const reg = await api.post('/auth/register/', {
-      data: { first_name: 'Revert', last_name: 'E2E', email: oldEmail, password },
-    })
-    expect(reg.status()).toBe(201)
-    await verifyRegisteredUser(api, reg)
-    const login = await api.post('/auth/login/', { data: { email: oldEmail, password } })
-    expect(login.ok()).toBeTruthy()
+    await registerUser(api, { first_name: 'Revert', last_name: 'E2E', email: oldEmail })
+    await signInViaApi(api, oldEmail)
 
     const requestChange = await api.post('/auth/request-email-change/')
     expect(requestChange.ok()).toBeTruthy()
     const { email_change_request_token: requestToken } = await requestChange.json()
 
     const submitNew = await api.post('/auth/change-email/', {
-      data: { token: requestToken, new_email: newEmail, password },
+      data: { token: requestToken, new_email: newEmail },
     })
     expect(submitNew.ok()).toBeTruthy()
     const { email_change_token: changeToken } = await submitNew.json()
@@ -146,11 +130,8 @@ test.describe('Email change', () => {
     await page.goto(`/revert-email?token=${revertToken}`)
     await expect(page.getByRole('heading', { name: /email reverted/i })).toBeVisible({ timeout: 10_000 })
 
-    // Logging in now works with the original address again.
-    await page.goto('/login')
-    await page.fill('input[name="email"]', oldEmail)
-    await page.fill('input[name="password"]', password)
-    await page.click('button[type="submit"]')
+    // Signing in now works with the original address again.
+    await signInViaUi(page, oldEmail)
     await page.waitForLoadState('networkidle', { timeout: 15_000 })
     await expect(page).not.toHaveURL(/\/login/, { timeout: 10_000 })
   })

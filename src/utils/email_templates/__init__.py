@@ -5,7 +5,7 @@ dormant SendGrid path in email.py, which referenced templates stored in
 SendGrid by opaque ID) — fully version-controlled and testable, and portable
 to any future provider.
 
-One module per email (`verification.py`, `password_reset.py`, ...), each
+One module per email (`login_code.py`, `account_deleted.py`, ...), each
 exposing a plain `SUBJECT` string and `HTML` string. This module just
 collects them into `TEMPLATES` and renders.
 
@@ -21,8 +21,7 @@ happen on our side.
 import html as _html
 
 from . import (
-    verification,
-    password_reset,
+    login_code,
     account_deleted,
     delete_account_request,
     delete_account_scheduled,
@@ -35,13 +34,9 @@ from . import (
 )
 
 TEMPLATES = {
-  "verification": {
-    "subject": verification.SUBJECT,
-    "html": verification.HTML,
-  },
-  "password_reset": {
-    "subject": password_reset.SUBJECT,
-    "html": password_reset.HTML,
+  "login_code": {
+    "subject": login_code.SUBJECT,
+    "html": login_code.HTML,
   },
   "account_deleted": {
     "subject": account_deleted.SUBJECT,

@@ -50,12 +50,13 @@ def is_prod():
 
 
 def dev_email_shortcuts():
-  """Local-dev convenience: registration auto-verifies and forgot-password
-  returns the reset token directly instead of emailing it. Opt-in via
-  DEV_EMAIL_SHORTCUTS rather than implied by non-production, because tests
-  and E2E rely on the real email flows. Never active in production (main.py
-  also refuses to start with it set there). Read per call so tests can
-  monkeypatch it."""
+  """Local-dev convenience: /auth/register/ and /auth/request-code/ return
+  the sign-in code in their response (`dev_code`) and the login screen shows
+  it, so local development and E2E need no inbox. Opt-in via
+  DEV_EMAIL_SHORTCUTS rather than implied by non-production, because a code
+  in the response is a login for that account — on staging it would let
+  anyone sign in as anyone. Never active in production (main.py also refuses
+  to start with it set there). Read per call so tests can monkeypatch it."""
   if is_prod():
     return False
   return os.getenv('DEV_EMAIL_SHORTCUTS', '').strip().lower() in ('1', 'true', 'yes')

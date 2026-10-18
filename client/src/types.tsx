@@ -3,15 +3,8 @@ export type AuthButtonsProps = {
   setIsLogin: (val: boolean) => void
 }
 
-export type LoginPayload = {
-  email: string
-  password: string
-  rememberMe: boolean
-}
-
 export type RegistrationPayload = {
   email: string
-  password: string
   first_name: string
   last_name: string
 }

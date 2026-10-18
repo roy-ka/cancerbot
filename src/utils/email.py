@@ -175,11 +175,13 @@ async def send_weekly_admin_digest_email(template_data: dict) -> int:
     return delivered
 
 
-async def send_verification_email(to: str, name: str, token: str, frontend_url: str) -> bool:
-    verify_url = f"{frontend_url}/verify-email?token={token}"
-    if not is_prod():
-        logger.info("[email] verification link for %s: %s", to, _redact_token(verify_url))
-    return await _deliver(to, "verification", {"name": name, "link": verify_url})
+async def send_login_code_email(to: str, name: str, code: str, minutes: int) -> bool:
+    """The 6-digit sign-in code (src/routers/auth.py). Unlike the link
+    emails below, the code isn't logged outside production: there's no
+    local-host test to tell a dev machine from staging, and a logged code is
+    a working login for that account. Local development gets the code from
+    the API response instead (DEV_EMAIL_SHORTCUTS)."""
+    return await _deliver(to, "login_code", {"name": name, "code": code, "minutes": minutes})
 
 
 async def send_account_deleted_email(to: str, name: str) -> bool:
@@ -187,17 +189,6 @@ async def send_account_deleted_email(to: str, name: str) -> bool:
         to,
         "account_deleted",
         {"name": name, "link": "https://cancer-bot.com/signup"},
-        disable_subscription_tracking=True,
-    )
-
-
-async def send_password_reset_email(to: str, name: str, link: str) -> bool:
-    if not is_prod():
-        logger.info("[email] password reset link for %s: %s", to, _redact_token(link))
-    return await _deliver(
-        to,
-        "password_reset",
-        {"name": name, "link": link},
         disable_subscription_tracking=True,
     )
 
@@ -215,7 +206,7 @@ async def send_delete_account_request_email(to: str, name: str, link: str) -> bo
 
 
 async def send_delete_account_scheduled_email(to: str, name: str, deletion_date: str) -> bool:
-    """Step 2 — sent once the password is confirmed and deletion is scheduled."""
+    """Step 2 — sent once the emailed link is confirmed and deletion is scheduled."""
     return await _deliver(
         to,
         "delete_account_scheduled",

@@ -14,8 +14,7 @@ enqueue.
 """
 
 from src.utils.email import (
-    send_verification_email,
-    send_password_reset_email,
+    send_login_code_email,
     send_delete_account_request_email,
     send_delete_account_scheduled_email,
     send_delete_account_cancelled_email,
@@ -25,12 +24,8 @@ from src.utils.email import (
 )
 
 
-async def send_verification_email_job(ctx, *, to, name, token, frontend_url) -> None:
-    await send_verification_email(to=to, name=name, token=token, frontend_url=frontend_url)
-
-
-async def send_password_reset_email_job(ctx, *, to, name, link) -> None:
-    await send_password_reset_email(to=to, name=name, link=link)
+async def send_login_code_email_job(ctx, *, to, name, code, minutes) -> None:
+    await send_login_code_email(to=to, name=name, code=code, minutes=minutes)
 
 
 async def send_delete_account_request_email_job(ctx, *, to, name, link) -> None:

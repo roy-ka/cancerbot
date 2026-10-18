@@ -1,5 +1,5 @@
 import { test, expect, request as playwrightRequest } from '@playwright/test'
-import { verifyRegisteredUser } from '../helpers'
+import { registerUser, signInViaUi } from '../helpers'
 
 const E2E_API_URL = process.env.E2E_API_URL ?? 'http://localhost:8000'
 
@@ -8,20 +8,12 @@ test.describe('Health profile onboarding', () => {
 
   test('register -> terms -> onboarding -> chat, then edit and clear from the account menu', async ({ page }) => {
     const email = `onboarding-e2e-${Date.now()}@example.com`
-    const password = 'OnboardingE2e123!'
 
     const api = await playwrightRequest.newContext({ baseURL: E2E_API_URL })
-    const reg = await api.post('/auth/register/', {
-      data: { first_name: 'Onboarding', last_name: 'E2E', email, password },
-    })
-    expect(reg.status()).toBe(201)
-    await verifyRegisteredUser(api, reg)
+    await registerUser(api, { first_name: 'Onboarding', last_name: 'E2E', email })
     await api.dispose()
 
-    await page.goto('/login')
-    await page.fill('input[name="email"]', email)
-    await page.fill('input[name="password"]', password)
-    await page.click('button[type="submit"]')
+    await signInViaUi(page, email)
     await page.waitForLoadState('networkidle', { timeout: 15_000 })
 
     // First-time login always lands on /terms
@@ -70,20 +62,12 @@ test.describe('Health profile onboarding', () => {
 
   test('skipping onboarding lands on chat without the profile toggle', async ({ page }) => {
     const email = `onboarding-skip-e2e-${Date.now()}@example.com`
-    const password = 'OnboardingE2e123!'
 
     const api = await playwrightRequest.newContext({ baseURL: E2E_API_URL })
-    const reg = await api.post('/auth/register/', {
-      data: { first_name: 'Onboarding', last_name: 'Skip', email, password },
-    })
-    expect(reg.status()).toBe(201)
-    await verifyRegisteredUser(api, reg)
+    await registerUser(api, { first_name: 'Onboarding', last_name: 'Skip', email })
     await api.dispose()
 
-    await page.goto('/login')
-    await page.fill('input[name="email"]', email)
-    await page.fill('input[name="password"]', password)
-    await page.click('button[type="submit"]')
+    await signInViaUi(page, email)
     await page.waitForLoadState('networkidle', { timeout: 15_000 })
 
     await expect(page).toHaveURL(/terms/, { timeout: 10_000 })

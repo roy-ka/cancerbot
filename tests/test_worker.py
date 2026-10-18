@@ -4,8 +4,7 @@ from unittest.mock import patch, AsyncMock
 from src.jobs.account_deletion import delete_scheduled_user_job
 from src.jobs.auth_cleanup import auth_cleanup_sweep
 from src.jobs.email_jobs import (
-    send_verification_email_job,
-    send_password_reset_email_job,
+    send_login_code_email_job,
     send_delete_account_request_email_job,
     send_delete_account_scheduled_email_job,
     send_delete_account_cancelled_email_job,
@@ -41,8 +40,7 @@ class TestGetRedisSettings:
 class TestWorkerSettings:
     def test_all_on_demand_jobs_registered(self):
         assert set(WorkerSettings.functions) == {
-            send_verification_email_job,
-            send_password_reset_email_job,
+            send_login_code_email_job,
             send_delete_account_request_email_job,
             send_delete_account_scheduled_email_job,
             send_delete_account_cancelled_email_job,

@@ -1,12 +1,11 @@
 from datetime import datetime, timezone
 from src.db.models import User
 
-def create_user(db, first_name, last_name, email, password_hash):
+def create_user(db, first_name, last_name, email):
   new_user = User(
     first_name=first_name,
     last_name=last_name,
     email=email.lower(),
-    password_hash=password_hash
   )
   db.add(new_user)
   db.commit()

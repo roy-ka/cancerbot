@@ -71,7 +71,7 @@ LLM_PROVIDER=groq
 GROQ_API_KEY=<your Groq key>
 ```
 
-`DEV_EMAIL_SHORTCUTS=true` skips email verification, so you can register and log in straight away without an email provider.
+There are no passwords: you sign in with a 6-digit code sent by email. `DEV_EMAIL_SHORTCUTS=true` also shows that code on the login screen, so you can register and log in without an email provider.
 
 **2. Start the services**
 
@@ -110,7 +110,7 @@ Open http://localhost:5173, register, and ask a question. The first answer on a 
 - Shareable read-only conversation links, and export to Markdown or print-to-PDF
 - A clinical-trial finder that opens a recruiting-filtered ClinicalTrials.gov search
 - Answer feedback and conversation splitting
-- Email-verified accounts with password reset, email change and account deletion
+- Passwordless accounts (a 6-digit code emailed at sign-in), with email change and account deletion
 - An admin console for browsing users and conversations
 
 ## Stack
@@ -131,7 +131,7 @@ Open http://localhost:5173, register, and ask a question. The first answer on a 
 
 **Choosing the model.** `LLM_PROVIDER` is `ollama` (default, uses `OLLAMA_GEN_MODEL`), `groq` (needs `GROQ_API_KEY`) or `gemini` (needs `GEMINI_API_KEY`). Only the chosen provider is ever called — there is no fallback — and the backend refuses to start if its settings are missing.
 
-**Email flows.** No email is sent outside production. With `DEV_EMAIL_SHORTCUTS=true`, registration creates an already-verified account and "Forgot password" goes straight to the set-new-password page; it's refused when `ENV=production`, and the backend test suite runs with it off. Without it, the `POST /auth/register/` response includes a `verification_token` (visible in your browser's network tab); open `http://localhost:5173/verify-email?token=<token>` to verify.
+**Email flows.** No email is sent outside production. With `DEV_EMAIL_SHORTCUTS=true`, the sign-in code is returned by the API and shown on the code screen; it's refused when `ENV=production`, the backend test suite runs with it off, and the E2E suite needs it on. Without it, a local run has no way to see the code. The links in the email-change and account-deletion emails are logged by the worker for local addresses.
 
 **Background jobs.** Emails and scheduled account deletions run in the arq worker, which needs Redis. Without them the app still works; queued jobs are logged and skipped. To run them, start Redis (`docker compose --profile prod up -d redis`) and then the worker (`arq src.worker.WorkerSettings`).
 

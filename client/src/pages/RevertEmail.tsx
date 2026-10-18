@@ -57,7 +57,7 @@ export default function RevertEmail() {
             <Typography variant="h5" fontWeight={600}>Email reverted</Typography>
             <Typography sx={{ color: 'rgba(255,255,255,0.7)' }}>{message}</Typography>
             <Typography sx={{ color: 'rgba(255,255,255,0.7)' }}>
-              We'd also recommend changing your password.
+              We've also signed out every session on the account. Sign-in codes go to this address again.
             </Typography>
             <Button variant="contained" onClick={() => navigate('/login')}>Go to Login</Button>
           </>

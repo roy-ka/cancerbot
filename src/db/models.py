@@ -28,7 +28,10 @@ class User(Base):
     first_name = Column(String(150), nullable=True)
     last_name = Column(String(150), nullable=True)
     email = Column(String(320), unique=True, index=True, nullable=False)
-    password_hash = Column(String(255), nullable=False)
+    # Legacy: login is by emailed code (src/routers/auth.py), so nothing
+    # writes or reads this any more. Kept nullable, not dropped, so existing
+    # rows survive the switch untouched.
+    password_hash = Column(String(255), nullable=True)
     email_verified = Column(Boolean, default=False, nullable=False)
     terms_version = Column(Integer, nullable=True)
     token_version = Column(Integer, default=1, nullable=False)
@@ -220,11 +223,11 @@ class UserProfile(Base):
 
 
 class Token(Base):
-    """Unified table for every single-purpose token flow: password reset,
-    email verification, account deletion, and email change/revert — see
+    """Unified table for every single-purpose token flow: emailed login
+    codes, account deletion, and email change/revert — see
     src/db/repositories/tokens.py for the type-specific behavior each of
-    those still needs (different TTLs, and password_reset alone allows
-    multiple verifies via use_count before consumption).
+    those still needs (different TTLs, and login codes alone count wrong
+    guesses in use_count).
 
     waitlist_entry_id is legacy: it keyed the removed waitlist-invite tokens.
     Kept so the model still matches the database (see WaitlistEntry)."""

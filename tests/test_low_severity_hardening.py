@@ -1,7 +1,7 @@
 """Regression tests for the low-severity hardening pass.
 
 Covers:
-- Login spends the same work whether or not the email exists (enumeration)
+- Requesting a sign-in code doesn't disclose whether the email exists
 - Conversation ownership is checked before any query runs
 - In-memory rate-limit state does not grow without bound
 - WebSocket handshakes validate Origin (CORS middleware does not cover them)
@@ -21,57 +21,21 @@ import pytest
 # Login timing / enumeration
 # ---------------------------------------------------------------------------
 
-class TestLoginTimingEqualisation:
-    def test_unknown_email_still_performs_a_verify(self, monkeypatch, client):
-        """The expensive verify must run even with no matching user, otherwise
-        response latency discloses which addresses have accounts."""
-        import src.routers.auth as auth
+class TestLoginCodeEnumeration:
+    def test_known_and_unknown_emails_get_the_same_response(self, client, test_user):
+        """/auth/request-code/ must not disclose which addresses have
+        accounts: same status, same body shape, and no code either way
+        (DEV_EMAIL_SHORTCUTS is off in tests)."""
+        known = client.post("/auth/request-code/", json={"email": test_user.email})
+        unknown = client.post("/auth/request-code/", json={"email": "nobody@example.com"})
 
-        calls = []
-        real_verify = auth.SecurityUtils.verify_password
+        assert known.status_code == unknown.status_code == 200
+        assert set(known.json()) == set(unknown.json()) == {"ok", "email"}
 
-        def _tracking_verify(plain, hashed):
-            calls.append(hashed)
-            return real_verify(plain, hashed)
-
-        monkeypatch.setattr(auth.SecurityUtils, "verify_password", _tracking_verify)
-
-        resp = client.post(
-            "/auth/login/",
-            json={"email": "definitely-not-registered@example.com", "password": "Whatever1!"},
-        )
-
-        assert resp.status_code == 401
-        assert len(calls) == 1, "no password verification was performed for an unknown email"
-
-    def test_dummy_hash_is_stable_and_never_matches(self):
-        from src.routers.auth import _get_dummy_hash
-        from src.auth.security import SecurityUtils
-
-        first = _get_dummy_hash()
-        assert _get_dummy_hash() is first  # computed once per process
-        assert not SecurityUtils.verify_password("", first)
-        assert not SecurityUtils.verify_password("password", first)
-
-    def test_known_and_unknown_emails_do_the_same_amount_of_work(self, monkeypatch, client, test_user):
-        import src.routers.auth as auth
-
-        counts = {"n": 0}
-        real_verify = auth.SecurityUtils.verify_password
-
-        def _counting_verify(plain, hashed):
-            counts["n"] += 1
-            return real_verify(plain, hashed)
-
-        monkeypatch.setattr(auth.SecurityUtils, "verify_password", _counting_verify)
-
-        client.post("/auth/login/", json={"email": test_user.email, "password": "WrongPass1!"})
-        known = counts["n"]
-        counts["n"] = 0
-        client.post("/auth/login/", json={"email": "nobody@example.com", "password": "WrongPass1!"})
-        unknown = counts["n"]
-
-        assert known == unknown == 1
+    def test_unknown_email_sends_nothing(self, client):
+        with patch("src.routers.auth.enqueue") as enqueue:
+            client.post("/auth/request-code/", json={"email": "nobody@example.com"})
+        enqueue.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -84,13 +48,11 @@ class TestAuthorizationOrdering:
         the message query and its OpenSearch source lookup run."""
         from src.db.repositories.users import create_user
         from src.db.repositories.conversations import create_conversation
-        from src.auth.security import SecurityUtils
 
         other = create_user(
             db=db_session,
             first_name="Other", last_name="Owner",
             email="other-owner@example.com",
-            password_hash=SecurityUtils.hash_password("Password1!"),
         )
         their_conv = create_conversation(db_session, user_id=other.id, title="Private")
         db_session.commit()

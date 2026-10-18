@@ -1,8 +1,40 @@
 import pytest
 from datetime import datetime, timedelta, timezone
-from unittest.mock import patch, AsyncMock
 
 from src.auth.security import SecurityUtils
+
+
+@pytest.fixture
+def sent_codes(monkeypatch):
+    """Capture every login-code email instead of enqueueing it, keyed by
+    address — the tests read codes from here, the way a user reads them from
+    their inbox."""
+    codes: dict[str, str] = {}
+
+    async def fake_enqueue(job_name, **kwargs):
+        if job_name == "send_login_code_email_job":
+            codes[kwargs["to"]] = kwargs["code"]
+
+    monkeypatch.setattr("src.routers.auth.enqueue", fake_enqueue)
+    return codes
+
+
+def _register(client, email="newuser@example.com", first_name="New", last_name="User"):
+    return client.post(
+        "/auth/register/",
+        json={"first_name": first_name, "last_name": last_name, "email": email},
+    )
+
+
+def _verify(client, email, code, remember_me=False):
+    return client.post(
+        "/auth/verify-code/",
+        json={"email": email, "code": code, "rememberMe": remember_me},
+    )
+
+
+def _wrong(code: str) -> str:
+    return "000000" if code != "000000" else "111111"
 
 
 class TestFrontendUrlFallback:
@@ -27,283 +59,270 @@ class TestFrontendUrlFallback:
         monkeypatch.setenv("FRONTEND_URL", "https://staging.cancer-bot.com")
         assert _get_frontend_url() == "https://staging.cancer-bot.com"
 
-    def test_register_verification_email_uses_fallback_link_when_unset(self, anon_client, monkeypatch):
-        monkeypatch.delenv("FRONTEND_URL", raising=False)
-        captured = {}
-
-        async def fake_enqueue(job_name, **kwargs):
-            captured["job_name"] = job_name
-            captured["frontend_url"] = kwargs.get("frontend_url")
-
-        monkeypatch.setattr("src.routers.auth.enqueue", fake_enqueue)
-
-        anon_client.post(
-            "/auth/register/",
-            json={
-                "first_name": "No", "last_name": "Env",
-                "email": "noenv@example.com",
-                "password": "SecurePass123!",
-            },
-        )
-
-        assert captured["job_name"] == "send_verification_email_job"
-        assert captured["frontend_url"] == "http://localhost:5173"
-
 
 class TestRegister:
     def test_registration_is_never_capped(self, anon_client, test_user, monkeypatch):
         """The MAX_USERS cap and waitlist were removed; a value left over in
         an old .env must not bring the cap back."""
         monkeypatch.setenv("MAX_USERS", "1")
-        response = anon_client.post(
-            "/auth/register/",
-            json={"first_name": "Over", "last_name": "Cap",
-                  "email": "overcap@example.com", "password": "SecurePass123!"},
-        )
+        response = _register(anon_client, email="overcap@example.com")
         assert response.status_code == 201
         assert anon_client.get("/auth/registration_status/").status_code == 404
 
-    def test_register_success_returns_201(self, anon_client):
-        response = anon_client.post(
-            "/auth/register/",
-            json={
-                "first_name": "New", "last_name": "User",
-                "email": "newuser@example.com",
-                "password": "SecurePass123!",
-            },
-        )
+    def test_register_emails_a_code_and_returns_201(self, anon_client, sent_codes):
+        response = _register(anon_client)
         assert response.status_code == 201
-        data = response.json()
-        assert data["email"] == "newuser@example.com"
+        assert response.json()["email"] == "newuser@example.com"
+        assert len(sent_codes["newuser@example.com"]) == 6
+        # The code goes to the inbox only — never into a response here.
+        assert "dev_code" not in response.json()
 
-    def test_register_succeeds_when_the_verification_email_fails(self, anon_client, monkeypatch):
-        """A SendGrid outage (or a stale API key returning 401) must not turn a
-        successful registration into an unhandled ASGI traceback. The email is a
-        BackgroundTask that runs after the 201 is already sent, so a propagating
-        exception can't reach the client — it only pollutes the logs.
+    def test_account_is_unverified_until_the_code_is_entered(self, anon_client, db_session, sent_codes):
+        from src.db.repositories.users import get_user_by_email
+        _register(anon_client)
+        user = get_user_by_email(db_session, "newuser@example.com")
+        assert user.email_verified is False
+        assert user.password_hash is None
 
-        TestClient runs background tasks inline, so this exercises the real path.
-        """
+        response = _verify(anon_client, "newuser@example.com", sent_codes["newuser@example.com"])
+        assert response.status_code == 200
+        db_session.refresh(user)
+        assert user.email_verified is True
+        assert "access_token" in anon_client.cookies
+
+    def test_register_succeeds_when_the_email_fails(self, anon_client, monkeypatch):
+        """A Brevo outage must not turn a successful registration into a 500
+        — the send runs as a separate worker job."""
         import src.utils.email as email_module
 
         def boom(*args, **kwargs):
             raise RuntimeError("HTTP Error 401: Unauthorized")
 
-        monkeypatch.setattr(email_module, "_send_sendgrid", boom)
-
-        response = anon_client.post(
-            "/auth/register/",
-            json={
-                "first_name": "Mail", "last_name": "Down",
-                "email": "maildown@example.com",
-                "password": "SecurePass123!",
-            },
-        )
-
+        monkeypatch.setattr(email_module, "_send_brevo", boom)
+        response = _register(anon_client, email="maildown@example.com")
         assert response.status_code == 201
-        assert response.json()["email"] == "maildown@example.com"
 
     def test_register_persists_first_and_last_name(self, anon_client, db_session):
-        anon_client.post(
-            "/auth/register/",
-            json={
-                "first_name": "Ada", "last_name": "Lovelace",
-                "email": "ada@example.com",
-                "password": "SecurePass123!",
-            },
-        )
+        _register(anon_client, email="ada@example.com", first_name="Ada", last_name="Lovelace")
         from src.db.repositories.users import get_user_by_email
         user = get_user_by_email(db_session, "ada@example.com")
         assert user.first_name == "Ada"
         assert user.last_name == "Lovelace"
         assert user.display_name == "Ada Lovelace"
 
+    def test_reregistering_an_unverified_address_sends_a_new_code(self, anon_client, db_session, sent_codes):
+        """An abandoned sign-up must not lock the address out."""
+        from src.db.repositories.users import get_user_by_email
+        _register(anon_client, email="again@example.com", first_name="First")
+        response = _register(anon_client, email="again@example.com", first_name="Second")
+        assert response.status_code == 201
+        assert get_user_by_email(db_session, "again@example.com").first_name == "Second"
+        assert _verify(anon_client, "again@example.com", sent_codes["again@example.com"]).status_code == 200
+
     def test_register_missing_last_name_returns_422(self, anon_client):
         response = anon_client.post(
-            "/auth/register/",
-            json={"first_name": "Solo", "email": "solo@example.com", "password": "SecurePass123!"},
+            "/auth/register/", json={"first_name": "Solo", "email": "solo@example.com"},
         )
         assert response.status_code == 422
 
     def test_register_duplicate_email_returns_400(self, anon_client, test_user):
-        response = anon_client.post(
-            "/auth/register/",
-            json={
-                "first_name": "Another", "last_name": "User",
-                "email": test_user.email,
-                "password": "AnotherPass123!",
-            },
-        )
+        response = _register(anon_client, email=test_user.email)
+        assert response.status_code == 400
+
+    def test_register_ninja_email_returns_400(self, anon_client, monkeypatch):
+        monkeypatch.setenv("NINJA_EMAIL", "ninja-test@example.com")
+        response = _register(anon_client, email="ninja-test@example.com")
         assert response.status_code == 400
 
     def test_register_missing_fields_returns_422(self, anon_client):
         response = anon_client.post("/auth/register/", json={"email": "user@example.com"})
         assert response.status_code == 422
 
-    def test_register_short_password_returns_400(self, anon_client):
+    def test_a_password_field_is_ignored(self, anon_client, db_session):
+        """Old clients may still send one; it's dropped, never stored."""
+        from src.db.repositories.users import get_user_by_email
         response = anon_client.post(
             "/auth/register/",
-            json={
-                "first_name": "Reg", "last_name": "User",
-                "email": "user@example.com",
-                "password": "short",
-            },
+            json={"first_name": "Old", "last_name": "Client",
+                  "email": "oldclient@example.com", "password": "SecurePass123!"},
         )
-        assert response.status_code == 400
-class TestResendVerification:
-    """/resend-verification/ was the only token-issuing endpoint with no non-prod
-    escape hatch: only the token's SHA-256 hash is stored, so a token that isn't
-    returned here cannot be recovered afterwards."""
+        assert response.status_code == 201
+        assert get_user_by_email(db_session, "oldclient@example.com").password_hash is None
 
-    def _unverified(self, db_session):
+
+class TestRequestCode:
+    def test_known_user_gets_a_code(self, anon_client, test_user, sent_codes):
+        response = anon_client.post("/auth/request-code/", json={"email": test_user.email})
+        assert response.status_code == 200
+        assert response.json() == {"ok": True, "email": test_user.email}
+        assert len(sent_codes[test_user.email]) == 6
+
+    def test_unknown_email_gets_the_same_response_and_no_email(self, anon_client, sent_codes):
+        response = anon_client.post("/auth/request-code/", json={"email": "nobody@example.com"})
+        assert response.status_code == 200
+        assert response.json() == {"ok": True, "email": "nobody@example.com"}
+        assert sent_codes == {}
+
+    def test_never_returns_the_code_without_dev_shortcuts(self, anon_client, test_user, monkeypatch):
+        """Non-production alone is not enough: a code in the response is a
+        login, so staging must not hand it out."""
+        monkeypatch.setattr("src.routers.auth.is_prod", lambda: False)
+        response = anon_client.post("/auth/request-code/", json={"email": test_user.email})
+        assert "dev_code" not in response.json()
+
+    def test_invalid_email_returns_422(self, anon_client):
+        response = anon_client.post("/auth/request-code/", json={"email": "not-an-email"})
+        assert response.status_code == 422
+
+
+class TestVerifyCode:
+    def test_correct_code_sets_cookie(self, anon_client, test_user, sent_codes):
+        anon_client.post("/auth/request-code/", json={"email": test_user.email})
+        response = _verify(anon_client, test_user.email, sent_codes[test_user.email])
+        assert response.status_code == 200
+        data = response.json()
+        assert data == {"token_type": "bearer", "is_ninja": False}
+        assert "access_token" in anon_client.cookies
+        assert anon_client.get("/auth/check/").status_code == 200
+
+    def test_code_works_only_once(self, anon_client, test_user, sent_codes):
+        anon_client.post("/auth/request-code/", json={"email": test_user.email})
+        code = sent_codes[test_user.email]
+        assert _verify(anon_client, test_user.email, code).status_code == 200
+        assert _verify(anon_client, test_user.email, code).status_code == 401
+
+    def test_wrong_code_returns_401_with_remaining_attempts(self, anon_client, test_user, sent_codes):
+        from src.db.repositories.tokens import LOGIN_CODE_MAX_ATTEMPTS
+        anon_client.post("/auth/request-code/", json={"email": test_user.email})
+        response = _verify(anon_client, test_user.email, _wrong(sent_codes[test_user.email]))
+        assert response.status_code == 401
+        assert f"{LOGIN_CODE_MAX_ATTEMPTS - 1} attempt(s) left" in response.json()["detail"]
+        assert "access_token" not in anon_client.cookies
+
+    def test_code_dies_after_max_wrong_attempts(self, anon_client, test_user, sent_codes):
+        from src.db.repositories.tokens import LOGIN_CODE_MAX_ATTEMPTS
+        anon_client.post("/auth/request-code/", json={"email": test_user.email})
+        code = sent_codes[test_user.email]
+        for _ in range(LOGIN_CODE_MAX_ATTEMPTS):
+            _verify(anon_client, test_user.email, _wrong(code))
+        response = _verify(anon_client, test_user.email, code)
+        assert response.status_code == 401
+        assert "too many" in response.json()["detail"].lower()
+
+    def test_a_new_code_works_after_the_old_one_died(self, anon_client, test_user, sent_codes):
+        from src.db.repositories.tokens import LOGIN_CODE_MAX_ATTEMPTS
+        anon_client.post("/auth/request-code/", json={"email": test_user.email})
+        for _ in range(LOGIN_CODE_MAX_ATTEMPTS):
+            _verify(anon_client, test_user.email, _wrong(sent_codes[test_user.email]))
+        anon_client.post("/auth/request-code/", json={"email": test_user.email})
+        assert _verify(anon_client, test_user.email, sent_codes[test_user.email]).status_code == 200
+
+    def test_unknown_email_returns_401(self, anon_client):
+        response = _verify(anon_client, "unknown@example.com", "123456")
+        assert response.status_code == 401
+
+    def test_code_for_one_address_does_not_work_for_another(self, anon_client, test_user, db_session, sent_codes):
         from src.db.repositories.users import create_user
-        user = create_user(
-            db_session,
-            first_name="Un", last_name="Verified",
-            email="unverified@example.com",
-            password_hash=SecurityUtils.hash_password("TestPass123!"),
-        )
-        user.email_verified = False
+        other = create_user(db_session, first_name="O", last_name="U", email="other@example.com")
+        other.email_verified = True
         db_session.commit()
-        return user
+        anon_client.post("/auth/request-code/", json={"email": test_user.email})
+        response = _verify(anon_client, "other@example.com", sent_codes[test_user.email])
+        assert response.status_code == 401
 
-    def test_returns_token_in_non_prod(self, anon_client, db_session):
-        self._unverified(db_session)
+    def test_expired_code_returns_401(self, anon_client, test_user, sent_codes):
+        from freezegun import freeze_time
+        with freeze_time(datetime.now(timezone.utc)):
+            anon_client.post("/auth/request-code/", json={"email": test_user.email})
+        with freeze_time(datetime.now(timezone.utc) + timedelta(minutes=11)):
+            response = _verify(anon_client, test_user.email, sent_codes[test_user.email])
+        assert response.status_code == 401
+        assert "expired" in response.json()["detail"].lower()
 
-        response = anon_client.post(
-            "/auth/resend-verification/", json={"email": "unverified@example.com"}
-        )
+    @pytest.mark.parametrize("code", ["12345", "1234567", "abcdef", "12 456", ""])
+    def test_malformed_code_returns_422(self, anon_client, test_user, code):
+        response = _verify(anon_client, test_user.email, code)
+        assert response.status_code == 422
 
-        assert response.status_code == 200
-        assert response.json()["verification_token"]
-
-    def test_never_returns_token_in_prod(self, anon_client, db_session, monkeypatch):
-        self._unverified(db_session)
+    def test_remember_me_sets_a_persistent_cookie_in_production(self, anon_client, test_user, sent_codes, monkeypatch):
         monkeypatch.setattr("src.routers.auth.is_prod", lambda: True)
+        anon_client.post("/auth/request-code/", json={"email": test_user.email})
+        response = _verify(anon_client, test_user.email, sent_codes[test_user.email], remember_me=True)
+        assert "Max-Age=2592000" in response.headers["set-cookie"]
 
-        response = anon_client.post(
-            "/auth/resend-verification/", json={"email": "unverified@example.com"}
-        )
+    def test_session_cookie_without_remember_me_in_production(self, anon_client, test_user, sent_codes, monkeypatch):
+        monkeypatch.setattr("src.routers.auth.is_prod", lambda: True)
+        anon_client.post("/auth/request-code/", json={"email": test_user.email})
+        response = _verify(anon_client, test_user.email, sent_codes[test_user.email])
+        assert "Max-Age" not in response.headers["set-cookie"]
 
-        assert response.status_code == 200
-        assert "verification_token" not in response.json()
-
-    def test_response_does_not_reveal_whether_the_email_exists(self, anon_client, test_user):
-        """An unknown address and an already-verified one must look identical."""
-        unknown = anon_client.post(
-            "/auth/resend-verification/", json={"email": "nobody@example.com"}
-        )
-        verified = anon_client.post(
-            "/auth/resend-verification/", json={"email": test_user.email}
-        )
-
-        assert unknown.status_code == verified.status_code == 200
-        assert unknown.json() == verified.json() == {"ok": True}
+    def test_code_issued_before_an_email_change_stops_working(self, anon_client, test_user, db_session, sent_codes):
+        anon_client.post("/auth/request-code/", json={"email": test_user.email})
+        code = sent_codes[test_user.email]
+        test_user.email = "moved@example.com"
+        db_session.commit()
+        assert _verify(anon_client, "testuser@example.com", code).status_code == 401
 
 
 class TestDevEmailShortcuts:
-    """DEV_EMAIL_SHORTCUTS (local dev only): registration skips email
-    verification and forgot-password hands the reset token straight back."""
+    """DEV_EMAIL_SHORTCUTS (local dev only): the code is also returned in
+    the response so local development and E2E need no inbox."""
 
     @pytest.fixture(autouse=True)
     def _enable(self, monkeypatch):
         monkeypatch.setenv("DEV_EMAIL_SHORTCUTS", "true")
 
-    @pytest.fixture
-    def enqueued(self, monkeypatch):
-        jobs = []
+    def test_register_returns_a_working_code(self, anon_client):
+        response = _register(anon_client, email="dev@example.com")
+        code = response.json()["dev_code"]
+        assert _verify(anon_client, "dev@example.com", code).status_code == 200
 
-        async def fake_enqueue(job_name, **kwargs):
-            jobs.append(job_name)
+    def test_request_code_returns_a_working_code(self, anon_client, test_user):
+        response = anon_client.post("/auth/request-code/", json={"email": test_user.email})
+        code = response.json()["dev_code"]
+        assert _verify(anon_client, test_user.email, code).status_code == 200
 
-        monkeypatch.setattr("src.routers.auth.enqueue", fake_enqueue)
-        return jobs
-
-    def test_register_auto_verifies_and_sends_no_email(self, anon_client, enqueued):
-        response = anon_client.post(
-            "/auth/register/",
-            json={"first_name": "Dev", "last_name": "User",
-                  "email": "dev@example.com", "password": "SecurePass123!"},
-        )
-        assert response.status_code == 201
-        assert response.json()["verified"] is True
-        assert "verification_token" not in response.json()
-        assert enqueued == []
-
-        login = anon_client.post(
-            "/auth/login/",
-            json={"email": "dev@example.com", "password": "SecurePass123!", "rememberMe": False},
-        )
-        assert login.status_code == 200
-
-    def test_forgot_password_returns_a_working_reset_token(self, anon_client, test_user, enqueued):
-        response = anon_client.post("/auth/forgot-password/", json={"email": test_user.email})
-        assert response.status_code == 200
-        token = response.json()["reset_token"]
-        assert enqueued == []
-
-        reset = anon_client.post(
-            "/auth/reset-password/", json={"token": token, "new_password": "BrandNew123!"},
-        )
-        assert reset.status_code == 200
-        login = anon_client.post(
-            "/auth/login/",
-            json={"email": test_user.email, "password": "BrandNew123!", "rememberMe": False},
-        )
-        assert login.status_code == 200
-
-    def test_forgot_password_unknown_email_returns_no_token(self, anon_client, enqueued):
-        response = anon_client.post("/auth/forgot-password/", json={"email": "nobody@example.com"})
-        assert response.status_code == 200
-        assert "reset_token" not in response.json()
+    def test_unknown_email_still_returns_no_code(self, anon_client):
+        response = anon_client.post("/auth/request-code/", json={"email": "nobody@example.com"})
+        assert "dev_code" not in response.json()
 
     def test_ignored_in_production(self, monkeypatch):
         from src.utils.utils import dev_email_shortcuts
         monkeypatch.setattr("src.utils.utils.ENV", "production")
         assert dev_email_shortcuts() is False
 
-    def test_off_by_default(self, anon_client, monkeypatch):
+    def test_off_by_default(self, anon_client, test_user, monkeypatch):
         monkeypatch.setenv("DEV_EMAIL_SHORTCUTS", "false")
-        response = anon_client.post("/auth/forgot-password/", json={"email": "nobody@example.com"})
-        assert response.json() == {"ok": True}
+        response = anon_client.post("/auth/request-code/", json={"email": test_user.email})
+        assert "dev_code" not in response.json()
 
 
 class TestEmailCaseInsensitivity:
     """Emails are stored and matched lowercase — the local part included,
     which EmailStr alone leaves untouched."""
 
-    def test_register_stores_email_lowercase(self, anon_client, db_session):
-        response = anon_client.post(
-            "/auth/register/",
-            json={"first_name": "Mixed", "last_name": "Case",
-                  "email": "Mixed.Case@Example.com", "password": "SecurePass123!"},
-        )
+    def test_register_stores_email_lowercase(self, anon_client):
+        response = _register(anon_client, email="Mixed.Case@Example.com")
         assert response.status_code == 201
         assert response.json()["email"] == "mixed.case@example.com"
 
     def test_register_rejects_case_variant_of_existing_email(self, anon_client, test_user):
-        response = anon_client.post(
-            "/auth/register/",
-            json={"first_name": "Dup", "last_name": "User",
-                  "email": test_user.email.upper(), "password": "SecurePass123!"},
-        )
+        response = _register(anon_client, email=test_user.email.upper())
         assert response.status_code == 400
         assert response.json()["detail"] == "Email already registered"
 
-    def test_login_with_different_case_succeeds(self, anon_client, test_user):
-        response = anon_client.post(
-            "/auth/login/",
-            json={"email": "TestUser@Example.COM", "password": "TestPass123!", "rememberMe": False},
-        )
+    def test_sign_in_with_different_case_succeeds(self, anon_client, test_user, sent_codes):
+        anon_client.post("/auth/request-code/", json={"email": "TestUser@Example.COM"})
+        response = _verify(anon_client, "TESTUSER@example.com", sent_codes[test_user.email])
         assert response.status_code == 200
 
-    def test_case_variants_share_one_lockout_counter(self, anon_client, test_user):
+    def test_case_variants_share_one_code_send_limit(self, anon_client, test_user):
+        from src.db.repositories.rate_limit import MAX_LOGIN_CODE_EMAIL_ATTEMPTS
         variants = ["testuser@example.com", "TestUser@example.com", "TESTUSER@example.com",
-                    "testUser@example.com", "Testuser@example.com"]
+                    "testUser@example.com", "Testuser@example.com", "TestUSER@example.com"]
+        assert len(variants) > MAX_LOGIN_CODE_EMAIL_ATTEMPTS
         for email in variants:
-            response = anon_client.post(
-                "/auth/login/", json={"email": email, "password": "WrongPassword", "rememberMe": False},
-            )
+            response = anon_client.post("/auth/request-code/", json={"email": email})
         assert response.status_code == 429
 
     def test_repository_lookup_is_case_insensitive(self, db_session, test_user):
@@ -311,75 +330,16 @@ class TestEmailCaseInsensitivity:
         assert get_user_by_email(db_session, "TESTUSER@EXAMPLE.COM").id == test_user.id
 
 
-class TestLogin:
-    def test_login_success_returns_token_and_sets_cookie(self, anon_client, test_user):
-        response = anon_client.post(
-            "/auth/login/",
-            json={
-                "email": test_user.email,
-                "password": "TestPass123!",
-                "rememberMe": False,
-            },
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert data["token_type"] == "bearer"
-        assert "access_token" not in data
-        assert "access_token" in response.cookies or "access_token" in anon_client.cookies
+class TestRemovedPasswordEndpoints:
+    @pytest.mark.parametrize("path", [
+        "/auth/login/", "/auth/forgot-password/", "/auth/reset-password/",
+        "/auth/change-password/", "/auth/resend-verification/",
+    ])
+    def test_post_endpoint_is_gone(self, anon_client, path):
+        assert anon_client.post(path, json={}).status_code in (404, 405)
 
-    def test_login_wrong_password_returns_401(self, anon_client, test_user):
-        response = anon_client.post(
-            "/auth/login/",
-            json={
-                "email": test_user.email,
-                "password": "WrongPassword",
-                "rememberMe": False,
-            },
-        )
-        assert response.status_code == 401
-
-    def test_login_unknown_email_returns_401(self, anon_client):
-        response = anon_client.post(
-            "/auth/login/",
-            json={
-                "email": "unknown@example.com",
-                "password": "AnyPassword",
-                "rememberMe": False,
-            },
-        )
-        assert response.status_code == 401
-
-    def test_login_wrong_password_reports_remaining_attempts(self, anon_client, test_user):
-        response = anon_client.post(
-            "/auth/login/",
-            json={"email": test_user.email, "password": "WrongPassword", "rememberMe": False},
-        )
-        assert response.status_code == 401
-        assert "4 attempt(s) remaining" in response.json()["detail"]
-
-    def test_login_locks_account_after_max_failed_attempts(self, anon_client, test_user):
-        for _ in range(4):
-            anon_client.post(
-                "/auth/login/",
-                json={"email": test_user.email, "password": "WrongPassword", "rememberMe": False},
-            )
-        response = anon_client.post(
-            "/auth/login/",
-            json={"email": test_user.email, "password": "WrongPassword", "rememberMe": False},
-        )
-        assert response.status_code == 429
-        assert "locked" in response.json()["detail"].lower()
-
-        # Even the correct password is now rejected until the lockout expires
-        response = anon_client.post(
-            "/auth/login/",
-            json={"email": test_user.email, "password": "TestPass123!", "rememberMe": False},
-        )
-        assert response.status_code == 429
-
-    def test_login_missing_fields_returns_422(self, anon_client):
-        response = anon_client.post("/auth/login/", json={"email": "user@example.com"})
-        assert response.status_code == 422
+    def test_verify_email_link_is_gone(self, anon_client):
+        assert anon_client.get("/auth/verify-email/?token=abc").status_code in (404, 405)
 
 
 class TestLogout:
@@ -388,69 +348,11 @@ class TestLogout:
         assert response.status_code == 200
 
     def test_logout_clears_cookie(self, client, anon_client):
-        # After logout, the access_token cookie should be cleared
         client.post("/auth/logout/")
-        # Verify the logout response contains the right data
         response = client.post("/auth/logout/")
         assert response.status_code == 200
         data = response.json()
         assert data["logged_out"] is True
-
-
-class TestForgotPassword:
-    def test_forgot_password_always_returns_200(self, anon_client):
-        response = anon_client.post("/auth/forgot-password/", json={"email": "unknown@example.com"})
-        assert response.status_code == 200
-
-    def test_forgot_password_sends_email_for_known_user(self, anon_client, test_user):
-        with patch("src.routers.auth.enqueue", new=AsyncMock()) as mock_enqueue:
-            response = anon_client.post("/auth/forgot-password/", json={"email": test_user.email})
-            assert response.status_code == 200
-            mock_enqueue.assert_called_once()
-            job_name, call_kwargs = mock_enqueue.call_args[0][0], mock_enqueue.call_args[1]
-            assert job_name == "send_password_reset_email_job"
-            assert call_kwargs["to"] == test_user.email
-            assert "token=" in call_kwargs["link"]
-            # Emails greet with the user's full name (display_name), not just first
-            assert call_kwargs["name"] == test_user.display_name == "Test User"
-
-    def test_forgot_password_missing_email_returns_422(self, anon_client):
-        response = anon_client.post("/auth/forgot-password/", json={})
-        assert response.status_code == 422
-
-
-class TestResetPassword:
-    def test_reset_password_success(self, anon_client, test_user, db_session):
-        from src.db.repositories.tokens import create_reset_token
-        token = create_reset_token(db_session, test_user.id)
-        db_session.commit()
-
-        response = anon_client.post(
-            "/auth/reset-password/",
-            json={"token": token, "new_password": "NewSecurePass123!"},
-        )
-        assert response.status_code == 200
-
-    def test_reset_password_invalid_token_returns_400(self, anon_client):
-        response = anon_client.post(
-            "/auth/reset-password/",
-            json={"token": "invalid-token-xyz", "new_password": "NewPassword123!"},
-        )
-        assert response.status_code == 400
-
-    def test_reset_password_short_password_returns_400(self, anon_client):
-        response = anon_client.post(
-            "/auth/reset-password/",
-            json={"token": "any-token", "new_password": "short"},
-        )
-        assert response.status_code == 400
-
-    def test_reset_password_missing_fields_returns_422(self, anon_client):
-        response = anon_client.post(
-            "/auth/reset-password/",
-            json={"token": "some-token"},
-        )
-        assert response.status_code == 422
 
 
 class TestCheckAuth:
@@ -470,77 +372,68 @@ class TestCheckAuth:
 class TestRateLimiting:
     def test_register_blocked_after_limit(self, anon_client):
         from src.db.repositories.rate_limit import MAX_REGISTER_ATTEMPTS
-        payload = {"first_name": "Reg", "last_name": "User", "email": "x@example.com", "password": "SecurePass123!"}
-        for _ in range(MAX_REGISTER_ATTEMPTS):
-            anon_client.post("/auth/register/", json=payload)
-        response = anon_client.post("/auth/register/", json=payload)
+        for i in range(MAX_REGISTER_ATTEMPTS):
+            _register(anon_client, email=f"r{i}@example.com")
+        response = _register(anon_client, email="one-more@example.com")
         assert response.status_code == 429
 
     def test_register_not_blocked_before_limit(self, anon_client):
         from src.db.repositories.rate_limit import MAX_REGISTER_ATTEMPTS
         for i in range(MAX_REGISTER_ATTEMPTS - 1):
-            anon_client.post("/auth/register/", json={"first_name": "U", "last_name": "U", "email": f"u{i}@x.com", "password": "SecurePass123!"})
-        response = anon_client.post("/auth/register/", json={"first_name": "U", "last_name": "U", "email": "last@x.com", "password": "SecurePass123!"})
+            _register(anon_client, email=f"u{i}@x.com")
+        response = _register(anon_client, email="last@x.com")
         assert response.status_code != 429
 
-    def test_register_from_localhost_not_limited_outside_production(self, anon_client, monkeypatch):
-        """Local E2E runs register many throwaway accounts from 127.0.0.1."""
-        from src.db.repositories.rate_limit import MAX_REGISTER_ATTEMPTS
+    def test_localhost_not_limited_outside_production(self, anon_client, test_user, monkeypatch):
+        """Local E2E runs register and sign in repeatedly from 127.0.0.1."""
+        from src.db.repositories.rate_limit import MAX_LOGIN_CODE_EMAIL_ATTEMPTS
         monkeypatch.setattr("src.routers.auth._client_ip", lambda request: "127.0.0.1")
-        payload = {"first_name": "Reg", "last_name": "User", "email": "local@example.com", "password": "SecurePass123!"}
-        for _ in range(MAX_REGISTER_ATTEMPTS + 2):
-            response = anon_client.post("/auth/register/", json=payload)
-        assert response.status_code != 429
+        for _ in range(MAX_LOGIN_CODE_EMAIL_ATTEMPTS + 2):
+            response = anon_client.post("/auth/request-code/", json={"email": test_user.email})
+        assert response.status_code == 200
 
-    def test_register_from_localhost_still_limited_in_production(self, monkeypatch):
-        from src.routers.auth import _register_rate_limit_applies
+    def test_localhost_still_limited_in_production(self, monkeypatch):
+        from src.routers.auth import _rate_limits_apply
         monkeypatch.setattr("src.routers.auth.is_prod", lambda: True)
-        assert _register_rate_limit_applies("127.0.0.1") is True
-        assert _register_rate_limit_applies("::1") is True
+        assert _rate_limits_apply("127.0.0.1") is True
+        assert _rate_limits_apply("::1") is True
 
-    def test_forgot_password_blocked_after_limit(self, anon_client, test_user):
-        from src.db.repositories.rate_limit import MAX_FORGOT_PASSWORD_ATTEMPTS
-        for _ in range(MAX_FORGOT_PASSWORD_ATTEMPTS):
-            anon_client.post("/auth/forgot-password/", json={"email": test_user.email})
-        response = anon_client.post("/auth/forgot-password/", json={"email": test_user.email})
+    def test_code_requests_blocked_after_limit(self, anon_client, test_user):
+        from src.db.repositories.rate_limit import MAX_LOGIN_CODE_EMAIL_ATTEMPTS
+        for _ in range(MAX_LOGIN_CODE_EMAIL_ATTEMPTS):
+            assert anon_client.post("/auth/request-code/", json={"email": test_user.email}).status_code == 200
+        response = anon_client.post("/auth/request-code/", json={"email": test_user.email})
         assert response.status_code == 429
 
-    def test_forgot_password_not_blocked_before_limit(self, anon_client, test_user):
-        from src.db.repositories.rate_limit import MAX_FORGOT_PASSWORD_ATTEMPTS
-        for _ in range(MAX_FORGOT_PASSWORD_ATTEMPTS - 1):
-            anon_client.post("/auth/forgot-password/", json={"email": test_user.email})
-        response = anon_client.post("/auth/forgot-password/", json={"email": test_user.email})
+    def test_code_limit_is_per_email(self, anon_client, test_user):
+        from src.db.repositories.rate_limit import MAX_LOGIN_CODE_EMAIL_ATTEMPTS
+        for _ in range(MAX_LOGIN_CODE_EMAIL_ATTEMPTS):
+            anon_client.post("/auth/request-code/", json={"email": test_user.email})
+        response = anon_client.post("/auth/request-code/", json={"email": "other@example.com"})
         assert response.status_code == 200
 
-    def test_forgot_password_limit_is_per_email(self, anon_client, test_user):
-        from src.db.repositories.rate_limit import MAX_FORGOT_PASSWORD_ATTEMPTS
-        for _ in range(MAX_FORGOT_PASSWORD_ATTEMPTS):
-            anon_client.post("/auth/forgot-password/", json={"email": test_user.email})
-        # Different email is unaffected
-        response = anon_client.post("/auth/forgot-password/", json={"email": "other@example.com"})
-        assert response.status_code == 200
-
-    def test_resend_verification_blocked_after_limit(self, anon_client, test_user):
-        from src.db.repositories.rate_limit import MAX_RESEND_VERIFICATION_ATTEMPTS
-        for _ in range(MAX_RESEND_VERIFICATION_ATTEMPTS):
-            anon_client.post("/auth/resend-verification/", json={"email": test_user.email})
-        response = anon_client.post("/auth/resend-verification/", json={"email": test_user.email})
+    def test_unknown_emails_count_against_the_limit_too(self, anon_client):
+        """Otherwise a 429 for one address and not another would reveal which
+        one has an account."""
+        from src.db.repositories.rate_limit import MAX_LOGIN_CODE_EMAIL_ATTEMPTS
+        for _ in range(MAX_LOGIN_CODE_EMAIL_ATTEMPTS):
+            anon_client.post("/auth/request-code/", json={"email": "nobody@example.com"})
+        response = anon_client.post("/auth/request-code/", json={"email": "nobody@example.com"})
         assert response.status_code == 429
 
-    def test_resend_verification_not_blocked_before_limit(self, anon_client, test_user):
-        from src.db.repositories.rate_limit import MAX_RESEND_VERIFICATION_ATTEMPTS
-        for _ in range(MAX_RESEND_VERIFICATION_ATTEMPTS - 1):
-            anon_client.post("/auth/resend-verification/", json={"email": test_user.email})
-        response = anon_client.post("/auth/resend-verification/", json={"email": test_user.email})
-        assert response.status_code == 200
+    def test_registration_codes_share_the_per_email_limit(self, anon_client):
+        from src.db.repositories.rate_limit import MAX_LOGIN_CODE_EMAIL_ATTEMPTS
+        for _ in range(MAX_LOGIN_CODE_EMAIL_ATTEMPTS):
+            _register(anon_client, email="spam-me@example.com")
+        response = anon_client.post("/auth/request-code/", json={"email": "spam-me@example.com"})
+        assert response.status_code == 429
 
-    def test_resend_verification_limit_is_per_email(self, anon_client, test_user):
-        from src.db.repositories.rate_limit import MAX_RESEND_VERIFICATION_ATTEMPTS
-        for _ in range(MAX_RESEND_VERIFICATION_ATTEMPTS):
-            anon_client.post("/auth/resend-verification/", json={"email": test_user.email})
-        # Different email is unaffected
-        response = anon_client.post("/auth/resend-verification/", json={"email": "other@example.com"})
-        assert response.status_code == 200
+    def test_per_ip_limit_across_many_addresses(self, anon_client):
+        from src.db.repositories.rate_limit import MAX_LOGIN_CODE_IP_ATTEMPTS
+        for i in range(MAX_LOGIN_CODE_IP_ATTEMPTS):
+            anon_client.post("/auth/request-code/", json={"email": f"spray{i}@example.com"})
+        response = anon_client.post("/auth/request-code/", json={"email": "fresh@example.com"})
+        assert response.status_code == 429
 
 
 def _make_token(user, tv_override=None):
@@ -565,19 +458,3 @@ class TestTokenRevocation:
         token = _make_token(test_user, tv_override=999)
         response = anon_client.get("/auth/check/", headers={"Authorization": f"Bearer {token}"})
         assert response.status_code == 401
-
-    def test_reset_password_increments_token_version(self, anon_client, test_user, db_session):
-        from src.db.repositories.tokens import create_reset_token
-        initial_version = test_user.token_version
-        reset_token = create_reset_token(db_session, test_user.id)
-        anon_client.post("/auth/reset-password/", json={"token": reset_token, "new_password": "NewSecurePass456!"})
-        db_session.refresh(test_user)
-        assert test_user.token_version == initial_version + 1
-
-    def test_reset_password_invalidates_old_token(self, anon_client, test_user, db_session):
-        from src.db.repositories.tokens import create_reset_token
-        old_token = _make_token(test_user)
-        assert anon_client.get("/auth/check/", headers={"Authorization": f"Bearer {old_token}"}).status_code == 200
-        reset_token = create_reset_token(db_session, test_user.id)
-        anon_client.post("/auth/reset-password/", json={"token": reset_token, "new_password": "NewSecurePass456!"})
-        assert anon_client.get("/auth/check/", headers={"Authorization": f"Bearer {old_token}"}).status_code == 401

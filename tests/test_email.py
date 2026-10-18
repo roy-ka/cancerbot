@@ -37,9 +37,7 @@ class TestDevModeDoesNotSend:
 
         with patch("src.utils.email_brevo.requests.post") as mock_post:
             assert asyncio.run(
-                email_module.send_password_reset_email(
-                    "user@example.com", "User", "https://app/reset-password?token=abc"
-                )
+                email_module.send_login_code_email("user@example.com", "User", "123456", 10)
             ) is True
             mock_post.assert_not_called()
 
@@ -51,11 +49,10 @@ class TestDevModeDoesNotSend:
 
         with caplog.at_level("INFO"):
             asyncio.run(
-                email_module.send_verification_email(
+                email_module.send_delete_account_request_email(
                     to="new@example.com",
                     name="Ada",
-                    token="TOKEN123",
-                    frontend_url="http://localhost:5173",
+                    link="http://localhost:5173/confirm-delete?token=TOKEN123",
                 )
             )
 
@@ -64,6 +61,21 @@ class TestDevModeDoesNotSend:
         # The rendered HTML itself is not dumped into logs (multi-KB per line
         # is not useful) — the per-function link log below covers usability.
         assert "TOKEN123" in caplog.text  # from the redacted-link line, local host is exempt
+
+    def test_login_code_is_never_logged(self, monkeypatch, caplog):
+        """A logged code is a working login, and non-prod includes staging
+        (whose logs ship to Axiom) — so unlike the links, the code is never
+        logged, not even for a local deployment."""
+        import src.utils.email as email_module
+        import src.utils.email_brevo as email_brevo_module
+        monkeypatch.setattr(email_module, "is_prod", lambda: False)
+        monkeypatch.setattr(email_brevo_module, "is_prod", lambda: False)
+
+        with caplog.at_level("DEBUG"):
+            asyncio.run(email_module.send_login_code_email("new@example.com", "Ada", "482913", 10))
+
+        assert "new@example.com" in caplog.text
+        assert "482913" not in caplog.text
 
     def test_dev_log_redacts_a_non_local_token(self, monkeypatch, caplog):
         """'Non-prod' includes staging, where the Axiom handler ships logs to a
@@ -76,11 +88,10 @@ class TestDevModeDoesNotSend:
 
         with caplog.at_level("INFO"):
             asyncio.run(
-                email_module.send_verification_email(
+                email_module.send_delete_account_request_email(
                     to="new@example.com",
                     name="Ada",
-                    token="SUPERSECRET",
-                    frontend_url="https://staging.cancer-bot.com",
+                    link="https://staging.cancer-bot.com/confirm-delete?token=SUPERSECRET",
                 )
             )
 
@@ -88,24 +99,21 @@ class TestDevModeDoesNotSend:
         assert "token=***" in caplog.text
 
 
-class TestPasswordResetEmail:
-    def test_send_password_reset_email_noop_when_no_api_key(self, as_prod, monkeypatch):
+class TestLoginCodeEmail:
+    def test_noop_when_no_api_key(self, as_prod, monkeypatch):
         monkeypatch.delenv("BREVO_API_KEY", raising=False)
 
         with patch("src.utils.email_brevo.requests.post") as mock_post:
-            asyncio.run(as_prod.send_password_reset_email(
-                "test@example.com", "Test User", "https://cancer-bot.com/reset?token=abc"))
+            asyncio.run(as_prod.send_login_code_email("test@example.com", "Test User", "123456", 10))
             mock_post.assert_not_called()
 
-    def test_send_password_reset_email_calls_brevo(self, as_prod, monkeypatch):
+    def test_calls_brevo(self, as_prod, monkeypatch):
         monkeypatch.setenv("BREVO_API_KEY", "test-key-123")
 
         with patch("src.utils.email_brevo.requests.post") as mock_post:
             mock_post.return_value = _mock_post_response()
 
-            assert asyncio.run(as_prod.send_password_reset_email(
-                "user@example.com", "Alice", "https://cancer-bot.com/reset-password?token=tok123"
-            )) is True
+            assert asyncio.run(as_prod.send_login_code_email("user@example.com", "Alice", "654321", 10)) is True
 
             mock_post.assert_called_once()
             args, kwargs = mock_post.call_args
@@ -114,9 +122,9 @@ class TestPasswordResetEmail:
 
             body = kwargs["json"]
             assert body["to"] == [{"email": "user@example.com"}]
-            assert body["subject"] == "Reset your CancerBot password 🔑"
+            assert body["subject"] == "Your CancerBot sign-in code"
             assert "Alice" in body["htmlContent"]
-            assert "tok123" in body["htmlContent"]
+            assert "654321" in body["htmlContent"]
 
 
 class TestDeliveryFailureIsContained:
@@ -134,8 +142,8 @@ class TestDeliveryFailureIsContained:
             mock_post.return_value = _mock_post_response(status=401)
 
             with caplog.at_level("ERROR"):
-                result = asyncio.run(as_prod.send_password_reset_email(
-                    "user@example.com", "User", "https://cancer-bot.com/reset-password?token=abc"
+                result = asyncio.run(as_prod.send_login_code_email(
+                    "user@example.com", "User", "123456", 10
                 ))
 
         assert result is False
@@ -149,10 +157,8 @@ class TestDeliveryFailureIsContained:
             mock_post.return_value = _mock_post_response(status=500)
 
             calls = [
-                as_prod.send_verification_email(
-                    to="a@b.c", name="N", token="t", frontend_url="http://x"),
+                as_prod.send_login_code_email(to="a@b.c", name="N", code="123456", minutes=10),
                 as_prod.send_account_deleted_email(to="a@b.c", name="N"),
-                as_prod.send_password_reset_email(to="a@b.c", name="N", link="http://x?token=t"),
                 as_prod.send_delete_account_request_email(
                     to="a@b.c", name="N", link="http://x?token=t"),
                 as_prod.send_delete_account_scheduled_email(
@@ -198,10 +204,8 @@ class TestEveryPublicSenderRendersSuccessfully:
             mock_post.return_value = _mock_post_response()
 
             calls = [
-                as_prod.send_verification_email(
-                    to="a@b.c", name="N", token="t", frontend_url="http://x"),
+                as_prod.send_login_code_email(to="a@b.c", name="N", code="123456", minutes=10),
                 as_prod.send_account_deleted_email(to="a@b.c", name="N"),
-                as_prod.send_password_reset_email(to="a@b.c", name="N", link="http://x?token=t"),
                 as_prod.send_delete_account_request_email(
                     to="a@b.c", name="N", link="http://x?token=t"),
                 as_prod.send_delete_account_scheduled_email(

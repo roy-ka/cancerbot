@@ -8,10 +8,10 @@
  *   3. Assert the assistant message has non-empty sources with clean IDs
  */
 import { test, expect, request as playwrightRequest } from '@playwright/test'
+import { signInViaApi } from '../helpers'
 
 const E2E_API_URL = process.env.E2E_API_URL ?? 'http://localhost:8000'
 const E2E_EMAIL = process.env.E2E_EMAIL ?? 'e2e-test@example.com'
-const E2E_PASSWORD = process.env.E2E_PASSWORD ?? 'E2eTest123!'
 
 // Disable the browser storageState — this suite talks directly to the API,
 // not to the frontend, so the browser session is irrelevant.
@@ -31,11 +31,8 @@ test.describe('Citation pipeline (API)', () => {
   test('add_message returns non-empty sources for a cancer question', async () => {
     const api = await playwrightRequest.newContext({ baseURL: E2E_API_URL })
 
-    // Login — API sets the access_token cookie on its domain
-    const login = await api.post('/auth/login/', {
-      data: { email: E2E_EMAIL, password: E2E_PASSWORD },
-    })
-    expect(login.ok(), `login failed: ${login.status()} ${await login.text()}`).toBeTruthy()
+    // Sign in — API sets the access_token cookie on its domain
+    await signInViaApi(api, E2E_EMAIL)
 
     // Create a conversation
     const create = await api.post('/conversations/create/', {
@@ -69,10 +66,7 @@ test.describe('Citation pipeline (API)', () => {
   test('source IDs stored in DB match what add_message returns', async () => {
     const api = await playwrightRequest.newContext({ baseURL: E2E_API_URL })
 
-    const login = await api.post('/auth/login/', {
-      data: { email: E2E_EMAIL, password: E2E_PASSWORD },
-    })
-    expect(login.ok()).toBeTruthy()
+    await signInViaApi(api, E2E_EMAIL)
 
     const create = await api.post('/conversations/create/', {
       data: { title: 'E2E ID Consistency Test' },
@@ -112,10 +106,7 @@ test.describe('Citation pipeline (API)', () => {
     // trial-heavy prompt available.
     const api = await playwrightRequest.newContext({ baseURL: E2E_API_URL })
 
-    const login = await api.post('/auth/login/', {
-      data: { email: E2E_EMAIL, password: E2E_PASSWORD },
-    })
-    expect(login.ok()).toBeTruthy()
+    await signInViaApi(api, E2E_EMAIL)
 
     const create = await api.post('/conversations/create/', {
       data: { title: 'E2E Trial Source Test' },

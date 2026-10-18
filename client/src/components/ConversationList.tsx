@@ -402,8 +402,8 @@ export default function ConversationList({
             <Typography
               sx={{ color: 'rgba(255,255,255,0.66)', fontSize: '0.9rem' }}
             >
-              We've sent a confirmation link to your email. Open it and enter
-              your password to schedule deletion.
+              We've sent a confirmation link to your email. Open it to
+              schedule deletion.
             </Typography>
           ) : (
             <>

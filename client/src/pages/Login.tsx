@@ -8,7 +8,6 @@ import { cancerbotDark } from '../assets'
 export default function Login() {
   const bgRef = useRef<HTMLDivElement | null>(null)
   const [searchParams] = useSearchParams()
-  const [toast, setToast] = useState(() => searchParams.get('verified') === '1')
   const [pendingDeletionToast, setPendingDeletionToast] = useState(
     () => searchParams.get('reason') === 'pending_deletion'
   )
@@ -37,17 +36,6 @@ export default function Login() {
       onMouseLeave={onMouseLeave}
       className="login-background"
     >
-      <Snackbar
-        open={toast}
-        autoHideDuration={6000}
-        onClose={() => setToast(false)}
-        anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
-      >
-        <Alert severity="success" onClose={() => setToast(false)} sx={{ width: '100%' }}>
-          Thank you for verifying your email! You can now log in.
-        </Alert>
-      </Snackbar>
-
       <Snackbar
         open={pendingDeletionToast}
         autoHideDuration={8000}

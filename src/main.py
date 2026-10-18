@@ -101,13 +101,13 @@ if "*" in allow_origins:
         "authenticated requests. Acceptable in development only; this refuses to start in production."
     )
 
-# Every emailed link (verification, password reset, deletion, invites) is built
+# Every emailed link (account deletion, email change and revert) is built
 # from FRONTEND_URL; in production a missing value must not silently fall back
 # to some default host.
 if is_prod() and os.getenv("DEV_EMAIL_SHORTCUTS", "").strip().lower() in ("1", "true", "yes"):
     raise RuntimeError(
-        "DEV_EMAIL_SHORTCUTS is set in production. It skips email verification and returns "
-        "password-reset tokens in API responses — local development only."
+        "DEV_EMAIL_SHORTCUTS is set in production. It returns sign-in codes in API "
+        "responses, letting anyone log in as anyone — local development only."
     )
 
 # Local development runs OpenSearch over plain HTTP (docker-compose.yml);

@@ -2,10 +2,9 @@ from src.utils.email_templates import TEMPLATES, render
 
 
 class TestTemplatesShape:
-    def test_eleven_templates_present(self):
+    def test_ten_templates_present(self):
         assert set(TEMPLATES) == {
-            "verification",
-            "password_reset",
+            "login_code",
             "account_deleted",
             "delete_account_request",
             "delete_account_scheduled",
@@ -25,10 +24,16 @@ class TestTemplatesShape:
 
 class TestRender:
     def test_substitutes_name_and_link(self):
-        subject, html = render("verification", name="Ada", link="https://x/verify?token=abc")
+        _, html = render("email_change_request", name="Ada", link="https://x/change-email?token=abc")
         assert "Ada" in html
-        assert "https://x/verify?token=abc" in html
-        assert subject == "Welcome to CancerBot — let's get started 🎗️"
+        assert "https://x/change-email?token=abc" in html
+
+    def test_login_code_is_in_the_body_but_not_the_subject(self):
+        """email_brevo.py logs subjects, so a code there would be logged."""
+        subject, html = render("login_code", name="Ada", code="123456", minutes=10)
+        assert "123456" not in subject
+        assert "123456" in html
+        assert "10 minutes" in html
 
     def test_escapes_name_but_not_link(self):
         # `name` is the only field that ever carries raw user input (a
@@ -36,13 +41,13 @@ class TestRender:
         # to auto-escape this, so it has to happen here now that we render HTML
         # ourselves. `link` must stay intact — it's a URL, not display text.
         subject, html = render(
-            "password_reset",
+            "email_change_request",
             name="<script>alert(1)</script>",
-            link="https://x/reset?token=a&b=c",
+            link="https://x/change-email?token=a&b=c",
         )
         assert "<script>" not in html
         assert "&lt;script&gt;" in html
-        assert "https://x/reset?token=a&b=c" in html
+        assert "https://x/change-email?token=a&b=c" in html
 
     def test_date_substitution(self):
         _, html = render(
@@ -52,7 +57,7 @@ class TestRender:
     def test_missing_field_raises(self):
         import pytest
         with pytest.raises(KeyError):
-            render("verification", name="Ada")  # missing `link`
+            render("email_change_request", name="Ada")  # missing `link`
 
     def test_unknown_template_key_raises(self):
         import pytest

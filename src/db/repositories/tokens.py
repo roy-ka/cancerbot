@@ -1,6 +1,5 @@
 """Single table (Token, src/db/models.py) backing every single-purpose
-token flow: password reset, email verification, account deletion, and
-email change/revert.
+token flow: emailed login codes, account deletion, and email change/revert.
 
 Each flow gets its own TTL and its own public function names below (unchanged
 from when each lived in its own repository file — src/routers/auth.py's call
@@ -12,8 +11,7 @@ issuing a new one; check expires_at) lives in one place.
 Every consume_*_token function defers its commit to the caller (commit=False
 on the underlying _consume_token call) — the caller commits token
 consumption together with whatever DB write the confirmation itself makes
-(setting user.email_verified, scheduling deletion, changing the password,
-swapping the email), so a token is never consumed without its associated
+(setting user.email_verified, scheduling deletion, swapping the email), so a token is never consumed without its associated
 action actually happening in the same transaction.
 
 _consume_token itself is an atomic UPDATE ... WHERE used_at IS NULL, not a
@@ -23,6 +21,8 @@ abort — raise, don't apply the associated change, don't commit — on False,
 which means a concurrent request already consumed that exact token first.
 """
 import hashlib
+import hmac
+import os
 import secrets
 from datetime import datetime, timedelta, timezone
 
@@ -30,16 +30,14 @@ from sqlalchemy import update
 
 from src.db.models import Token, User
 
-TOKEN_TYPE_PASSWORD_RESET = "password_reset"
-TOKEN_TYPE_EMAIL_VERIFICATION = "email_verification"
+TOKEN_TYPE_LOGIN_CODE = "login_code"
 TOKEN_TYPE_ACCOUNT_DELETION = "account_deletion"
 TOKEN_TYPE_EMAIL_CHANGE_REQUEST = "email_change_request"
 TOKEN_TYPE_EMAIL_CHANGE = "email_change"
 TOKEN_TYPE_EMAIL_REVERT = "email_revert"
 
-_PASSWORD_RESET_TTL_MINUTES = 60
-_PASSWORD_RESET_MAX_USES = 5
-_EMAIL_VERIFICATION_TTL_HOURS = 24
+LOGIN_CODE_TTL_MINUTES = 10
+LOGIN_CODE_MAX_ATTEMPTS = 5
 _ACCOUNT_DELETION_TTL_HOURS = 24
 _ACCOUNT_DELETION_GRACE_PERIOD_DAYS = 7
 _EMAIL_CHANGE_REQUEST_TTL_HOURS = 24
@@ -76,7 +74,6 @@ def _create_token(db, user_id, token_type: str, ttl: timedelta, *, target_email:
 def _verify_token(
     db, token: str, token_type: str, *,
     not_found_msg: str, expired_msg: str,
-    max_uses: int | None = None, max_uses_msg: str | None = None,
     for_update: bool = False,
 ) -> tuple[Token | None, str]:
     """Validate a token of the given type. Returns (record, "") on success or
@@ -89,8 +86,7 @@ def _verify_token(
     this transaction is open) for account deletion, the one flow here with
     real side effects. It is NOT what actually prevents two concurrent
     requests from both completing: any intermediate `db.commit()` between
-    this call and _consume_token (e.g. login_attempts' reset_failed_attempts
-    in the deletion flow) ends the transaction and releases the lock early.
+    this call and _consume_token ends the transaction and releases the lock early.
     The real guard is _consume_token's own atomic UPDATE ... WHERE
     used_at IS NULL — every caller must check its return value and abort
     (no side effect, no commit) on False, regardless of whether for_update
@@ -115,13 +111,10 @@ def _verify_token(
     if now > expires_at:
         return None, expired_msg
 
-    if max_uses is not None and record.use_count >= max_uses:
-        return None, max_uses_msg
-
     return record, ""
 
 
-def _consume_token(db, record: Token, *, track_use_count: bool = False, commit: bool = True) -> bool:
+def _consume_token(db, record: Token, *, commit: bool = True) -> bool:
     """Atomically marks the token used — an UPDATE ... WHERE used_at IS NULL,
     not a Python-side attribute assignment, so two concurrent requests for
     the same token can't both observe it as unconsumed and both proceed.
@@ -137,90 +130,111 @@ def _consume_token(db, record: Token, *, track_use_count: bool = False, commit: 
 
     Returns True if this call consumed it, False if another request already
     had (caller should treat that the same as "invalid or already used")."""
-    values = {"used_at": datetime.now(timezone.utc)}
-    if track_use_count:
-        values["use_count"] = Token.use_count + 1
+    used_at = datetime.now(timezone.utc)
     result = db.execute(
-        update(Token).where(Token.id == record.id, Token.used_at.is_(None)).values(**values)
+        update(Token).where(Token.id == record.id, Token.used_at.is_(None)).values(used_at=used_at)
     )
     consumed = result.rowcount == 1
     if consumed:
         # Keep the in-memory object consistent for any caller that reads
-        # record.used_at/use_count after this (e.g. logging, response data).
-        record.used_at = values["used_at"]
-        if track_use_count:
-            record.use_count += 1
+        # record.used_at after this (e.g. logging, response data).
+        record.used_at = used_at
     if commit:
         db.commit()
     return consumed
 
 
-def _find_token_user_id(db, token: str, token_type: str) -> str | None:
-    """Return the user_id for a token of this type regardless of used state."""
-    record = (
-        db.query(Token)
-        .filter(Token.token_hash == _hash_token(token), Token.token_type == token_type)
-        .first()
-    )
-    return str(record.user_id) if record else None
-
-
 # ---------------------------------------------------------------------------
-# Password reset
+# Login codes
 # ---------------------------------------------------------------------------
+# The only way to sign in or finish registering: a 6-digit code emailed to
+# the address. Keyed by target_email rather than user_id because the ninja
+# account (src/routers/auth.py) has no users row — its codes carry
+# user_id=None.
+#
+# Six digits is a million possibilities, so two limits keep guessing
+# hopeless: each code dies after LOGIN_CODE_MAX_ATTEMPTS tries, and the
+# router caps how many codes an address can be sent per hour.
 
-def create_reset_token(db, user_id) -> str:
-    return _create_token(db, user_id, TOKEN_TYPE_PASSWORD_RESET, timedelta(minutes=_PASSWORD_RESET_TTL_MINUTES))
-
-
-def verify_reset_token(db, token: str) -> tuple[Token | None, str]:
-    return _verify_token(
-        db, token, TOKEN_TYPE_PASSWORD_RESET,
-        not_found_msg="Invalid or already used reset link.",
-        expired_msg="Reset link has expired.",
-        max_uses=_PASSWORD_RESET_MAX_USES,
-        max_uses_msg="Reset link has been used too many times. Please request a new one.",
-    )
-
-
-def consume_reset_token(db, record: Token) -> bool:
-    """Increment use_count and mark the token as used. Does NOT commit —
-    caller commits together with the password change itself, and must not
-    apply that change at all if this returns False (see _consume_token)."""
-    return _consume_token(db, record, track_use_count=True, commit=False)
+def _hash_login_code(email: str, code: str) -> str:
+    """HMAC keyed with JWT_SECRET, not the plain SHA-256 _hash_token uses.
+    A 32-byte random token can't be brute-forced from its hash, but a
+    6-digit code can — a million SHA-256s is a few milliseconds — so a
+    leaked tokens table would otherwise hand over every live code. The email
+    is part of the message so two addresses holding the same code don't
+    collide on the unique token_hash column."""
+    key = os.environ["JWT_SECRET"].encode()
+    return hmac.new(key, f"{email}:{code}".encode(), hashlib.sha256).hexdigest()
 
 
-# ---------------------------------------------------------------------------
-# Email verification
-# ---------------------------------------------------------------------------
+def create_login_code(db, email: str, user_id=None) -> str:
+    """Replace any unused code for this address with a fresh one and return
+    it (only its HMAC is stored)."""
+    db.query(Token).filter(
+        Token.token_type == TOKEN_TYPE_LOGIN_CODE,
+        Token.target_email == email,
+        Token.used_at.is_(None),
+    ).delete(synchronize_session=False)
 
-def create_verification_token(db, user_id) -> str:
-    return _create_token(db, user_id, TOKEN_TYPE_EMAIL_VERIFICATION, timedelta(hours=_EMAIL_VERIFICATION_TTL_HOURS))
+    code = f"{secrets.randbelow(10**6):06d}"
+    db.add(Token(
+        user_id=user_id,
+        token_type=TOKEN_TYPE_LOGIN_CODE,
+        token_hash=_hash_login_code(email, code),
+        target_email=email,
+        expires_at=datetime.now(timezone.utc) + timedelta(minutes=LOGIN_CODE_TTL_MINUTES),
+    ))
+    db.commit()
+    return code
 
 
-def find_token_user_id(db, token: str) -> str | None:
-    """Return the user_id for a verification token regardless of used state."""
-    return _find_token_user_id(db, token, TOKEN_TYPE_EMAIL_VERIFICATION)
+def verify_login_code(db, email: str, code: str) -> tuple[Token | None, str]:
+    """Check and consume the address's current code. Returns (record, "")
+    on success — consumed but NOT committed, so the caller commits it
+    together with the login's own writes — or (None, error).
 
-
-def verify_and_consume_token(db, token: str) -> tuple[str | None, str]:
-    """Returns (user_id, error). user_id is None on failure. Does NOT commit
-    — see module docstring."""
-    record, error = _verify_token(
-        db, token, TOKEN_TYPE_EMAIL_VERIFICATION,
-        not_found_msg="Invalid or already used verification link.",
-        expired_msg="Verification link has expired. Please request a new one.",
-    )
+    Every attempt is counted *before* the comparison, by an atomic
+    UPDATE ... WHERE use_count < max. Checking the count first and
+    incrementing after a mismatch would let a burst of parallel guesses all
+    read the same count and all get a try."""
+    not_found = "Invalid or expired code. Please request a new one."
+    record = db.query(Token).filter(
+        Token.token_type == TOKEN_TYPE_LOGIN_CODE,
+        Token.target_email == email,
+        Token.used_at.is_(None),
+    ).first()
     if not record:
-        return None, error
+        return None, not_found
+
+    expires_at = record.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if datetime.now(timezone.utc) > expires_at:
+        return None, "This code has expired. Please request a new one."
+
+    counted = db.execute(
+        update(Token)
+        .where(
+            Token.id == record.id,
+            Token.used_at.is_(None),
+            Token.use_count < LOGIN_CODE_MAX_ATTEMPTS,
+        )
+        .values(use_count=Token.use_count + 1)
+    )
+    db.commit()
+    if counted.rowcount != 1:
+        return None, "Too many incorrect attempts. Please request a new code."
+    db.refresh(record)
+
+    if not hmac.compare_digest(record.token_hash, _hash_login_code(email, code)):
+        remaining = LOGIN_CODE_MAX_ATTEMPTS - record.use_count
+        if remaining <= 0:
+            return None, "Too many incorrect attempts. Please request a new code."
+        return None, f"Incorrect code. {remaining} attempt(s) left."
+
     if not _consume_token(db, record, commit=False):
-        # Lost the race to a concurrent request for the same token (e.g. a
-        # double-fire from the frontend). The router's caller already has a
-        # fallback for "not found" that checks whether the account ended up
-        # verified anyway — reuse the same not-found message so that path
-        # handles this identically instead of surfacing a raw failure.
-        return None, "Invalid or already used verification link."
-    return str(record.user_id), ""
+        return None, not_found
+    return record, ""
 
 
 # ---------------------------------------------------------------------------
@@ -284,15 +298,15 @@ def get_users_pending_deletion(db) -> list[User]:
 #   1. email_change_request — proves control of the CURRENT inbox before the
 #      user is even allowed to type in a new address. Carries no
 #      target_email (not chosen yet).
-#   2. email_change — created once the new address is submitted (with the
-#      current password) on the page the step-1 link leads to; carries the
+#   2. email_change — created once the new address is submitted on the
+#      page the step-1 link leads to; carries the
 #      new address as target_email. Confirming it is what actually swaps
 #      user.email.
 #   3. email_revert — created right after email_change is confirmed, so the
 #      OLD address (as target_email) can undo the swap within its window.
 # All three commit at creation (via _create_token) but do NOT commit on
 # consume — callers commit together with whatever DB write the confirmation
-# itself makes, same as email verification and account deletion above.
+# itself makes, same as account deletion above.
 
 def create_email_change_request_token(db, user_id) -> str:
     return _create_token(db, user_id, TOKEN_TYPE_EMAIL_CHANGE_REQUEST, timedelta(hours=_EMAIL_CHANGE_REQUEST_TTL_HOURS))
@@ -352,9 +366,7 @@ def find_consumed_target_email(db, token: str, token_type: str):
     """(user_id, target_email) for an already-consumed token of this type,
     regardless of how long ago it was used. Lets a confirm/revert endpoint
     treat a duplicate request for an already-applied token as an idempotent
-    success instead of an error — the same problem verify_email's
-    find_token_user_id/already_verified fallback solves for plain email
-    verification. Needed here too: both confirm-email-change and
+    success instead of an error. Needed because both confirm-email-change and
     revert-email pages fire their GET from a bare useEffect, which React
     StrictMode double-invokes in dev, sending the single-use token twice —
     one request wins, the other must not surface as a failure. Returns

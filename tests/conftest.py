@@ -16,11 +16,11 @@ os.environ["SENDGRID_API_KEY"] = "" # prevent real emails during tests (dormant 
 os.environ["BREVO_API_KEY"] = ""    # prevent real emails during tests (active provider)
 os.environ.setdefault("OPENSEARCH_CA_CERT", "")
 os.environ.setdefault("NINJA_EMAIL", "ninja-test@example.com")
-os.environ.setdefault("NINJA_PASSWORD", "test-ninja-password")
 os.environ.setdefault("REDIS_PASSWORD", "test-redis-password")
 os.environ.setdefault("REDIS_URL", "redis://:test-redis-password@localhost:6379/0")
 # Forced, not setdefault: a developer's local .env may enable it, and the
-# suite exercises the real verification/reset email flows.
+# suite must prove codes reach only the inbox — tests that want the
+# shortcut turn it on themselves.
 os.environ["DEV_EMAIL_SHORTCUTS"] = "false"
 # Forced for the same reason: tests mock the Groq client, and a local .env
 # must never point them at a real provider. Tests covering other providers
@@ -82,7 +82,6 @@ def test_user(db_session):
         db_session,
         first_name="Test", last_name="User",
         email="testuser@example.com",
-        password_hash=SecurityUtils.hash_password("TestPass123!"),
     )
     user.email_verified = True
     db_session.commit()

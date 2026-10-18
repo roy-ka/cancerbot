@@ -60,7 +60,6 @@ jobs:
       RERANK_ENABLED: "false"
       OPENSEARCH_CA_CERT: ""
       NINJA_EMAIL: ninja-test@example.com
-      NINJA_PASSWORD: test-ninja-password
       REDIS_PASSWORD: test-redis-password
       REDIS_URL: redis://:test-redis-password@localhost:6379/0
       DEV_EMAIL_SHORTCUTS: "false"

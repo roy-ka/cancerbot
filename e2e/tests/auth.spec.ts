@@ -1,86 +1,113 @@
-import { test, expect, Browser } from '@playwright/test'
+import { test, expect } from '@playwright/test'
+import { requestCodeViaUi, signInViaUi } from '../helpers'
 
 const E2E_EMAIL = process.env.E2E_EMAIL ?? 'e2e-test@example.com'
-const E2E_PASSWORD = process.env.E2E_PASSWORD ?? 'E2eTest123!'
+
+const digits = (page: import('@playwright/test').Page) =>
+  page.locator('[data-testid^="code-digit-"]').evaluateAll((els) => els.map((el) => (el as HTMLInputElement).value))
+
+const wrongCode = (code: string) => (code === '000000' ? '111111' : '000000')
 
 // Unauthenticated tests — clear the saved storageState for this describe block only
 test.describe('unauthenticated', () => {
   test.use({ storageState: { cookies: [], origins: [] } })
 
-  test('login with wrong password shows error', async ({ browser }: { browser: Browser }) => {
-    const ctx = await browser.newContext()
-    const page = await ctx.newPage()
+  test('login page asks for an email only — no password', async ({ page }) => {
     await page.goto('/login')
-
-    await page.fill('input[name="email"]', E2E_EMAIL)
-    await page.fill('input[name="password"]', 'wrong-password-123')
-    await page.click('button[type="submit"]')
-
-    await expect(page.getByText(/invalid|incorrect|wrong|failed/i)).toBeVisible()
-    await ctx.close()
+    await expect(page.locator('input[name="email"]')).toBeVisible()
+    await expect(page.locator('input[type="password"]')).toHaveCount(0)
+    await expect(page.getByRole('button', { name: /forgot password/i })).toHaveCount(0)
   })
 
-  test('login with correct credentials navigates to chat', async ({ browser }: { browser: Browser }) => {
-    const ctx = await browser.newContext()
-    const page = await ctx.newPage()
-    await page.goto('/login')
+  test('wrong code shows an error and clears the boxes', async ({ page }) => {
+    const code = await requestCodeViaUi(page, E2E_EMAIL)
+    await page.keyboard.type(wrongCode(code))
 
-    await page.fill('input[name="email"]', E2E_EMAIL)
-    await page.fill('input[name="password"]', E2E_PASSWORD)
-    await page.click('button[type="submit"]')
-
-    // After login the app redirects to / or /terms (first login) — both are valid
-    await expect(page).toHaveURL(/\/(terms|chat)?(\?.*)?$/, { timeout: 15_000 })
-    await ctx.close()
+    await expect(page.getByText(/incorrect code/i)).toBeVisible()
+    await expect.poll(() => digits(page)).toEqual(['', '', '', '', '', ''])
+    await expect(page.getByTestId('code-digit-0')).toBeFocused()
+    await expect(page).toHaveURL(/\/login/)
   })
 
-  test('registration form has separate first and last name fields', async ({ browser }: { browser: Browser }) => {
-    const ctx = await browser.newContext()
-    const page = await ctx.newPage()
-    await page.goto('/login')
+  test('correct code navigates into the app', async ({ page }) => {
+    await signInViaUi(page, E2E_EMAIL)
+    await expect(page).toHaveURL(/\/(terms|onboarding|chat)/, { timeout: 15_000 })
+  })
 
-    // Switch to the Register tab
+  test('typing moves through the boxes and Backspace goes back', async ({ page }) => {
+    await requestCodeViaUi(page, E2E_EMAIL)
+
+    await page.keyboard.type('12')
+    await expect(page.getByTestId('code-digit-2')).toBeFocused()
+    await page.keyboard.press('Backspace')
+    await expect(page.getByTestId('code-digit-1')).toBeFocused()
+    await expect.poll(() => digits(page)).toEqual(['1', '', '', '', '', ''])
+    await page.keyboard.press('Backspace')
+    await expect(page.getByTestId('code-digit-0')).toBeFocused()
+    await expect.poll(() => digits(page)).toEqual(['', '', '', '', '', ''])
+  })
+
+  test('pasting the code fills every box and signs in', async ({ page }) => {
+    const code = await requestCodeViaUi(page, E2E_EMAIL)
+
+    // Pasted text often carries spaces or a dash; only the digits count.
+    const pasted = `${code.slice(0, 3)}-${code.slice(3)} `
+    await page.getByTestId('code-digit-0').evaluate((el, text) => {
+      const data = new DataTransfer()
+      data.setData('text', text)
+      el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }))
+    }, pasted)
+
+    await expect(page).toHaveURL(/\/(terms|onboarding|chat)/, { timeout: 15_000 })
+  })
+
+  test('"Use a different email" returns to the email step', async ({ page }) => {
+    await requestCodeViaUi(page, E2E_EMAIL)
+    await expect(page.getByText(/resend in \d+s/i)).toBeVisible()
+    await page.getByRole('button', { name: /use a different email/i }).click()
+    await expect(page.locator('input[name="email"]')).toHaveValue(E2E_EMAIL)
+  })
+
+  test('an unknown email still gets the code screen', async ({ page }) => {
+    // The response must not reveal whether an account exists.
+    await page.goto('/login')
+    await page.fill('input[name="email"]', `nobody-${Date.now()}@example.com`)
+    await page.click('button[type="submit"]')
+    await expect(page.getByText(/check your email/i)).toBeVisible()
+    await expect(page.getByTestId('dev-code')).toHaveCount(0)
+  })
+
+  test('registration takes a name and email, then a code', async ({ page }) => {
+    await page.goto('/login')
     await page.getByRole('button', { name: /^register$/i }).click()
 
-    // The name field is now split in two
     await expect(page.locator('input[name="first_name"]')).toBeVisible()
     await expect(page.locator('input[name="last_name"]')).toBeVisible()
-    await expect(page.locator('input[name="name"]')).toHaveCount(0)
+    await expect(page.locator('input[type="password"]')).toHaveCount(0)
 
     // A unique email per run so we don't collide with a prior registration
     const email = `e2e-reg-${Date.now()}@example.com`
     await page.fill('input[name="first_name"]', 'Grace')
     await page.fill('input[name="last_name"]', 'Hopper')
     await page.fill('input[name="email"]', email)
-    await page.fill('input[name="password"]', 'SecurePass123!')
-    await page.fill('input[name="confirm_password"]', 'SecurePass123!')
     await page.locator('input[type="checkbox"]').check()
     await page.click('button[type="submit"]')
 
-    // Successful registration shows "check your email" — or, when the backend
-    // runs with DEV_EMAIL_SHORTCUTS, "account created" (already verified).
-    await expect(page.getByText(/check your email|account created/i)).toBeVisible({ timeout: 15_000 })
-    await ctx.close()
+    await expect(page.getByText(/check your email/i)).toBeVisible({ timeout: 15_000 })
+    const code = (await page.getByTestId('dev-code').locator('strong').textContent())?.trim() ?? ''
+    await page.keyboard.type(code)
+
+    // A brand-new account always starts at the terms page
+    await expect(page).toHaveURL(/terms/, { timeout: 15_000 })
   })
 
-  test('registration blocks submit when passwords do not match', async ({ browser }: { browser: Browser }) => {
-    const ctx = await browser.newContext()
-    const page = await ctx.newPage()
+  test('registration needs the terms accepted', async ({ page }) => {
     await page.goto('/login')
-
     await page.getByRole('button', { name: /^register$/i }).click()
-
-    const email = `e2e-reg-mismatch-${Date.now()}@example.com`
     await page.fill('input[name="first_name"]', 'Grace')
     await page.fill('input[name="last_name"]', 'Hopper')
-    await page.fill('input[name="email"]', email)
-    await page.fill('input[name="password"]', 'SecurePass123!')
-    await page.fill('input[name="confirm_password"]', 'DifferentPass123!')
-    await page.locator('input[type="checkbox"]').check()
-
-    await expect(page.getByText(/passwords do not match/i)).toBeVisible()
-    await expect(page.locator('button[type="submit"]')).toBeDisabled()
-    await ctx.close()
+    await page.fill('input[name="email"]', `e2e-reg-terms-${Date.now()}@example.com`)
+    await expect(page.getByRole('button', { name: /create account/i })).toBeDisabled()
   })
 })
 

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
-import { Box, Button, Stack, TextField, Typography, Alert, CircularProgress } from '@mui/material'
+import { Box, Button, Stack, Typography, Alert, CircularProgress } from '@mui/material'
 
 const AUTO_REDIRECT_MS = 8000
 
@@ -11,7 +11,6 @@ export default function ConfirmDeleteAccount() {
 
   const token = searchParams.get('token') ?? ''
 
-  const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [deletionDate, setDeletionDate] = useState<string | null>(null)
@@ -63,7 +62,7 @@ export default function ConfirmDeleteAccount() {
       const res = await fetch(`${BASE_URL}/auth/confirm-delete/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token, password }),
+        body: JSON.stringify({ token }),
       })
       const data = await res.json().catch(() => null)
       if (res.ok) {
@@ -85,29 +84,19 @@ export default function ConfirmDeleteAccount() {
           Confirm account deletion
         </Typography>
         <Typography sx={{ color: 'rgba(255,255,255,0.7)', textAlign: 'center' }}>
-          Enter your password to schedule deletion. Your account and conversations will be permanently
-          deleted 7 days from now.
+          Your account and conversations will be permanently deleted 7 days from now. You can cancel
+          any time before then by logging in.
         </Typography>
 
         <Box component="form" onSubmit={handleSubmit}>
           <Stack spacing={2}>
-            <TextField
-              fullWidth
-              required
-              label="Password"
-              type="password"
-              autoComplete="current-password"
-              autoFocus
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
             {error && <Alert severity="error">{error}</Alert>}
             <Button
               type="submit"
               variant="contained"
               color="error"
               fullWidth
-              disabled={loading || !password}
+              disabled={loading}
             >
               {loading ? <CircularProgress size={22} color="inherit" /> : 'Delete my account'}
             </Button>

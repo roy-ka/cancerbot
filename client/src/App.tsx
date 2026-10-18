@@ -4,8 +4,6 @@ import Chat from './pages/Chat'
 import Terms from './pages/Terms'
 import Privacy from './pages/Privacy'
 import Onboarding from './pages/Onboarding'
-import VerifyEmail from './pages/VerifyEmail'
-import ResetPassword from './pages/ResetPassword'
 import ConfirmDeleteAccount from './pages/ConfirmDeleteAccount'
 import ChangeEmail from './pages/ChangeEmail'
 import ConfirmEmailChange from './pages/ConfirmEmailChange'
@@ -42,8 +40,6 @@ function App() {
             </ProtectedRoute>
           }
         />
-        <Route path="/verify-email" element={<VerifyEmail />} />
-        <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/confirm-delete" element={<ConfirmDeleteAccount />} />
         <Route path="/change-email" element={<ChangeEmail />} />
         <Route path="/confirm-email-change" element={<ConfirmEmailChange />} />

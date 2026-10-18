@@ -10,7 +10,6 @@ export default function ChangeEmail() {
   const token = searchParams.get('token') ?? ''
 
   const [newEmail, setNewEmail] = useState('')
-  const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
@@ -51,7 +50,7 @@ export default function ChangeEmail() {
       const res = await fetch(`${BASE_URL}/auth/change-email/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token, new_email: newEmail, password }),
+        body: JSON.stringify({ token, new_email: newEmail }),
       })
       if (res.ok) {
         setSuccess(true)
@@ -85,21 +84,12 @@ export default function ChangeEmail() {
               value={newEmail}
               onChange={(e) => setNewEmail(e.target.value)}
             />
-            <TextField
-              fullWidth
-              required
-              label="Current password"
-              type="password"
-              autoComplete="current-password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
             {error && <Alert severity="error">{error}</Alert>}
             <Button
               type="submit"
               variant="contained"
               fullWidth
-              disabled={loading || !newEmail || !password}
+              disabled={loading || !newEmail}
             >
               {loading ? <CircularProgress size={22} color="inherit" /> : 'Continue'}
             </Button>

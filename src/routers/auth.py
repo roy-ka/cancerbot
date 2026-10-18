@@ -1,15 +1,13 @@
 import os
-import secrets
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request, Response, HTTPException, status
+from fastapi import APIRouter, Depends, Query, Request, Response, HTTPException
 from sqlalchemy.orm import Session
 from src.deps.db import get_db
 from src.auth.security import SecurityUtils
 from src.deps.auth import get_current_user, NINJA_SUBJECT_ID
 from pydantic import BaseModel, Field
 from datetime import timedelta, datetime, timezone
-import re
 from src.utils.utils import is_prod, dev_email_shortcuts
 from src.db.repositories.users import (
     create_user,
@@ -19,12 +17,9 @@ from src.db.repositories.users import (
 )
 from src.utils.email_normalize import LowercaseEmail
 from src.db.repositories.tokens import (
-    create_reset_token,
-    verify_reset_token,
-    consume_reset_token,
-    create_verification_token,
-    verify_and_consume_token,
-    find_token_user_id,
+    create_login_code,
+    verify_login_code,
+    LOGIN_CODE_TTL_MINUTES,
     create_deletion_request_token,
     verify_deletion_token,
     consume_deletion_token,
@@ -43,20 +38,14 @@ from src.db.repositories.tokens import (
     TOKEN_TYPE_EMAIL_CHANGE,
     TOKEN_TYPE_EMAIL_REVERT,
 )
-from src.db.repositories.login_attempts import (
-    increment_failed_attempts,
-    reset_failed_attempts,
-    is_account_locked,
-    get_remaining_attempts,
-)
 from src.db.repositories.rate_limit import (
     is_rate_limited,
     record_attempt,
     MAX_REGISTER_ATTEMPTS,
-    MAX_FORGOT_PASSWORD_ATTEMPTS,
+    MAX_LOGIN_CODE_EMAIL_ATTEMPTS,
+    MAX_LOGIN_CODE_IP_ATTEMPTS,
     MAX_REQUEST_DELETE_ATTEMPTS,
     MAX_EMAIL_CHANGE_ATTEMPTS,
-    MAX_RESEND_VERIFICATION_ATTEMPTS,
 )
 from src.queue import enqueue
 from src.jobs.account_deletion import job_id_for_user
@@ -70,58 +59,20 @@ def _get_frontend_url() -> str:
     return os.getenv("FRONTEND_URL", "").strip() or "http://localhost:5173"
 
 
-PASSWORD_REGEX_PATTERNS = {
-    'lowercase': r'[a-z]',
-    'uppercase': r'[A-Z]',
-    'digit': r'[0-9]',
-    'special': r'[!@#$%^&*()_+\-=\[\]{};\':"\\|,.<>\/?]',
-}
-
-
-
 class CreateUserRequest(BaseModel):
     first_name: str = Field(..., min_length=1, max_length=150)
     last_name: str = Field(..., min_length=1, max_length=150)
     email: LowercaseEmail
-    password: str
 
-class LoginRequest(BaseModel):
+
+class RequestCodeRequest(BaseModel):
     email: LowercaseEmail
-    password: str
+
+
+class VerifyCodeRequest(BaseModel):
+    email: LowercaseEmail
+    code: str = Field(..., pattern=r"^\d{6}$")
     rememberMe: bool = False
-
-
-
-def validate_password(password: str) -> str:
-    """Validate password strength. Returns error message or empty string if valid."""
-    if len(password) < 8:
-        return "Password must be at least 8 characters"
-    if not re.search(PASSWORD_REGEX_PATTERNS['lowercase'], password):
-        return "Password must contain lowercase letters"
-    if not re.search(PASSWORD_REGEX_PATTERNS['uppercase'], password):
-        return "Password must contain uppercase letters"
-    if not re.search(PASSWORD_REGEX_PATTERNS['digit'], password):
-        return "Password must contain numbers"
-    if not re.search(PASSWORD_REGEX_PATTERNS['special'], password):
-        return "Password must contain special characters"
-    return ""
-
-_dummy_password_hash: str | None = None
-
-
-def _get_dummy_hash() -> str:
-    """A throwaway hash used to equalise login timing for unknown emails.
-
-    Without it, `not user or not verify_password(...)` short-circuits, so a
-    request for an unregistered address skips a 600k-round pbkdf2 verify and
-    comes back measurably sooner — enough to enumerate which emails have
-    accounts. Built once per process from a random secret; it exists only to
-    be compared against and can never match a real password.
-    """
-    global _dummy_password_hash
-    if _dummy_password_hash is None:
-        _dummy_password_hash = SecurityUtils.hash_password(secrets.token_urlsafe(32))
-    return _dummy_password_hash
 
 
 def _client_ip(request: Request) -> str:
@@ -129,161 +80,185 @@ def _client_ip(request: Request) -> str:
 
     X-Forwarded-For is deliberately NOT trusted: the backend serves traffic
     directly, so the header is fully attacker-controlled and honouring it let
-    anyone defeat the per-IP registration rate limit just by rotating a fake
-    value. If a reverse proxy is ever put in front of this service, the header
-    can be re-enabled — but only for requests whose immediate peer is the
-    proxy itself, never unconditionally.
+    anyone defeat the per-IP rate limits just by rotating a fake value. If a
+    reverse proxy is ever put in front of this service, the header can be
+    re-enabled — but only for requests whose immediate peer is the proxy
+    itself, never unconditionally.
     """
     return request.client.host if request.client else "unknown"
 
 _LOOPBACK_IPS = frozenset({"127.0.0.1", "::1"})
 
 
-def _register_rate_limit_applies(ip: str) -> bool:
-    """Outside production, registrations from this machine itself aren't
-    per-IP limited: a local E2E run creates around ten throwaway accounts
-    from localhost, which used up the 10/hour budget and made the next run
-    fail. Production always applies the limit, loopback included."""
+def _rate_limits_apply(ip: str) -> bool:
+    """Outside production, requests from this machine itself aren't rate
+    limited: a local E2E run registers around ten throwaway accounts and
+    signs in repeatedly from localhost, which used up the hourly budgets and
+    made the next run fail. Production always applies the limits, loopback
+    included."""
     return is_prod() or ip not in _LOOPBACK_IPS
 
 
-router = APIRouter(prefix="/auth", tags=["auth"])
+def _ninja_email() -> str | None:
+    """The ninja account isn't a users row at all — it exists only while
+    NINJA_EMAIL is set, and signs in with a code sent to that address."""
+    return os.getenv("NINJA_EMAIL", "").strip().lower() or None
 
-@router.post("/register/", status_code=201)
-async def register_user(req: CreateUserRequest, request: Request, db: Session = Depends(get_db)):
-    ip = _client_ip(request)
-    if _register_rate_limit_applies(ip):
-        if is_rate_limited(db, f"register:{ip}"):
-            raise HTTPException(status_code=429, detail="Too many registration attempts. Please try again later.")
-        record_attempt(db, f"register:{ip}", MAX_REGISTER_ATTEMPTS)
 
-    existing = get_user_by_email(db=db, email=req.email)
-    if existing:
-        raise HTTPException(status_code=400, detail="Email already registered")
+async def _send_login_code(db: Session, email: str, name: str, user_id=None) -> dict:
+    """Issue and email a fresh code, returning the response body.
 
-    password_error = validate_password(req.password)
-    if password_error:
-        raise HTTPException(status_code=400, detail=password_error)
-
-    password_hash = SecurityUtils.hash_password(req.password)
-    user = create_user(
-        db=db,
-        first_name=req.first_name.strip(),
-        last_name=req.last_name.strip(),
-        email=req.email,
-        password_hash=password_hash,
-    )
+    `dev_code` carries the code itself only under DEV_EMAIL_SHORTCUTS — never
+    merely outside production, the way the link-token endpoints below return
+    their tokens. A code is a complete login for the account, so handing it
+    out on any non-production deployment (staging included) would let anyone
+    sign in as anyone there."""
+    code = create_login_code(db, email=email, user_id=user_id)
+    await enqueue("send_login_code_email_job", to=email, name=name, code=code, minutes=LOGIN_CODE_TTL_MINUTES)
+    resp: dict = {"ok": True, "email": email}
     if dev_email_shortcuts():
-        user.email_verified = True
-        db.commit()
-        return {"message": "Account created. You can log in now.", "email": user.email, "verified": True}
-
-    token = create_verification_token(db=db, user_id=user.id)
-    frontend_url = _get_frontend_url()
-    await enqueue("send_verification_email_job", to=user.email, name=user.display_name, token=token, frontend_url=frontend_url)
-    resp: dict = {"message": "Please check your email to verify your account.", "email": user.email}
-    if not is_prod():
-        resp["verification_token"] = token
+        resp["dev_code"] = code
     return resp
 
 
-def _ninja_login(req: "LoginRequest", response: Response, db: Session) -> dict | None:
-    """The ninja account isn't a users row at all — its credentials live only
-    in NINJA_EMAIL/NINJA_PASSWORD. Returns the login response dict on a
-    match, or None if this request isn't a ninja login attempt (email
-    doesn't match, or the env vars aren't configured) so the caller falls
-    through to the normal DB-backed login path."""
-    ninja_email = os.getenv("NINJA_EMAIL")
-    ninja_password = os.getenv("NINJA_PASSWORD")
-    if not ninja_email or not ninja_password or req.email.strip().lower() != ninja_email.strip().lower():
-        return None
+def _check_code_send_limit(db: Session, email: str) -> None:
+    """At most MAX_LOGIN_CODE_EMAIL_ATTEMPTS codes per address per hour,
+    counted for unknown addresses too so the limit can't be used to tell
+    them apart. Together with LOGIN_CODE_MAX_ATTEMPTS per code, this caps
+    guessing at a few dozen tries an hour against a million codes — and stops
+    the endpoint being used to flood someone's inbox."""
+    key = f"login-code:{email}"
+    if is_rate_limited(db, key):
+        raise HTTPException(status_code=429, detail="Too many codes requested for this email. Please try again later.")
+    record_attempt(db, key, MAX_LOGIN_CODE_EMAIL_ATTEMPTS)
 
-    # Reuses the existing per-email lockout infra (LoginAttempt is keyed by
-    # email string, no FK to a users row needed) so the ninja password can't
-    # be brute-forced any more freely than a real account's.
-    if is_account_locked(db, ninja_email):
-        raise HTTPException(
-            status_code=429,
-            detail="Account locked due to too many failed login attempts. Please reset your password."
-        )
 
-    if not secrets.compare_digest(req.password, ninja_password):
-        increment_failed_attempts(db, ninja_email)
-        remaining = get_remaining_attempts(db, ninja_email)
-        if remaining <= 0:
-            raise HTTPException(
-                status_code=429,
-                detail="Too many failed login attempts. Account locked. Please reset your password."
-            )
-        raise HTTPException(
-            status_code=401,
-            detail=f"Invalid email or password. {remaining} attempt(s) remaining before lockout."
-        )
-    reset_failed_attempts(db, ninja_email)
+def _set_session_cookie(response: Response, user, remember_me: bool) -> None:
+    if remember_me:
+        max_age = 2592000  # 30 days
+        expires = datetime.now(timezone.utc) + timedelta(days=30)
+    else:
+        max_age = None  # session cookie
+        expires = datetime.now(timezone.utc) + timedelta(hours=1)
+    if not is_prod():
+        max_age = 31536000  # one year
+        expires = datetime.now(timezone.utc) + timedelta(days=365)
 
-    # Capped at 2h regardless of rememberMe — a privileged account gets a
-    # short session, not the long-lived cookie a real user can opt into.
-    expires = datetime.now(timezone.utc) + timedelta(hours=2)
-    access_token = SecurityUtils.create_jwt_token({
-        "sub": NINJA_SUBJECT_ID, "email": ninja_email, "is_ninja": True, "exp": expires,
-    })
+    access_token = SecurityUtils.create_jwt_token({"sub": str(user.id), "email": user.email, "tv": user.token_version, 'exp': expires})
     response.set_cookie(
         key="access_token",
         value=access_token,
         httponly=True,
         secure=is_prod(),
         samesite="lax",
-        max_age=7200,
+        max_age=max_age,
         path="/",
     )
-    return {"token_type": "bearer", "is_ninja": True}
 
 
-@router.post("/login/")
-async def generate_token(req: LoginRequest, response: Response, db: Session = Depends(get_db)):
-    ninja_result = _ninja_login(req, response, db)
-    if ninja_result is not None:
-        return ninja_result
+router = APIRouter(prefix="/auth", tags=["auth"])
 
-    # Check if account is locked due to too many failed attempts
-    if is_account_locked(db, req.email):
-        raise HTTPException(
-            status_code=429,
-            detail="Account locked due to too many failed login attempts. Please reset your password."
-        )
+@router.post("/register/", status_code=201)
+async def register_user(req: CreateUserRequest, request: Request, db: Session = Depends(get_db)):
+    """Creates the account unverified and emails a code; /verify-code/
+    finishes it. Re-registering an address that never entered its code just
+    updates the name and sends a new one, so an abandoned sign-up can't lock
+    the address out."""
+    ip = _client_ip(request)
+    if _rate_limits_apply(ip):
+        if is_rate_limited(db, f"register:{ip}"):
+            raise HTTPException(status_code=429, detail="Too many registration attempts. Please try again later.")
+        record_attempt(db, f"register:{ip}", MAX_REGISTER_ATTEMPTS)
+
+    if req.email == _ninja_email():
+        raise HTTPException(status_code=400, detail="Email already registered")
 
     user = get_user_by_email(db=db, email=req.email)
+    if user and user.email_verified:
+        raise HTTPException(status_code=400, detail="Email already registered")
 
-    # Always spend the cost of one verify, even when the email is unknown, so
-    # response time doesn't disclose whether an account exists.
+    if _rate_limits_apply(ip):
+        _check_code_send_limit(db, req.email)
+
     if user:
-        password_ok = SecurityUtils.verify_password(req.password, user.password_hash)
+        user.first_name = req.first_name.strip()
+        user.last_name = req.last_name.strip()
+        db.commit()
     else:
-        SecurityUtils.verify_password(req.password, _get_dummy_hash())
-        password_ok = False
-
-    if not password_ok:
-        increment_failed_attempts(db, req.email)
-        remaining = get_remaining_attempts(db, req.email)
-        if remaining <= 0:
-            raise HTTPException(
-                status_code=429,
-                detail="Too many failed login attempts. Account locked. Please reset your password."
-            )
-        raise HTTPException(
-            status_code=401,
-            detail=f"Invalid email or password. {remaining} attempt(s) remaining before lockout."
+        user = create_user(
+            db=db,
+            first_name=req.first_name.strip(),
+            last_name=req.last_name.strip(),
+            email=req.email,
         )
+    return await _send_login_code(db, user.email, user.display_name, user_id=user.id)
 
-    if not user.email_verified:
-        raise HTTPException(status_code=403, detail="Please verify your email before logging in.")
 
-    reset_failed_attempts(db, req.email)
+@router.post("/request-code/")
+async def request_code(req: RequestCodeRequest, request: Request, db: Session = Depends(get_db)):
+    """Emails a sign-in code. The response is identical whether or not the
+    address has an account, so it can't be used to discover who's
+    registered."""
+    ip = _client_ip(request)
+    if _rate_limits_apply(ip):
+        ip_key = f"login-code-ip:{ip}"
+        if is_rate_limited(db, ip_key):
+            raise HTTPException(status_code=429, detail="Too many requests. Please try again later.")
+        record_attempt(db, ip_key, MAX_LOGIN_CODE_IP_ATTEMPTS)
+        _check_code_send_limit(db, req.email)
+
+    if req.email == _ninja_email():
+        return await _send_login_code(db, req.email, "Ninja")
+
+    user = get_user_by_email(db=db, email=req.email)
+    if user:
+        return await _send_login_code(db, user.email, user.display_name, user_id=user.id)
+    return {"ok": True, "email": req.email}
+
+
+@router.post("/verify-code/")
+async def verify_code(req: VerifyCodeRequest, response: Response, db: Session = Depends(get_db)):
+    record, error = verify_login_code(db, email=req.email, code=req.code)
+    if not record:
+        raise HTTPException(status_code=401, detail=error)
+
+    if req.email == _ninja_email():
+        db.commit()
+        # Capped at 2h regardless of rememberMe — a privileged account gets a
+        # short session, not the long-lived cookie a real user can opt into.
+        expires = datetime.now(timezone.utc) + timedelta(hours=2)
+        access_token = SecurityUtils.create_jwt_token({
+            "sub": NINJA_SUBJECT_ID, "email": req.email, "is_ninja": True, "exp": expires,
+        })
+        response.set_cookie(
+            key="access_token",
+            value=access_token,
+            httponly=True,
+            secure=is_prod(),
+            samesite="lax",
+            max_age=7200,
+            path="/",
+        )
+        return {"token_type": "bearer", "is_ninja": True}
+
+    user = get_user_by_id(db=db, user_id=record.user_id) if record.user_id else None
+    if not user or user.email != req.email:
+        # The code was issued for this address, so a mismatch means the
+        # account changed address (or was deleted) after it was sent.
+        db.rollback()
+        raise HTTPException(status_code=401, detail="Invalid or expired code. Please request a new one.")
+
+    # Entering a code sent to the address is the proof of ownership that
+    # the old verification link used to provide.
+    user.email_verified = True
+    db.commit()
 
     if user.deletion_scheduled_at is not None:
         cancel_token = SecurityUtils.create_jwt_token({
             "sub": str(user.id),
             "purpose": "cancel_delete",
+            "tv": user.token_version,
+            "remember": req.rememberMe,
             "exp": datetime.now(timezone.utc) + timedelta(minutes=15),
         })
         raise HTTPException(
@@ -296,26 +271,7 @@ async def generate_token(req: LoginRequest, response: Response, db: Session = De
         )
 
     update_last_login(db=db, user=user)
-    if req.rememberMe:
-        max_age = 2592000  # 30 days
-        expires =  datetime.now(timezone.utc) + timedelta(days=30)
-    else:
-        max_age = None  # session cookie
-        expires =  datetime.now(timezone.utc) + timedelta(hours=1)
-    if not is_prod():
-        max_age = 31536000 # one year
-        expires =  datetime.now(timezone.utc) + timedelta(days=365)
-
-    access_token = SecurityUtils.create_jwt_token({"sub": str(user.id), "email": user.email, "tv": user.token_version, 'exp': expires})
-    response.set_cookie(
-        key="access_token",
-        value=access_token,
-        httponly=True,
-        secure=is_prod(),
-        samesite="lax",
-        max_age=max_age,
-        path="/",
-    )
+    _set_session_cookie(response, user, req.rememberMe)
     return {"token_type": "bearer", "is_ninja": False}
 
 @router.get("/check/")
@@ -340,89 +296,6 @@ async def check_auth(current_user=Depends(get_current_user), db: Session = Depen
 async def logout(response: Response):
     response.delete_cookie(key="access_token", path="/", httponly=True, secure=is_prod(), samesite="lax")
     return {"logged_out": True}
-
-
-class ForgotPasswordRequest(BaseModel):
-    email: LowercaseEmail
-
-
-class ResetPasswordRequest(BaseModel):
-    token: str
-    new_password: str
-
-
-@router.post("/forgot-password/")
-async def forgot_password(req: ForgotPasswordRequest, db: Session = Depends(get_db)):
-    if is_rate_limited(db, f"forgot-password:{req.email}"):
-        raise HTTPException(status_code=429, detail="Too many password reset requests. Please try again later.")
-    record_attempt(db, f"forgot-password:{req.email}", MAX_FORGOT_PASSWORD_ATTEMPTS)
-
-    user = get_user_by_email(db=db, email=req.email)
-    if user and dev_email_shortcuts():
-        # Discloses whether the account exists — acceptable only because
-        # dev_email_shortcuts() is never true in production.
-        return {"ok": True, "reset_token": create_reset_token(db=db, user_id=user.id)}
-    if user:
-        token = create_reset_token(db=db, user_id=user.id)
-        frontend_url = _get_frontend_url()
-        reset_link = f"{frontend_url}/reset-password?token={token}"
-        await enqueue(
-            "send_password_reset_email_job",
-            to=user.email,
-            name=user.display_name,
-            link=reset_link,
-        )
-    return {"ok": True}
-
-
-@router.post("/reset-password/")
-async def reset_password(req: ResetPasswordRequest, db: Session = Depends(get_db)):
-    password_error = validate_password(req.new_password)
-    if password_error:
-        raise HTTPException(status_code=400, detail=password_error)
-
-    record, error = verify_reset_token(db=db, token=req.token)
-    if not record:
-        raise HTTPException(status_code=400, detail=error)
-
-    user = get_user_by_id(db=db, user_id=record.user_id)
-    if not user:
-        raise HTTPException(status_code=400, detail="User not found.")
-
-    if not consume_reset_token(db=db, record=record):
-        # Another request already consumed this exact token between our
-        # verify above and this point — same outcome as "already used".
-        raise HTTPException(status_code=400, detail="Invalid or already used reset link.")
-
-    user.password_hash = SecurityUtils.hash_password(req.new_password)
-    user.token_version = (user.token_version or 1) + 1
-    db.commit()
-    return {"ok": True}
-
-
-class ChangePasswordRequest(BaseModel):
-    current_password: str
-    new_password: str
-
-
-@router.post("/change-password/")
-async def change_password(
-    req: ChangePasswordRequest,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
-):
-    if not SecurityUtils.verify_password(req.current_password, current_user.password_hash):
-        raise HTTPException(status_code=401, detail="Current password is incorrect.")
-
-    password_error = validate_password(req.new_password)
-    if password_error:
-        raise HTTPException(status_code=400, detail=password_error)
-
-    user = db.merge(current_user)
-    user.password_hash = SecurityUtils.hash_password(req.new_password)
-    user.token_version = (user.token_version or 1) + 1
-    db.commit()
-    return {"ok": True}
 
 
 @router.post("/request-email-change/")
@@ -457,7 +330,6 @@ async def request_email_change(
 class SubmitNewEmailRequest(BaseModel):
     token: str
     new_email: LowercaseEmail
-    password: str
 
 
 @router.post("/change-email/")
@@ -465,8 +337,8 @@ async def submit_new_email(req: SubmitNewEmailRequest, db: Session = Depends(get
     """Step 2 of 3 — the page the step-1 email links to. Public (token-
     gated, not an authenticated session) since the click may land on a
     different device than the one that requested the change, same as
-    confirm-delete. The password re-check happens here rather than at
-    step 1, right before the new address is actually chosen."""
+    confirm-delete. The step-1 link arriving in the current inbox is the
+    proof of identity; there's no password to re-check."""
     record, error = verify_email_change_request_token(db=db, token=req.token)
     if not record:
         raise HTTPException(status_code=400, detail=error)
@@ -475,13 +347,10 @@ async def submit_new_email(req: SubmitNewEmailRequest, db: Session = Depends(get
     if not user:
         raise HTTPException(status_code=400, detail="Account not found.")
 
-    if not SecurityUtils.verify_password(req.password, user.password_hash):
-        raise HTTPException(status_code=401, detail="Current password is incorrect.")
-
     if req.new_email == user.email:
         raise HTTPException(status_code=400, detail="New email must be different from your current one.")
 
-    if get_user_by_email(db=db, email=req.new_email):
+    if get_user_by_email(db=db, email=req.new_email) or req.new_email == _ninja_email():
         raise HTTPException(status_code=400, detail="Email already registered")
 
     if not consume_email_change_request_token(db=db, record=record):
@@ -633,7 +502,6 @@ async def request_delete_account(
 
 class ConfirmDeleteRequest(BaseModel):
     token: str
-    password: str
 
 
 @router.post("/confirm-delete/")
@@ -642,6 +510,9 @@ async def confirm_delete_account(
     response: Response,
     db: Session = Depends(get_db),
 ):
+    """The link from /request-delete/'s email. Reaching it proves control
+    of the account's inbox — the same proof a sign-in code gives — so no
+    further credential is asked for."""
     record, error = verify_deletion_token(db=db, token=req.token)
     if not record:
         raise HTTPException(status_code=400, detail=error)
@@ -650,27 +521,10 @@ async def confirm_delete_account(
     if not user:
         raise HTTPException(status_code=400, detail="User not found.")
 
-    if is_account_locked(db, user.email):
-        raise HTTPException(
-            status_code=429,
-            detail="Account locked due to too many failed login attempts. Please reset your password."
-        )
-
-    if not SecurityUtils.verify_password(req.password, user.password_hash):
-        attempt = increment_failed_attempts(db, user.email)
-        if attempt.failed_attempts >= 5:
-            raise HTTPException(
-                status_code=429,
-                detail="Too many failed attempts. Account locked. Please reset your password."
-            )
-        raise HTTPException(status_code=401, detail="Password is incorrect.")
-    reset_failed_attempts(db, user.email)
-
     if not consume_deletion_token(db=db, record=record):
-        # Another request already consumed this exact token — reset_failed_
-        # attempts above commits, which drops the row lock from
-        # verify_deletion_token's for_update=True before we get here, so
-        # this atomic check is what actually closes the race, not that lock.
+        # Another request already consumed this exact token. This atomic
+        # check is what actually closes the race, not verify_deletion_token's
+        # row lock.
         raise HTTPException(status_code=400, detail="Invalid or already used deletion link.")
     deletion_date = schedule_deletion(db=db, user=user)
     await enqueue(
@@ -698,7 +552,11 @@ class CancelDeleteRequest(BaseModel):
 
 
 @router.post("/cancel-delete/")
-async def cancel_delete_account(req: CancelDeleteRequest, db: Session = Depends(get_db)):
+async def cancel_delete_account(req: CancelDeleteRequest, response: Response, db: Session = Depends(get_db)):
+    """Cancels a scheduled deletion and signs the user in. The cancel token
+    is only ever issued by /verify-code/ right after a correct code, and the
+    code is spent by then — without signing in here, the user would have to
+    request a second code just to get into the account they just rescued."""
     try:
         payload = SecurityUtils.decode_jwt_token(req.cancel_token)
     except HTTPException:
@@ -706,59 +564,13 @@ async def cancel_delete_account(req: CancelDeleteRequest, db: Session = Depends(
     if payload.get("purpose") != "cancel_delete":
         raise HTTPException(status_code=400, detail="Invalid cancellation token.")
 
-    user_id = UUID(payload.get("sub"))
-    cancel_deletion(db=db, user_id=user_id)
+    user = get_user_by_id(db=db, user_id=UUID(payload.get("sub")))
+    if not user or payload.get("tv") != user.token_version:
+        raise HTTPException(status_code=400, detail="Invalid or expired cancellation link.")
 
-    user = get_user_by_id(db=db, user_id=user_id)
-    if user:
-        await enqueue("send_delete_account_cancelled_email_job", to=user.email, name=user.display_name)
+    cancel_deletion(db=db, user_id=user.id)
+    await enqueue("send_delete_account_cancelled_email_job", to=user.email, name=user.display_name)
 
+    update_last_login(db=db, user=user)
+    _set_session_cookie(response, user, bool(payload.get("remember")))
     return {"ok": True}
-
-
-@router.get("/verify-email/")
-async def verify_email(token: str = Query(...), db: Session = Depends(get_db)):
-    user_id, error = verify_and_consume_token(db=db, token=token)
-    if not user_id:
-        # Check if the token was already consumed and the user is already verified
-        existing_user_id = find_token_user_id(db=db, token=token)
-        if existing_user_id:
-            user = get_user_by_id(db=db, user_id=existing_user_id)
-            if user and user.email_verified:
-                return {"ok": True, "already_verified": True, "message": "Your email is already verified."}
-        raise HTTPException(status_code=400, detail=error)
-
-    user = get_user_by_id(db=db, user_id=user_id)
-    if not user:
-        raise HTTPException(status_code=400, detail="User not found.")
-
-    user.email_verified = True
-    db.commit()
-    return {"ok": True, "already_verified": False, "message": "Email verified. You can now log in."}
-
-
-class ResendVerificationRequest(BaseModel):
-    email: LowercaseEmail
-
-
-@router.post("/resend-verification/")
-async def resend_verification(req: ResendVerificationRequest, db: Session = Depends(get_db)):
-    if is_rate_limited(db, f"resend-verification:{req.email}"):
-        raise HTTPException(status_code=429, detail="Too many requests. Please try again later.")
-    record_attempt(db, f"resend-verification:{req.email}", MAX_RESEND_VERIFICATION_ATTEMPTS)
-
-    user = get_user_by_email(db=db, email=req.email)
-    resp: dict = {"ok": True}
-    if user and not user.email_verified:
-        token = create_verification_token(db=db, user_id=user.id)
-        frontend_url = _get_frontend_url()
-        await enqueue("send_verification_email_job", to=user.email, name=user.display_name, token=token, frontend_url=frontend_url)
-        if not is_prod():
-            # Same non-prod escape hatch /register/ and /request-delete/ already
-            # have. Without it this was the only token-issuing endpoint with no
-            # way to obtain the token in dev: only its SHA-256 hash is stored,
-            # so a token not captured here is gone for good.
-            resp["verification_token"] = token
-    # The response shape must not otherwise reveal whether the email exists or
-    # is already verified, so `ok` stays unconditional.
-    return resp

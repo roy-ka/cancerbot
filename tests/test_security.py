@@ -6,29 +6,6 @@ import jwt
 from src.auth.security import SecurityUtils
 
 
-class TestPasswordHashing:
-    def test_hash_password_returns_different_hash(self):
-        plain = "TestPassword123"
-        hash1 = SecurityUtils.hash_password(plain)
-        hash2 = SecurityUtils.hash_password(plain)
-        assert hash1 != hash2, "Hashes should be different due to salt"
-
-    def test_verify_password_correct_returns_true(self):
-        plain = "TestPassword123"
-        hashed = SecurityUtils.hash_password(plain)
-        assert SecurityUtils.verify_password(plain, hashed) is True
-
-    def test_verify_password_wrong_returns_false(self):
-        hashed = SecurityUtils.hash_password("CorrectPassword")
-        assert SecurityUtils.verify_password("WrongPassword", hashed) is False
-
-    def test_hash_verify_round_trip(self):
-        passwords = ["short", "a" * 100, "SpecialChars!@#$%", "unicode_café_测试"]
-        for plain in passwords:
-            hashed = SecurityUtils.hash_password(plain)
-            assert SecurityUtils.verify_password(plain, hashed) is True
-
-
 class TestJWT:
     def test_create_jwt_token_returns_string(self):
         data = {"sub": "user-123", "email": "test@example.com"}

@@ -15,9 +15,8 @@ from src.db.repositories.messeges import (
 )
 from src.db.repositories.message_feedback import set_feedback, get_feedback_for_messages
 from src.db.repositories.tokens import (
-    create_reset_token, verify_reset_token, consume_reset_token,
+    create_login_code, verify_login_code, LOGIN_CODE_MAX_ATTEMPTS,
 )
-from src.auth.security import SecurityUtils
 
 
 class TestUserRepository:
@@ -26,7 +25,6 @@ class TestUserRepository:
             db_session,
             first_name="Alice", last_name="A",
             email="alice@example.com",
-            password_hash=SecurityUtils.hash_password("AlicePass123"),
         )
         assert user.id is not None
         assert user.first_name == "Alice"
@@ -38,7 +36,6 @@ class TestUserRepository:
             db_session,
             first_name="Bob", last_name="B",
             email="bob@example.com",
-            password_hash=SecurityUtils.hash_password("BobPass123"),
         )
         db_session.commit()
         fetched = get_user_by_email(db_session, "bob@example.com")
@@ -241,156 +238,109 @@ class TestConversationSplitRepository:
         assert [m.content for m in ordered] == [m.content for m in source_messages]
 
 
-class TestPasswordResetRepository:
-    def test_create_reset_token_returns_url_safe_string(self, db_session, test_user):
-        token = create_reset_token(db_session, test_user.id)
-        assert isinstance(token, str)
-        assert len(token) > 20  # secrets.token_urlsafe(32) → ~43 chars
+class TestLoginCodeRepository:
+    EMAIL = "testuser@example.com"
 
-    def test_create_reset_token_invalidates_previous_token(self, db_session, test_user):
-        token1 = create_reset_token(db_session, test_user.id)
-        db_session.commit()
-        create_reset_token(db_session, test_user.id)
-        db_session.commit()
-        # token1 was deleted when token2 was created
-        record, _ = verify_reset_token(db_session, token1)
-        assert record is None
+    def test_code_is_six_digits(self, db_session, test_user):
+        code = create_login_code(db_session, self.EMAIL, user_id=test_user.id)
+        assert len(code) == 6 and code.isdigit()
 
-    def test_verify_reset_token_success(self, db_session, test_user):
-        token = create_reset_token(db_session, test_user.id)
-        db_session.commit()
-
-        record, msg = verify_reset_token(db_session, token)
-        assert record is not None
-        assert msg == ""
+    def test_correct_code_verifies_and_is_single_use(self, db_session, test_user):
+        code = create_login_code(db_session, self.EMAIL, user_id=test_user.id)
+        record, error = verify_login_code(db_session, self.EMAIL, code)
+        assert error == ""
         assert str(record.user_id) == str(test_user.id)
-
-    def test_verify_reset_token_wrong_token(self, db_session, test_user):
-        create_reset_token(db_session, test_user.id)
         db_session.commit()
 
-        record, msg = verify_reset_token(db_session, "completely-wrong-token")
+        record2, error2 = verify_login_code(db_session, self.EMAIL, code)
+        assert record2 is None
+        assert "invalid" in error2.lower()
+
+    def test_new_code_replaces_the_previous_one(self, db_session, test_user):
+        first = create_login_code(db_session, self.EMAIL, user_id=test_user.id)
+        second = create_login_code(db_session, self.EMAIL, user_id=test_user.id)
+        if first == second:
+            return  # 1-in-a-million collision; nothing to distinguish
+        record, _ = verify_login_code(db_session, self.EMAIL, first)
         assert record is None
-        assert "invalid" in msg.lower()
+        record, _ = verify_login_code(db_session, self.EMAIL, second)
+        assert record is not None
 
-    def test_verify_reset_token_max_uses_blocks(self, db_session, test_user):
-        token = create_reset_token(db_session, test_user.id)
-        db_session.commit()
-
-        # Exhaust uses by calling consume_reset_token 5 times
-        for _ in range(5):
-            record, _ = verify_reset_token(db_session, token)
-            assert record is not None
-            record.use_count += 1
-            db_session.commit()
-
-        record, msg = verify_reset_token(db_session, token)
+    def test_wrong_code_reports_remaining_attempts(self, db_session, test_user):
+        code = create_login_code(db_session, self.EMAIL, user_id=test_user.id)
+        wrong = "000000" if code != "000000" else "111111"
+        record, error = verify_login_code(db_session, self.EMAIL, wrong)
         assert record is None
-        assert "too many" in msg.lower()
+        assert f"{LOGIN_CODE_MAX_ATTEMPTS - 1} attempt(s) left" in error
 
-    def test_verify_reset_token_expired(self, db_session, test_user):
+    def test_code_dies_after_max_attempts_even_if_then_correct(self, db_session, test_user):
+        code = create_login_code(db_session, self.EMAIL, user_id=test_user.id)
+        wrong = "000000" if code != "000000" else "111111"
+        for _ in range(LOGIN_CODE_MAX_ATTEMPTS):
+            verify_login_code(db_session, self.EMAIL, wrong)
+        record, error = verify_login_code(db_session, self.EMAIL, code)
+        assert record is None
+        assert "too many" in error.lower()
+
+    def test_expired_code_is_rejected(self, db_session, test_user):
         from freezegun import freeze_time
         with freeze_time("2026-01-01 12:00:00"):
-            token = create_reset_token(db_session, test_user.id)
-            db_session.commit()
-
-        # Move forward past the 60-minute TTL
-        with freeze_time("2026-01-01 13:30:00"):
-            record, msg = verify_reset_token(db_session, token)
-
+            code = create_login_code(db_session, self.EMAIL, user_id=test_user.id)
+        with freeze_time("2026-01-01 12:11:00"):
+            record, error = verify_login_code(db_session, self.EMAIL, code)
         assert record is None
-        assert "expir" in msg.lower()
+        assert "expired" in error.lower()
 
-    def test_consume_reset_token_marks_used_and_increments(self, db_session, test_user):
-        token = create_reset_token(db_session, test_user.id)
-        db_session.commit()
+    def test_code_is_bound_to_its_address(self, db_session, test_user):
+        code = create_login_code(db_session, self.EMAIL, user_id=test_user.id)
+        record, _ = verify_login_code(db_session, "someone-else@example.com", code)
+        assert record is None
 
-        record, _ = verify_reset_token(db_session, token)
-        assert record is not None
-        consume_reset_token(db_session, record)
+    def test_code_is_not_stored_in_plain_or_as_plain_sha256(self, db_session, test_user):
+        """A plain SHA-256 of six digits is reversible by trying all million
+        — the stored value must be keyed (HMAC with JWT_SECRET)."""
+        import hashlib
+        from src.db.models import Token
+        code = create_login_code(db_session, self.EMAIL, user_id=test_user.id)
+        stored = db_session.query(Token).filter(Token.target_email == self.EMAIL).one().token_hash
+        assert code not in stored
+        assert stored != hashlib.sha256(code.encode()).hexdigest()
+        assert stored != hashlib.sha256(f"{self.EMAIL}:{code}".encode()).hexdigest()
 
-        # After consuming, token is no longer valid
-        record2, msg = verify_reset_token(db_session, token)
-        assert record2 is None
-        assert "invalid" in msg.lower() or "used" in msg.lower()
-
-    def test_verify_reset_token_not_reusable_after_consume(self, db_session, test_user):
-        token = create_reset_token(db_session, test_user.id)
-        db_session.commit()
-
-        record, _ = verify_reset_token(db_session, token)
-        consume_reset_token(db_session, record)
-
-        record2, msg = verify_reset_token(db_session, token)
-        assert record2 is None
+    def test_ninja_code_has_no_user(self, db_session):
+        code = create_login_code(db_session, "ninja-test@example.com")
+        record, error = verify_login_code(db_session, "ninja-test@example.com", code)
+        assert error == ""
+        assert record.user_id is None
 
 
 class TestTokenTypeIsolation:
-    """The merged `tokens` table stores all three token types with plain
+    """The merged `tokens` table stores every token type with plain
     string secrets.token_urlsafe(32) values — nothing about the token
     string itself reveals its type. A missing token_type filter anywhere in
-    tokens.py would let a password-reset token be accepted as an email
-    verification link (or vice versa), which is the specific bug this
-    class exists to catch."""
+    tokens.py would let, say, a deletion link be accepted as an email-change
+    link, which is the specific bug this class exists to catch."""
 
-    def test_reset_token_does_not_verify_as_verification_token(self, db_session, test_user):
-        from src.db.repositories.tokens import verify_and_consume_token
-
-        reset_token = create_reset_token(db_session, test_user.id)
-        db_session.commit()
-
-        user_id, error = verify_and_consume_token(db_session, reset_token)
-        assert user_id is None
-        assert "invalid" in error.lower()
-
-    def test_verification_token_does_not_verify_as_reset_token(self, db_session, test_user):
-        from src.db.repositories.tokens import create_verification_token
-
-        verification_token = create_verification_token(db_session, test_user.id)
-        db_session.commit()
-
-        record, error = verify_reset_token(db_session, verification_token)
-        assert record is None
-        assert "invalid" in error.lower()
-
-    def test_deletion_token_does_not_verify_as_reset_token(self, db_session, test_user):
-        from src.db.repositories.tokens import create_deletion_request_token
+    def test_deletion_token_does_not_verify_as_email_change_request(self, db_session, test_user):
+        from src.db.repositories.tokens import create_deletion_request_token, verify_email_change_request_token
 
         deletion_token = create_deletion_request_token(db_session, test_user.id)
-        db_session.commit()
-
-        record, error = verify_reset_token(db_session, deletion_token)
+        record, error = verify_email_change_request_token(db_session, deletion_token)
         assert record is None
         assert "invalid" in error.lower()
 
     def test_creating_one_type_does_not_invalidate_another_type_for_same_user(self, db_session, test_user):
         """create_*_token deletes the user's prior unused tokens of *that
         same type* — it must not also wipe out the user's tokens of a
-        different type."""
-        from src.db.repositories.tokens import create_verification_token
-
-        reset_token = create_reset_token(db_session, test_user.id)
-        db_session.commit()
-        create_verification_token(db_session, test_user.id)
-        db_session.commit()
-
-        record, error = verify_reset_token(db_session, reset_token)
-        assert record is not None
-        assert error == ""
-
-    def test_password_reset_use_count_does_not_affect_other_types(self, db_session, test_user):
-        """use_count tracking is specific to password_reset — consuming a
-        deletion or verification token must not increment it in a way that
-        could ever trip password reset's max-uses check."""
-        from src.db.repositories.tokens import create_deletion_request_token, verify_deletion_token, consume_deletion_token
+        different type, login codes included."""
+        from src.db.repositories.tokens import create_deletion_request_token, verify_deletion_token
 
         deletion_token = create_deletion_request_token(db_session, test_user.id)
-        db_session.commit()
-        record, _ = verify_deletion_token(db_session, deletion_token)
-        consume_deletion_token(db_session, record)
-        db_session.commit()
+        create_login_code(db_session, test_user.email, user_id=test_user.id)
 
-        assert record.use_count == 0
+        record, error = verify_deletion_token(db_session, deletion_token)
+        assert record is not None
+        assert error == ""
 
     def test_verify_deletion_token_locks_the_row(self, db_session, test_user):
         """verify_deletion_token must request SELECT ... FOR UPDATE so a

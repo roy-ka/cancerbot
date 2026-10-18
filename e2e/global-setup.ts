@@ -1,29 +1,26 @@
 import { chromium, request } from '@playwright/test'
 import path from 'path'
 import fs from 'fs'
-import { verifyRegisteredUser } from './helpers'
+import { registerUser, signInViaUi } from './helpers'
 
 const E2E_API_URL = process.env.E2E_API_URL ?? 'http://localhost:8000'
 const E2E_BASE_URL = process.env.E2E_BASE_URL ?? 'http://localhost:5173'
 const E2E_EMAIL = process.env.E2E_EMAIL ?? 'e2e-test@example.com'
-const E2E_PASSWORD = process.env.E2E_PASSWORD ?? 'E2eTest123!'
 
 export default async function globalSetup() {
-  // Step 1: Register + verify via direct API call
+  // Step 1: Register via direct API call. 400 means it already exists from a
+  // previous run; the account is verified by entering its first code below.
   const api = await request.newContext({ baseURL: E2E_API_URL })
 
   const reg = await api.post('/auth/register/', {
-    data: { first_name: 'E2E', last_name: 'User', email: E2E_EMAIL, password: E2E_PASSWORD },
+    data: { first_name: 'E2E', last_name: 'User', email: E2E_EMAIL },
   })
-
-  if (reg.status() === 201) {
-    await verifyRegisteredUser(api, reg)
-  } else if (reg.status() !== 400) {
+  if (reg.status() !== 201 && reg.status() !== 400) {
     throw new Error(`[e2e setup] registration failed: ${reg.status()} ${await reg.text()}`)
   }
   await api.dispose()
 
-  // Step 2: Login via real browser so the cookie lands on localhost:5173 (not :8000)
+  // Step 2: Sign in via real browser so the cookie lands on localhost:5173 (not :8000)
   const authDir = path.join(__dirname, '.auth')
   if (!fs.existsSync(authDir)) fs.mkdirSync(authDir, { recursive: true })
   // Remove any stale state from a previous run (user may have been deleted by teardown)
@@ -31,13 +28,11 @@ export default async function globalSetup() {
   if (fs.existsSync(authStatePath)) fs.unlinkSync(authStatePath)
 
   const browser = await chromium.launch()
-  const ctx = await browser.newContext()
+  const ctx = await browser.newContext({ baseURL: E2E_BASE_URL })
   const page = await ctx.newPage()
 
-  await page.goto(`${E2E_BASE_URL}/login`)
-  await page.fill('input[name="email"]', E2E_EMAIL)
-  await page.fill('input[name="password"]', E2E_PASSWORD)
-  await page.click('button[type="submit"]')
+  await signInViaUi(page, E2E_EMAIL)
+  await page.waitForURL((url) => !url.pathname.startsWith('/login'), { timeout: 15_000 })
 
   // Wait for login redirect AND React's ProtectedRoute auth-check + any subsequent
   // redirect (e.g. /terms for new users) to fully settle before we snapshot state.

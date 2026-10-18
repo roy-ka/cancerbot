@@ -1,128 +1,23 @@
-import React, { useState, useMemo } from 'react'
-import { Stack, TextField, FormControl, Button, Checkbox, FormControlLabel, Link, Box, Alert, Typography } from '@mui/material'
+import React, { useState } from 'react'
+import { Stack, TextField, FormControl, Button, Checkbox, FormControlLabel, Link, Box, Alert, CircularProgress } from '@mui/material'
 import { Link as RouterLink } from 'react-router-dom'
 import type { RegistrationPayload } from '../types'
-
-function EmailSentScreen({ email, onBackToLogin }: { email: string; onBackToLogin: () => void }) {
-  return (
-    <Stack spacing={3} sx={{ width: '100%', textAlign: 'center' }}>
-      <Typography variant="h6" sx={{ fontWeight: 600 }}>Check your email</Typography>
-      <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.7)' }}>
-        We sent a verification link to <strong>{email}</strong>. Click the link to activate your account.
-      </Typography>
-      <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.5)', fontSize: '0.8rem' }}>
-        Didn't receive it? Check your spam folder or{' '}
-        <Link component="button" onClick={onBackToLogin} sx={{ fontSize: '0.8rem' }}>
-          go back to login
-        </Link>
-        .
-      </Typography>
-      <Button variant="outlined" onClick={onBackToLogin}>Back to Login</Button>
-    </Stack>
-  )
-}
-
-function AccountReadyScreen({ onBackToLogin }: { onBackToLogin: () => void }) {
-  return (
-    <Stack spacing={3} sx={{ width: '100%', textAlign: 'center' }}>
-      <Typography variant="h6" sx={{ fontWeight: 600 }}>Account created</Typography>
-      <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.7)' }}>
-        Email verification is skipped in this development environment. You can log in now.
-      </Typography>
-      <Button variant="contained" onClick={onBackToLogin}>Go to Login</Button>
-    </Stack>
-  )
-}
-
-interface PasswordRequirement {
-  label: string
-  met: boolean
-}
-
-const PASSWORD_PATTERNS = {
-  lowercase: /[a-z]/,
-  uppercase: /[A-Z]/,
-  digit: /[0-9]/,
-  special: /[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/,
-}
-
-function PasswordRequirements({ password }: { password: string }) {
-  const requirements: PasswordRequirement[] = useMemo(
-    () => [
-      { label: 'At least 8 characters', met: password.length >= 8 },
-      { label: 'Lowercase letters (a-z)', met: PASSWORD_PATTERNS.lowercase.test(password) },
-      { label: 'Uppercase letters (A-Z)', met: PASSWORD_PATTERNS.uppercase.test(password) },
-      { label: 'Numbers (0-9)', met: PASSWORD_PATTERNS.digit.test(password) },
-      { label: 'Special characters (!@#$%^&*)', met: PASSWORD_PATTERNS.special.test(password) },
-    ],
-    [password]
-  )
-
-  return (
-    <Box sx={{ mt: 1, p: 2, borderRadius: 1, bgcolor: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.1)' }}>
-      <Typography variant="subtitle2" sx={{ mb: 1, color: 'rgba(255, 255, 255, 0.7)', fontSize: '0.85rem', fontWeight: 600 }}>
-        Password Requirements
-      </Typography>
-      <Stack spacing={0.75}>
-        {requirements.map((req) => (
-          <Box
-            key={req.label}
-            sx={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 1,
-              color: req.met ? 'rgba(47, 227, 198, 0.9)' : 'rgba(255, 255, 255, 0.5)',
-              fontSize: '0.875rem',
-              transition: 'color 0.2s ease',
-            }}
-          >
-            <Box
-              sx={{
-                width: 16,
-                height: 16,
-                borderRadius: '50%',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: '0.7rem',
-                fontWeight: 'bold',
-                flexShrink: 0,
-                ...(req.met
-                  ? { bgcolor: 'rgba(47, 227, 198, 0.3)', color: 'rgba(47, 227, 198, 0.9)', border: '1px solid rgba(47, 227, 198, 0.6)' }
-                  : { bgcolor: 'transparent', color: 'rgba(255, 255, 255, 0.4)', border: '1px solid rgba(255, 255, 255, 0.2)' }),
-              }}
-            >
-              {req.met ? '✓' : '○'}
-            </Box>
-            {req.label}
-          </Box>
-        ))}
-      </Stack>
-    </Box>
-  )
-}
+import CodeStep from './CodeStep'
 
 export default function RegistrationForm({ changeToLogin }: { changeToLogin: () => void }) {
   const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [confirmPassword, setConfirmPassword] = useState('')
   const [emailError, setEmailError] = useState(false)
-  const [passwordError, setPasswordError] = useState(false)
-  const [confirmPasswordError, setConfirmPasswordError] = useState(false)
   const [firstName, setFirstName] = useState('')
   const [lastName, setLastName] = useState('')
   const [termsAccepted, setTermsAccepted] = useState(false)
   const [error, setError] = useState('')
-  const [emailSent, setEmailSent] = useState(false)
-  const [accountReady, setAccountReady] = useState(false)
+  const [sending, setSending] = useState(false)
+  const [codeSent, setCodeSent] = useState(false)
+  const [devCode, setDevCode] = useState<string | undefined>()
   const BASE_URL = import.meta.env.VITE_BASE_URL || ''
 
   const verifyEmail = (email: string) => {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email === ''
-  }
-
-  const verifyPassword = (password: string) => {
-    return password.length >= 8 || password === ''
   }
 
   const register = async (payload: RegistrationPayload) => {
@@ -134,26 +29,29 @@ export default function RegistrationForm({ changeToLogin }: { changeToLogin: () 
       credentials: 'include',
       body: JSON.stringify(payload),
     })
-    if (!res.ok) {
-      const err = await res.json().catch(() => null)
-      throw new Error(err?.detail ?? err?.message ?? 'Registration failed')
-    }
     const data = await res.json().catch(() => null)
-    // verified is only ever true when the backend runs with DEV_EMAIL_SHORTCUTS.
-    if (data?.verified) setAccountReady(true)
-    else setEmailSent(true)
+    if (!res.ok) {
+      throw new Error(typeof data?.detail === 'string' ? data.detail : 'Registration failed')
+    }
+    // The backend lowercases addresses; verify against the same spelling.
+    setEmail(data?.email ?? payload.email)
+    setDevCode(data?.dev_code)
+    setCodeSent(true)
   }
 
   const onSubmit = (e: React.SubmitEvent<HTMLFormElement>) => {
     e.preventDefault()
-    if (emailError || passwordError || confirmPasswordError || password !== confirmPassword || !termsAccepted) {
+    if (emailError || !termsAccepted) {
       return
     }
     setError('')
-    register({ email, password, first_name: firstName, last_name: lastName }).catch((err) => {
-      console.error('Registration error:', err)
-      setError(err.message)
-    })
+    setSending(true)
+    register({ email, first_name: firstName, last_name: lastName })
+      .catch((err) => {
+        console.error('Registration error:', err)
+        setError(err.message)
+      })
+      .finally(() => setSending(false))
   }
 
   const changeEmail = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -162,33 +60,17 @@ export default function RegistrationForm({ changeToLogin }: { changeToLogin: () 
     setEmailError(!verifyEmail(email))
   }
 
-  const changePassword = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const password = e.target.value
-    setPassword(password)
-    setPasswordError(!verifyPassword(password))
-    if (confirmPassword) {
-      setConfirmPasswordError(password !== confirmPassword)
-    }
-  }
-
-  const changeConfirmPassword = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const confirmPassword = e.target.value
-    setConfirmPassword(confirmPassword)
-    setConfirmPasswordError(confirmPassword !== '' && confirmPassword !== password)
-  }
-  const changeFirstName = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setFirstName(e.target.value)
-  }
-  const changeLastName = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setLastName(e.target.value)
-  }
-
-  if (accountReady) {
-    return <AccountReadyScreen onBackToLogin={changeToLogin} />
-  }
-
-  if (emailSent) {
-    return <EmailSentScreen email={email} onBackToLogin={changeToLogin} />
+  if (codeSent) {
+    // Registration always starts a fresh session; there's no "remember me"
+    // choice on this form, so the session lasts until the browser closes.
+    return (
+      <CodeStep
+        email={email}
+        rememberMe={false}
+        devCode={devCode}
+        onBack={() => setCodeSent(false)}
+      />
+    )
   }
 
   return (
@@ -204,7 +86,8 @@ export default function RegistrationForm({ changeToLogin }: { changeToLogin: () 
             label="First name"
             autoComplete="given-name"
             variant="outlined"
-            onChange={changeFirstName}
+            value={firstName}
+            onChange={(e) => setFirstName(e.target.value)}
           />
 
           <TextField
@@ -215,7 +98,8 @@ export default function RegistrationForm({ changeToLogin }: { changeToLogin: () 
             label="Last name"
             autoComplete="family-name"
             variant="outlined"
-            onChange={changeLastName}
+            value={lastName}
+            onChange={(e) => setLastName(e.target.value)}
           />
 
           <TextField
@@ -230,36 +114,7 @@ export default function RegistrationForm({ changeToLogin }: { changeToLogin: () 
             value={email}
             onChange={changeEmail}
             error={emailError}
-            helperText=" "
-          />
-
-          <TextField
-            fullWidth
-            required
-            id="password"
-            name="password"
-            label="Password"
-            type="password"
-            autoComplete="current-password"
-            variant="outlined"
-            onChange={changePassword}
-            error={passwordError}
-          />
-
-          {password && <PasswordRequirements password={password} />}
-
-          <TextField
-            fullWidth
-            required
-            id="confirm_password"
-            name="confirm_password"
-            label="Confirm password"
-            type="password"
-            autoComplete="new-password"
-            variant="outlined"
-            onChange={changeConfirmPassword}
-            error={confirmPasswordError}
-            helperText={confirmPasswordError ? 'Passwords do not match' : ' '}
+            helperText="We'll email you a 6-digit code to finish signing up."
           />
 
           <Box>
@@ -291,9 +146,9 @@ export default function RegistrationForm({ changeToLogin }: { changeToLogin: () 
             type="submit"
             variant="contained"
             fullWidth
-            disabled={!termsAccepted || !password || password !== confirmPassword}
+            disabled={sending || !termsAccepted}
           >
-            Submit
+            {sending ? <CircularProgress size={22} color="inherit" /> : 'Create account'}
           </Button>
         </Stack>
       </FormControl>

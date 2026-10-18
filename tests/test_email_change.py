@@ -12,8 +12,8 @@ def _request_email_change(client):
     return client.post("/auth/request-email-change/")
 
 
-def _submit_new_email(client, token: str, new_email: str, password: str):
-    return client.post("/auth/change-email/", json={"token": token, "new_email": new_email, "password": password})
+def _submit_new_email(client, token: str, new_email: str):
+    return client.post("/auth/change-email/", json={"token": token, "new_email": new_email})
 
 
 def _confirm_email_change(client, token: str):
@@ -60,7 +60,7 @@ class TestSubmitNewEmail:
     def test_success_creates_change_token_and_sends_verification(self, client, test_user, db_session):
         token = create_email_change_request_token(db_session, test_user.id)
         with patch("src.routers.auth.enqueue", new=AsyncMock()) as mock_send:
-            response = _submit_new_email(client, token, "new@example.com", "TestPass123!")
+            response = _submit_new_email(client, token, "new@example.com")
         assert response.status_code == 200
         assert response.json()["ok"] is True
         mock_send.assert_called_once()
@@ -85,40 +85,40 @@ class TestSubmitNewEmail:
     def test_non_prod_response_includes_token_for_automation(self, client, test_user, db_session):
         token = create_email_change_request_token(db_session, test_user.id)
         with patch("src.routers.auth.enqueue", new=AsyncMock()):
-            response = _submit_new_email(client, token, "new@example.com", "TestPass123!")
+            response = _submit_new_email(client, token, "new@example.com")
         assert response.json()["email_change_token"]
 
-    def test_wrong_password_returns_401(self, client, test_user, db_session):
+    def test_ninja_email_is_rejected(self, client, test_user, db_session, monkeypatch):
+        monkeypatch.setenv("NINJA_EMAIL", "ninja-test@example.com")
         token = create_email_change_request_token(db_session, test_user.id)
-        response = _submit_new_email(client, token, "new@example.com", "WrongPass123!")
-        assert response.status_code == 401
+        response = _submit_new_email(client, token, "ninja-test@example.com")
+        assert response.status_code == 400
 
     def test_same_email_returns_400(self, client, test_user, db_session):
         token = create_email_change_request_token(db_session, test_user.id)
-        response = _submit_new_email(client, token, test_user.email, "TestPass123!")
+        response = _submit_new_email(client, token, test_user.email)
         assert response.status_code == 400
 
     def test_already_registered_email_returns_400(self, client, test_user, db_session):
         from src.db.repositories.users import create_user
-        from src.auth.security import SecurityUtils
         create_user(
             db_session, first_name="Other", last_name="User",
-            email="taken@example.com", password_hash=SecurityUtils.hash_password("OtherPass123!"),
+            email="taken@example.com",
         )
         token = create_email_change_request_token(db_session, test_user.id)
-        response = _submit_new_email(client, token, "taken@example.com", "TestPass123!")
+        response = _submit_new_email(client, token, "taken@example.com")
         assert response.status_code == 400
 
     def test_invalid_token_returns_400(self, client):
-        response = _submit_new_email(client, "not-a-real-token", "new@example.com", "TestPass123!")
+        response = _submit_new_email(client, "not-a-real-token", "new@example.com")
         assert response.status_code == 400
 
     def test_reused_token_returns_400(self, client, test_user, db_session):
         token = create_email_change_request_token(db_session, test_user.id)
         with patch("src.routers.auth.enqueue", new=AsyncMock()):
-            first = _submit_new_email(client, token, "new@example.com", "TestPass123!")
+            first = _submit_new_email(client, token, "new@example.com")
         assert first.status_code == 200
-        second = _submit_new_email(client, token, "another@example.com", "TestPass123!")
+        second = _submit_new_email(client, token, "another@example.com")
         assert second.status_code == 400
 
 
@@ -157,11 +157,10 @@ class TestConfirmEmailChange:
 
     def test_email_taken_in_the_meantime_returns_400(self, client, test_user, db_session):
         from src.db.repositories.users import create_user
-        from src.auth.security import SecurityUtils
         token = create_email_change_token(db_session, test_user.id, "new@example.com")
         create_user(
             db_session, first_name="Other", last_name="User",
-            email="new@example.com", password_hash=SecurityUtils.hash_password("OtherPass123!"),
+            email="new@example.com",
         )
         response = _confirm_email_change(client, token)
         assert response.status_code == 400

@@ -38,8 +38,7 @@ from arq.cron import cron
 from src.jobs.account_deletion import delete_scheduled_user_job, reschedule_pending_deletions
 from src.jobs.auth_cleanup import auth_cleanup_sweep
 from src.jobs.email_jobs import (
-    send_verification_email_job,
-    send_password_reset_email_job,
+    send_login_code_email_job,
     send_delete_account_request_email_job,
     send_delete_account_scheduled_email_job,
     send_delete_account_cancelled_email_job,
@@ -74,8 +73,7 @@ async def shutdown(ctx):
 
 class WorkerSettings:
     functions = [
-        send_verification_email_job,
-        send_password_reset_email_job,
+        send_login_code_email_job,
         send_delete_account_request_email_job,
         send_delete_account_scheduled_email_job,
         send_delete_account_cancelled_email_job,

@@ -1,13 +1,13 @@
 """Tests for the ninja-only admin flow: browse users -> browse their
 conversations -> post a message that's hidden from the real user.
 
-The ninja account has no users row at all — its credentials are checked
-directly against NINJA_EMAIL/NINJA_PASSWORD (see src/routers/auth.py's
-_ninja_login and src/deps/auth.py's get_current_ninja_user). conftest.py's
-NINJA_EMAIL/NINJA_PASSWORD env vars back both the real-login tests below
-and the `ninja_client` fixture (which stubs get_current_ninja_user directly
-rather than logging in for real, for tests that don't care about login
-itself)."""
+The ninja account has no users row at all — it exists while NINJA_EMAIL is
+set and signs in with a code emailed to that address (see
+src/routers/auth.py's _ninja_email and src/deps/auth.py's
+get_current_ninja_user). conftest.py's NINJA_EMAIL backs both the real
+sign-in tests below and the `ninja_client` fixture (which stubs
+get_current_ninja_user directly rather than signing in for real, for tests
+that don't care about sign-in itself)."""
 import os
 import pytest
 from datetime import datetime, timezone
@@ -16,7 +16,6 @@ from unittest.mock import patch, AsyncMock, MagicMock
 from src.auth.security import SecurityUtils
 
 NINJA_EMAIL = os.environ["NINJA_EMAIL"]
-NINJA_PASSWORD = os.environ["NINJA_PASSWORD"]
 
 _DEFAULT_STREAM_CONTENT = "Cancer cells exhibit the Warburg effect."
 
@@ -47,52 +46,63 @@ def mock_external_services(mock_retrieval):
         yield
 
 
-class TestNinjaLogin:
-    """Ninja logs in through the normal /auth/login/ endpoint, but against
-    NINJA_EMAIL/NINJA_PASSWORD directly — there's no users row to check a
-    password hash against."""
+@pytest.fixture
+def sent_codes(monkeypatch):
+    codes: dict[str, str] = {}
 
-    def test_correct_credentials_succeed(self, anon_client):
-        response = anon_client.post(
-            "/auth/login/", json={"email": NINJA_EMAIL, "password": NINJA_PASSWORD, "rememberMe": False},
-        )
+    async def fake_enqueue(job_name, **kwargs):
+        if job_name == "send_login_code_email_job":
+            codes[kwargs["to"]] = kwargs["code"]
+
+    monkeypatch.setattr("src.routers.auth.enqueue", fake_enqueue)
+    return codes
+
+
+def _sign_in(client, codes, email, remember_me=False):
+    assert client.post("/auth/request-code/", json={"email": email}).status_code == 200
+    return client.post(
+        "/auth/verify-code/", json={"email": email, "code": codes[email], "rememberMe": remember_me},
+    )
+
+
+class TestNinjaLogin:
+    """Ninja signs in through the normal code endpoints; its code carries
+    no user_id because there's no users row behind it."""
+
+    def test_correct_code_succeeds(self, anon_client, sent_codes):
+        response = _sign_in(anon_client, sent_codes, NINJA_EMAIL)
         assert response.status_code == 200
         assert response.json()["is_ninja"] is True
         assert "access_token" in response.cookies
 
-    def test_wrong_password_rejected(self, anon_client):
+    def test_code_is_sent_to_ninja_email(self, anon_client, sent_codes):
+        anon_client.post("/auth/request-code/", json={"email": NINJA_EMAIL.upper()})
+        assert set(sent_codes) == {NINJA_EMAIL}
+
+    def test_wrong_code_rejected(self, anon_client, sent_codes):
+        anon_client.post("/auth/request-code/", json={"email": NINJA_EMAIL})
+        wrong = "000000" if sent_codes[NINJA_EMAIL] != "000000" else "111111"
         response = anon_client.post(
-            "/auth/login/", json={"email": NINJA_EMAIL, "password": "WrongPassword!", "rememberMe": False},
+            "/auth/verify-code/", json={"email": NINJA_EMAIL, "code": wrong, "rememberMe": False},
         )
         assert response.status_code == 401
+        assert "access_token" not in anon_client.cookies
 
-    def test_wrong_password_locks_out_after_max_attempts(self, anon_client):
-        from src.db.repositories.login_attempts import MAX_LOGIN_ATTEMPTS
-        for _ in range(MAX_LOGIN_ATTEMPTS):
-            anon_client.post(
-                "/auth/login/", json={"email": NINJA_EMAIL, "password": "WrongPassword!", "rememberMe": False},
-            )
-        locked = anon_client.post(
-            "/auth/login/", json={"email": NINJA_EMAIL, "password": NINJA_PASSWORD, "rememberMe": False},
-        )
-        assert locked.status_code == 429
+    def test_no_ninja_login_when_ninja_email_unset(self, anon_client, sent_codes, monkeypatch):
+        monkeypatch.delenv("NINJA_EMAIL")
+        anon_client.post("/auth/request-code/", json={"email": NINJA_EMAIL})
+        assert sent_codes == {}
 
-    def test_regular_user_email_falls_through_to_normal_login(self, anon_client, test_user):
-        """A non-ninja email must never be handled by the ninja branch —
-        confirms _ninja_login's email check actually gates on NINJA_EMAIL."""
-        response = anon_client.post(
-            "/auth/login/", json={"email": test_user.email, "password": "TestPass123!", "rememberMe": False},
-        )
+    def test_regular_user_email_is_not_handled_as_ninja(self, anon_client, test_user, sent_codes):
+        response = _sign_in(anon_client, sent_codes, test_user.email)
         assert response.status_code == 200
         assert response.json()["is_ninja"] is False
 
-    def test_token_expires_in_two_hours(self, anon_client):
+    def test_token_expires_in_two_hours(self, anon_client, sent_codes):
         """A privileged account should never get the long-lived sessions
-        regular login flows allow (rememberMe, or the dev-only 1-year
+        regular sign-ins allow (rememberMe, or the dev-only 1-year
         override)."""
-        response = anon_client.post(
-            "/auth/login/", json={"email": NINJA_EMAIL, "password": NINJA_PASSWORD, "rememberMe": True},
-        )
+        response = _sign_in(anon_client, sent_codes, NINJA_EMAIL, remember_me=True)
         assert response.status_code == 200
         token = response.cookies.get("access_token") or anon_client.cookies.get("access_token")
         payload = SecurityUtils.decode_jwt_token(token)
@@ -101,11 +111,8 @@ class TestNinjaLogin:
         assert delta.total_seconds() < 2 * 3600 + 60  # allow a little slack
         assert delta.total_seconds() > 2 * 3600 - 60
 
-    def test_regular_user_login_not_capped_at_two_hours(self, anon_client, test_user):
-        response = anon_client.post(
-            "/auth/login/",
-            json={"email": test_user.email, "password": "TestPass123!", "rememberMe": True},
-        )
+    def test_regular_user_login_not_capped_at_two_hours(self, anon_client, test_user, sent_codes):
+        response = _sign_in(anon_client, sent_codes, test_user.email, remember_me=True)
         assert response.status_code == 200
         token = response.cookies.get("access_token") or anon_client.cookies.get("access_token")
         payload = SecurityUtils.decode_jwt_token(token)
@@ -113,15 +120,12 @@ class TestNinjaLogin:
         delta = exp - datetime.now(timezone.utc)
         assert delta.total_seconds() > 2 * 3600  # rememberMe/dev override grants far more than 2h
 
-    def test_logged_in_ninja_token_rejected_by_regular_get_current_user_route(self, anon_client):
-        """Ninja can no longer use the app as a regular chat user — its JWT
-        carries a sentinel subject that matches no real users row, so a
+    def test_logged_in_ninja_token_rejected_by_regular_get_current_user_route(self, anon_client, sent_codes):
+        """Ninja can't use the app as a regular chat user — its JWT carries
+        a sentinel subject that matches no real users row, so a
         get_current_user-gated route must reject it cleanly (401), not
         crash trying to look it up."""
-        login = anon_client.post(
-            "/auth/login/", json={"email": NINJA_EMAIL, "password": NINJA_PASSWORD, "rememberMe": False},
-        )
-        assert login.status_code == 200
+        assert _sign_in(anon_client, sent_codes, NINJA_EMAIL).status_code == 200
         response = anon_client.get("/auth/check/")
         assert response.status_code == 401
 

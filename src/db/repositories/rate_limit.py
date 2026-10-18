@@ -3,10 +3,10 @@ from sqlalchemy.orm import Session
 from src.db.models import RateLimitEntry
 
 MAX_REGISTER_ATTEMPTS = 10
-MAX_FORGOT_PASSWORD_ATTEMPTS = 5
+MAX_LOGIN_CODE_EMAIL_ATTEMPTS = 5
+MAX_LOGIN_CODE_IP_ATTEMPTS = 30
 MAX_REQUEST_DELETE_ATTEMPTS = 5
 MAX_EMAIL_CHANGE_ATTEMPTS = 5
-MAX_RESEND_VERIFICATION_ATTEMPTS = 5
 BLOCK_MINUTES = 60
 
 
@@ -33,7 +33,7 @@ def delete_stale_entries(db: Session, older_than_days: int = STALE_ENTRY_DAYS) -
     """Remove rate-limit rows that are old and no longer blocking anything.
 
     Keys are derived from attacker-supplied values (`register:<ip>`,
-    `forgot-password:<email>`), so without pruning this table grows without
+    `login-code:<email>`), so without pruning this table grows without
     bound. Rows still inside their block window are always kept.
     """
     cutoff = datetime.now(timezone.utc) - timedelta(days=older_than_days)

@@ -1,10 +1,11 @@
 """arq cron job that prunes stale auth throttling rows.
 
-`login_attempts` and `rate_limit_entries` are both keyed by attacker-supplied
-values — any email submitted to /auth/login/ gets a row, and any client IP
-hitting /auth/register/ gets one too. That is deliberate (tracking only known
-emails would leak which accounts exist), but it means neither table has a
-natural upper bound. This sweep drops rows that are old enough to be
+`rate_limit_entries` is keyed by attacker-supplied values — any email
+submitted to /auth/request-code/ gets a row, and any client IP hitting
+/auth/register/ gets one too. That is deliberate (tracking only known emails
+would leak which accounts exist), but it means the table has no natural
+upper bound. `login_attempts` was the password-login lockout; nothing writes
+it since sign-in moved to emailed codes, and this sweep drains what's left. This sweep drops rows that are old enough to be
 meaningless while never touching one that is still enforcing a lock or block.
 """
 
