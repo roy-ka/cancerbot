@@ -355,11 +355,11 @@
 
 <div class="shell">
   <div class="hero">
-    <div class="eyebrow">Ops runbook · verified 2026-08-24</div>
+    <div class="eyebrow">Ops runbook · updated 2026-10-18</div>
     <h1>Standing up a new CancerBot server, start to finish</h1>
     <p>Every command and cloud-console step needed to take a bare Oracle Cloud instance to a working <code class="inline">https://cancer-bot.com</code> deployment — in the order that avoids the dead ends we hit the first time. Run each code block on its own; don't paste multiple commands as one block.</p>
     <div class="hero-meta">
-      <span class="pill">11 phases</span>
+      <span class="pill">8 phases</span>
       <span class="pill">3 code fixes already in the repo</span>
       <span class="pill">OCI · Cloudflare · Let's Encrypt</span>
     </div>
@@ -391,11 +391,32 @@
 cd cancerbot
 cp example.env .env</pre>
 
+      <h3 class="step">Host prerequisites</h3>
+      <p>Install these once: <b>git</b>, <b>Docker</b> with the compose plugin (<code class="inline">docker compose version</code> must work), and <b>Node.js 20.19+</b> — <code class="inline">deploy.sh</code> builds the frontend on the host with npm, not in a container. <b>Trivy</b> is optional: if it's installed, <code class="inline">deploy.sh</code> scans the built images and aborts on fixable HIGH/CRITICAL findings; if not, it warns and skips the scan.</p>
+      <pre>sudo apt-get install -y trivy   <span class="c"># optional — after adding Aqua's apt repo</span></pre>
+
       <h3 class="step">Fill in .env</h3>
-      <p>Set real values for <code class="inline">GROQ_API_KEY</code>, <code class="inline">GEMINI_API_KEY</code>, <code class="inline">POSTGRES_PASSWORD</code>, <code class="inline">JWT_SECRET</code>, <code class="inline">SENDGRID_API_KEY</code>. Leave <code class="inline">AXIOM_TOKEN</code> / <code class="inline">AXIOM_DATASET</code> <b>unset</b> unless you have a real, existing Axiom dataset name — a wrong dataset name doesn't fail quietly here (see the callout in Phase 7).</p>
+      <p><code class="inline">example.env</code> documents every variable. For production, set at least:</p>
+      <pre><span class="v">ENV</span>=production
+<span class="v">FRONTEND_URL</span>=https://cancer-bot.com          <span class="c"># origin used in every emailed link</span>
+<span class="v">CORS_ORIGINS</span>=https://cancer-bot.com,https://www.cancer-bot.com
+<span class="v">LLM_PROVIDER</span>=groq                            <span class="c"># default is ollama — production uses Groq</span>
+<span class="v">GROQ_API_KEY</span>=...
+<span class="v">GROQ_MODEL_NAME</span>=openai/gpt-oss-120b            <span class="c"># no quotes</span>
+<span class="v">JWT_SECRET</span>=...                               <span class="c"># 32+ chars: python3 -c "import secrets; print(secrets.token_hex(32))"</span>
+<span class="v">POSTGRES_PASSWORD</span>=...
+<span class="v">OPENSEARCH_INITIAL_ADMIN_PASSWORD</span>=...        <span class="c"># 8+ chars with upper, lower, digit and symbol</span>
+<span class="v">REDIS_PASSWORD</span>=...
+<span class="v">BREVO_API_KEY</span>=...</pre>
+      <p>Optional: <code class="inline">NINJA_EMAIL</code> / <code class="inline">NINJA_PASSWORD</code> (admin console), <code class="inline">ADMIN_DIGEST_EMAILS</code> (daily/weekly digests), <code class="inline">UNPAYWALL_EMAIL</code>, and the Axiom trio <code class="inline">AXIOM_TOKEN_WRITE</code> / <code class="inline">AXIOM_TOKEN_READ</code> / <code class="inline">AXIOM_DATASET</code>. <code class="inline">OPENSEARCH_CA_CERT</code> is set in Phase 6.</p>
+      <p><b>Don't set</b> <code class="inline">POSTGRES_URL</code>, <code class="inline">OPENSEARCH_URL</code>, <code class="inline">OLLAMA_URL</code>, <code class="inline">NLP_SERVICE_URL</code> or <code class="inline">REDIS_URL</code> — the compose files give the containers the in-network values. <b>Never set</b> <code class="inline">DEV_EMAIL_SHORTCUTS</code> here.</p>
+      <div class="callout">
+        <span class="label">The backend refuses to start when</span>
+        <code class="inline">ENV</code> is missing; <code class="inline">ENV=production</code> without <code class="inline">FRONTEND_URL</code>; the LLM settings are incomplete (<code class="inline">LLM_PROVIDER</code> unknown, or the chosen provider's key/model missing — with no <code class="inline">LLM_PROVIDER</code> it expects a local Ollama model); <code class="inline">CORS_ORIGINS=*</code>; <code class="inline">DEV_EMAIL_SHORTCUTS</code> set in production; <code class="inline">JWT_SECRET</code> shorter than 32 characters; or OpenSearch reached over plain <code class="inline">http://</code> in production. The container log names the exact problem.
+      </div>
       <div class="callout danger">
         <span class="label">Learned the hard way</span>
-        A bad <code class="inline">AXIOM_DATASET</code> doesn't just disable logging — <code class="inline">AxiomHandler.emit()</code> calls <code class="inline">flush()</code> synchronously with no exception handling, so a rejected dataset name can raise straight up through any code path that logs anything. Get the dataset name right, or leave both Axiom vars empty.
+        A bad <code class="inline">AXIOM_DATASET</code> doesn't just disable logging — <code class="inline">AxiomHandler.emit()</code> calls <code class="inline">flush()</code> synchronously with no exception handling, so a rejected dataset name can raise straight up through any code path that logs anything. Get the dataset name right, or leave <code class="inline">AXIOM_TOKEN_WRITE</code> / <code class="inline">AXIOM_DATASET</code> empty.
       </div>
     </section>
 
@@ -466,6 +487,7 @@ sudo systemctl start nginx   <span class="c"># setup-nginx.sh calls "reload", wh
       <p class="phase-why">Ollama isn't containerized in this stack — <code class="inline">docker-compose.yml</code> points the backend at <code class="inline">172.30.0.1:11434</code>, the Docker bridge gateway IP, specifically so containers can reach a host-level process. The official installer binds Ollama to <code class="inline">127.0.0.1</code> only, which that gateway route can't reach.</p>
       <pre>curl -fsSL https://ollama.com/install.sh | sh
 ollama pull nomic-embed-text</pre>
+      <p>With <code class="inline">LLM_PROVIDER=groq</code>, Ollama only computes embeddings, so the server needs no chat model. Only if you run with <code class="inline">LLM_PROVIDER=ollama</code> do you also need <code class="inline">ollama pull</code> of the model named in <code class="inline">OLLAMA_GEN_MODEL</code>.</p>
 
       <h3 class="step">Rebind it to all interfaces</h3>
       <pre><span class="c"># opens an editor — add exactly these two lines, save, exit</span>
@@ -479,7 +501,7 @@ sudo ss -tlnp | grep 11434   <span class="c"># should now read 0.0.0.0:11434, no
 
     <section class="phase" id="p6">
       <div class="phase-head"><span class="phase-num">06</span><h2>Generate OpenSearch's internal TLS certs</h2></div>
-      <p class="phase-why">This is a <i>separate</i> certificate from the public site's — self-signed, scoped to the Docker network, and required before OpenSearch's security plugin will let its own nodes talk to each other. Skip this only if <code class="inline">certs/opensearch/</code> already contains a cert whose CN is <code class="inline">opensearch-node1</code>.</p>
+      <p class="phase-why">This is a <i>separate</i> certificate from the public site's — self-signed, scoped to the Docker network, and required before OpenSearch's security plugin will let its own nodes talk to each other. Only production runs OpenSearch with TLS: <code class="inline">docker-compose.prod.yml</code> (layered on top of <code class="inline">docker-compose.yml</code> by <code class="inline">deploy.sh</code>) turns on the security plugin, mounts <code class="inline">certs/opensearch/</code> into both nodes, and points the backend and worker at <code class="inline">https://opensearch-node1:9200</code> with the root CA. Skip this only if <code class="inline">certs/opensearch/</code> already contains a cert whose CN is <code class="inline">opensearch-node1</code>.</p>
       <pre>./scripts/generate_opensearch_certs.sh
 <span class="c"># then add the printed root-ca.pem path to .env:</span>
 <span class="v">OPENSEARCH_CA_CERT</span>=/home/ubuntu/cancerbot/certs/opensearch/root-ca.pem</pre>
@@ -493,7 +515,25 @@ sudo ss -tlnp | grep 11434   <span class="c"># should now read 0.0.0.0:11434, no
       <div class="phase-head"><span class="phase-num">07</span><h2>Run deploy.sh</h2></div>
       <p class="phase-why">This is the only step that actually builds and starts the application. Everything before it is one-time host setup that <code class="inline">deploy.sh</code> doesn't (and shouldn't) do for you.</p>
       <pre>./scripts/deploy.sh</pre>
-      <p>It will: check disk space, auto-fix <code class="inline">vm.max_map_count</code> if needed, start Postgres/OpenSearch/Ollama-dependent infra, wait for both Postgres and OpenSearch to report healthy, run Alembic migrations, seed/backfill scripts, then build and start the backend.</p>
+      <p>In order, it:</p>
+      <ol>
+        <li>Loads <code class="inline">.env</code>, checks for 20 GB free disk (running <code class="inline">docker system prune -a</code> if short), auto-fixes <code class="inline">vm.max_map_count</code>, and records the current images for rollback.</li>
+        <li>Runs <code class="inline">git reset --hard HEAD</code> and <code class="inline">git pull</code> — if the pull changed <code class="inline">deploy.sh</code> itself, it re-executes the new version once.</li>
+        <li>Builds the frontend on the host (<code class="inline">npm install</code> only when <code class="inline">package-lock.json</code> changed, then <code class="inline">npm run build</code> into <code class="inline">client/dist</code>).</li>
+        <li>Builds the images with <code class="inline">--pull</code> and scans them with Trivy if it's installed.</li>
+        <li>Backs up PostgreSQL (when it's already running), then starts the infrastructure with both compose files: both OpenSearch nodes, Dashboards, PostgreSQL and the NLP service.</li>
+        <li>Waits for PostgreSQL, runs Alembic migrations (skipped when already at head), waits for OpenSearch, then runs the non-fatal seeds: <code class="inline">seed_wikipedia_tags.py</code>, <code class="inline">backfill_chunks.py</code>, <code class="inline">backfill_source_metadata.py</code>, <code class="inline">backfill_conversation_titles.py</code>.</li>
+        <li>Starts the <code class="inline">prod</code> profile — Redis, the backend and the arq worker — and applies <code class="inline">scripts/fix-iptables.sh</code> so containers can reach Ollama on the host.</li>
+        <li>Health-checks <code class="inline">/health/</code> (rolling back to the previous images on failure), reloads nginx, and rotates old backups.</li>
+      </ol>
+      <div class="callout">
+        <span class="label">Local edits on the server are discarded</span>
+        Step 2 is a hard reset, so any uncommitted change to a tracked file on the server is lost on every deploy. Keep server-only settings in <code class="inline">.env</code> (untracked), never in tracked files.
+      </div>
+      <div class="callout danger">
+        <span class="label">Never</span>
+        run a production <code class="inline">docker compose</code> command without <code class="inline">-f docker-compose.yml -f docker-compose.prod.yml</code> — the base file alone starts OpenSearch without TLS or a password, and the backend then refuses to start. And never add <code class="inline">--volumes</code> to a prune: PostgreSQL and OpenSearch data live in named volumes.
+      </div>
       <div class="callout ok">
         <span class="label">First deploy on a fresh box</span>
         If it fails partway through (health check timeout, a flaky step) <i>after</i> migrations already applied, the rollback logic now leaves the schema at wherever it reached instead of stepping it backward — safe to just fix the underlying problem and re-run.
@@ -575,6 +615,16 @@ sudo ss -tlnp | grep 11434   <span class="c"># should now read 0.0.0.0:11434, no
           <td class="fix">Phase 1 callout</td>
         </tr>
         <tr>
+          <td class="sym">Backend exits: <code class="inline">LLM configuration is incomplete</code></td>
+          <td><code class="inline">LLM_PROVIDER</code> unset (defaults to <code class="inline">ollama</code>, which needs <code class="inline">OLLAMA_GEN_MODEL</code>) or the chosen provider's key/model missing</td>
+          <td class="fix">Set <code class="inline">LLM_PROVIDER=groq</code> + <code class="inline">GROQ_API_KEY</code> — Phase 1</td>
+        </tr>
+        <tr>
+          <td class="sym">Backend exits with another <code class="inline">RuntimeError</code> at startup</td>
+          <td>A production guard: <code class="inline">ENV</code>/<code class="inline">FRONTEND_URL</code> missing, <code class="inline">CORS_ORIGINS=*</code>, <code class="inline">DEV_EMAIL_SHORTCUTS</code> set, or OpenSearch over <code class="inline">http://</code></td>
+          <td class="fix">Phase 1 callout; for OpenSearch, use both compose files — Phase 7</td>
+        </tr>
+        <tr>
           <td class="sym">deploy.sh: <code class="inline">cp: cannot create .../sites-available/cancerbot</code></td>
           <td>nginx was never installed — the directory doesn't exist</td>
           <td class="fix">Phase 4</td>
@@ -609,5 +659,5 @@ sudo ss -tlnp | grep 11434   <span class="c"># should now read 0.0.0.0:11434, no
 
   </main>
 
-  <footer>cancerbot · runbook generated from the 2026-08-24 new-server deploy</footer>
+  <footer>cancerbot · runbook from the 2026-08-24 new-server deploy, updated 2026-10-18</footer>
 </div>

@@ -95,16 +95,17 @@ if ! command -v alembic &> /dev/null; then
   echo "⚠ Warning: alembic not found in PATH (will run inside Docker)"
 fi
 
-# Check disk space (needs >100GB free)
+# Check disk space (needs >= MIN_FREE_DISK_GB free)
+MIN_FREE_DISK_GB=20
 DISK_AVAILABLE=$(df -BG "$PROJECT_DIR" | awk 'NR==2 {print $(NF-2)}' | sed 's/G$//')
-if [ "$DISK_AVAILABLE" -lt 100 ]; then
+if [ "$DISK_AVAILABLE" -lt "$MIN_FREE_DISK_GB" ]; then
   echo "⚠ Low disk space (${DISK_AVAILABLE}GB). Running Docker cleanup..."
   # Never add --volumes: PostgreSQL and OpenSearch data live in named volumes,
   # and prune deletes any volume whose container happens to be stopped.
   docker system prune -a -f 2>/dev/null || true
   DISK_AVAILABLE=$(df -BG "$PROJECT_DIR" | awk 'NR==2 {print $(NF-2)}' | sed 's/G$//')
-  if [ "$DISK_AVAILABLE" -lt 100 ]; then
-    echo "✗ Error: Still not enough disk space after cleanup. Required: 100GB, Available: ${DISK_AVAILABLE}GB"
+  if [ "$DISK_AVAILABLE" -lt "$MIN_FREE_DISK_GB" ]; then
+    echo "✗ Error: Still not enough disk space after cleanup. Required: ${MIN_FREE_DISK_GB}GB, Available: ${DISK_AVAILABLE}GB"
     exit 1
   fi
   echo "✓ Disk space recovered (${DISK_AVAILABLE}GB available)"

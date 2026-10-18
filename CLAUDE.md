@@ -48,6 +48,7 @@ Every new `.env` entry must also be added to:
 3. **Test** - Run the test suite and confirm it passes before committing
 4. **Verify** - Test changes work as intended (TypeScript/Python compilation, runtime behavior)
 5. **Docs** - If the change affects setup, env vars, commands, services, ports, or architecture, update `README.md` (and this file) in the same change
+6. **Server runbook** - If the change affects how the production server is set up or deployed (new or renamed production `.env` variables, host packages, ports, certificates, nginx, compose files, `deploy.sh` steps, startup refusals), update `docs/server-runbook.html` in the same change
 
 ```bash
 # Run tests
@@ -460,7 +461,8 @@ Initialised in `src/main.py` and `nlp_service/app.py` via `_init_axiom_logging()
 Querying (not just ingesting) uses a **separate** token, `AXIOM_TOKEN_READ` — Axiom scopes tokens per-action, and the ingest token above does not (and should not) also carry query access. Only `src/jobs/admin_digest.py`'s daily digest queries Axiom (`apl_query`, log volume by level + top errors over the last 24h); it degrades gracefully (logs and returns `None`) if `AXIOM_TOKEN_READ`/`AXIOM_DATASET` are unset or the query fails, rather than blocking the digest from sending.
 
 ### Deploy Script (`scripts/deploy.sh`)
-- Checks disk free ≥ 100GB before building; runs `docker system prune -a` and re-checks if low. **Never add `--volumes`** — PostgreSQL (`cancerbot_pgdata`) and OpenSearch (`os-data1`/`os-data2`) data live in named volumes, and a prune deletes any volume whose container is stopped at that moment (e.g. after a failed deploy)
+One-time host setup (firewall, nginx + certbot, Ollama, OpenSearch certs, production `.env`) lives in `docs/server-runbook.html`; keep it in sync with this script (see Code Review Workflow step 6).
+- Checks disk free ≥ 20GB (`MIN_FREE_DISK_GB`) before building; runs `docker system prune -a` and re-checks if low. **Never add `--volumes`** — PostgreSQL (`cancerbot_pgdata`) and OpenSearch (`os-data1`/`os-data2`) data live in named volumes, and a prune deletes any volume whose container is stopped at that moment (e.g. after a failed deploy)
 - Builds with `--pull` so the base image is refreshed when upstream publishes OS patches (e.g. curl CVEs); intermediate layers still cache when the base digest is unchanged
 - Scans built images with Trivy (`HIGH`/`CRITICAL`, ignore-unfixed); aborts deploy on findings
 - Skips `alembic upgrade heads` if `alembic current` already shows `(head)` — avoids 4 unnecessary Docker container spawns per deploy
