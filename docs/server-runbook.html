@@ -357,18 +357,18 @@
   <div class="hero">
     <div class="eyebrow">Ops runbook · updated 2026-10-18</div>
     <h1>Standing up a new CancerBot server, start to finish</h1>
-    <p>Every command and cloud-console step needed to take a bare Oracle Cloud instance to a working <code class="inline">https://cancer-bot.com</code> deployment — in the order that avoids the dead ends we hit the first time. Run each code block on its own; don't paste multiple commands as one block.</p>
+    <p>Every command and cloud-console step needed to take a bare Hetzner Cloud server to a working <code class="inline">https://cancer-bot.com</code> deployment — in the order that avoids the dead ends we hit the first time. Run each code block on its own; don't paste multiple commands as one block.</p>
     <div class="hero-meta">
       <span class="pill">8 phases</span>
       <span class="pill">3 code fixes already in the repo</span>
-      <span class="pill">OCI · Cloudflare · Let's Encrypt</span>
+      <span class="pill">Hetzner Cloud · Cloudflare · Let's Encrypt</span>
     </div>
   </div>
 
   <nav class="rail">
     <div class="rail-label">Phases</div>
     <a href="#p1"><span class="n">01</span> Clone &amp; configure</a>
-    <a href="#p2"><span class="n">02</span> OS &amp; cloud firewall</a>
+    <a href="#p2"><span class="n">02</span> Hetzner firewall</a>
     <a href="#p3"><span class="n">03</span> Host permissions</a>
     <a href="#p4"><span class="n">04</span> nginx + TLS cert</a>
     <a href="#p5"><span class="n">05</span> Ollama on the host</a>
@@ -421,33 +421,37 @@ cp example.env .env</pre>
     </section>
 
     <section class="phase" id="p2">
-      <div class="phase-head"><span class="phase-num">02</span><h2>Open ports 80 / 443 — at every layer</h2></div>
-      <p class="phase-why">On Oracle Cloud, inbound traffic has to clear <b>three independent gates</b> before it reaches nginx: the OS firewall, the VCN's Security List, and any Network Security Group attached to the instance's VNIC. All three default to closed on a fresh instance, and OCI's quick-launch flow attaches an NSG that only opens SSH — missing this cost the most debugging time of the whole setup.</p>
+      <div class="phase-head"><span class="phase-num">02</span><h2>Put a Hetzner Cloud Firewall in front of the server</h2></div>
+      <p class="phase-why">A Hetzner Cloud server sits on a public IP with <b>no firewall at all</b> by default — every listening port is reachable from the internet. Two of ours must not be: Ollama (<code class="inline">11434</code>, bound to <code class="inline">0.0.0.0</code> in Phase 5, no authentication) and the backend (<code class="inline">8000</code>, published by Docker on <code class="inline">0.0.0.0</code>, which would bypass nginx). Do this before the first deploy.</p>
 
-      <h3 class="step">OS-level (usually already fine)</h3>
-      <pre><span class="c"># check first — ufw is inactive by default on OCI images, which is fine</span>
-sudo ufw status
-sudo iptables -L INPUT -n -v --line-numbers</pre>
-
-      <h3 class="step">OCI Security List</h3>
-      <p>Console → <b>Networking → Virtual Cloud Networks →</b> your VCN → <b>Security Lists</b> → the list attached to the instance's subnet → <b>Add Ingress Rules</b>:</p>
+      <h3 class="step">Create the firewall and attach it</h3>
+      <p>Hetzner Console → your project → <b>Firewalls → Create Firewall</b>. Inbound rules, source <code class="inline">Any IPv4</code> + <code class="inline">Any IPv6</code>:</p>
       <ul>
-        <li>Source <code class="inline">0.0.0.0/0</code>, TCP, destination port <code class="inline">80</code></li>
-        <li>Source <code class="inline">0.0.0.0/0</code>, TCP, destination port <code class="inline">443</code></li>
+        <li>TCP <code class="inline">22</code> (SSH — narrow the source to your own IP if it's stable)</li>
+        <li>TCP <code class="inline">80</code> and TCP <code class="inline">443</code></li>
+        <li>ICMP (optional, for ping)</li>
       </ul>
+      <p>Leave outbound empty (allows everything). Under <b>Apply to</b>, select this server, then create.</p>
 
-      <h3 class="step">OCI Network Security Group — the one everyone forgets</h3>
-      <p>Instance details → <b>Networking</b> tab → primary VNIC → check the <b>Network Security Groups</b> field. If one is attached (OCI's quick-launch flow adds one automatically, often named <code class="inline">*-quick-action-NSG</code>), it enforces its own rules <i>in addition to</i> the Security List above — both must independently allow the traffic. Open it → <b>Security Rules → Add Ingress Rules</b>, same two rules as above. When adding the rule, set <b>Source Type</b> to <code class="inline">CIDR</code> — it defaults to "Network Security Group," which only allows traffic from other resources inside that same NSG.</p>
+      <div class="callout danger">
+        <span class="label">ufw alone is not enough</span>
+        Docker writes its own iptables rules for published ports, and they're evaluated before ufw's, so <code class="inline">ufw deny 8000</code> does nothing for the backend. The Cloud Firewall filters before traffic reaches the server, so Docker can't get around it. Leave ufw inactive (the Hetzner Ubuntu default) unless you know you need it.
+      </div>
+
+      <h3 class="step">Check it from outside</h3>
+      <p>From your own machine (not the server), once Ollama and the stack are up — both must time out:</p>
+      <pre>curl -m 5 http://SERVER_IP:11434</pre>
+      <pre>curl -m 5 http://SERVER_IP:8000/health/</pre>
 
       <div class="callout">
         <span class="label">How to tell which layer is actually blocking you</span>
-        Start a throwaway listener (<code class="inline">sudo python3 -m http.server 80</code>) and curl the server's public IP from an <i>outside</i> machine. A silent timeout means a firewall is dropping packets before they reach the OS; "connection refused" means something OS-level rejected it. Kill the listener the moment the test is done — it serves a directory listing of the whole working directory, <code class="inline">.ssh/</code> included.
+        Port 80 timing out from outside almost always means the Cloud Firewall is missing the rule or isn't applied to this server. To confirm, start a throwaway listener (<code class="inline">sudo python3 -m http.server 80</code>) and curl the server's public IP from an <i>outside</i> machine. A silent timeout means a firewall is dropping packets before they reach the OS; "connection refused" means something OS-level rejected it. Kill the listener the moment the test is done — it serves a directory listing of the whole working directory, <code class="inline">.ssh/</code> included.
       </div>
     </section>
 
     <section class="phase" id="p3">
       <div class="phase-head"><span class="phase-num">03</span><h2>Fix home-directory permissions for nginx</h2></div>
-      <p class="phase-why">nginx serves the built frontend straight out of <code class="inline">~/cancerbot/client/dist</code>, running as <code class="inline">www-data</code>. Ubuntu home directories default to <code class="inline">750</code>, which blocks <code class="inline">www-data</code> from even traversing into them — no amount of <code class="inline">chmod</code> on <code class="inline">client/dist</code> itself fixes this.</p>
+      <p class="phase-why">nginx serves the built frontend straight out of <code class="inline">~/cancerbot/client/dist</code> (<code class="inline">/root/cancerbot</code> when you work as root, the Hetzner default), running as <code class="inline">www-data</code>. Ubuntu home directories default to <code class="inline">750</code> (and <code class="inline">/root</code> to <code class="inline">700</code>), which blocks <code class="inline">www-data</code> from even traversing into them — no amount of <code class="inline">chmod</code> on <code class="inline">client/dist</code> itself fixes this.</p>
       <pre><span class="c"># grants traversal only — doesn't make your home directory's contents listable</span>
 sudo chmod o+x ~</pre>
       <div class="callout">
@@ -515,6 +519,7 @@ sudo ss -tlnp | grep 11434   <span class="c"># should now read 0.0.0.0:11434, no
       <div class="phase-head"><span class="phase-num">07</span><h2>Run deploy.sh</h2></div>
       <p class="phase-why">This is the only step that actually builds and starts the application. Everything before it is one-time host setup that <code class="inline">deploy.sh</code> doesn't (and shouldn't) do for you.</p>
       <pre>./scripts/deploy.sh</pre>
+      <p>Running it directly as root (Hetzner's default login) is fine; npm then runs as root. When started with <code class="inline">sudo</code> from a normal user, npm runs as that user instead.</p>
       <p>In order, it:</p>
       <ol>
         <li>Loads <code class="inline">.env</code>, checks for 20 GB free disk (running <code class="inline">docker system prune -a</code> if short), auto-fixes <code class="inline">vm.max_map_count</code>, and records the current images for rollback.</li>
@@ -636,7 +641,7 @@ sudo ss -tlnp | grep 11434   <span class="c"># should now read 0.0.0.0:11434, no
         </tr>
         <tr>
           <td class="sym">certbot: <code class="inline">Timeout during connect (likely firewall problem)</code></td>
-          <td>OCI Security List and/or attached NSG blocking port 80</td>
+          <td>No Hetzner Cloud Firewall rule for port 80, or the firewall isn't applied to this server</td>
           <td class="fix">Phase 2</td>
         </tr>
         <tr>
@@ -653,6 +658,16 @@ sudo ss -tlnp | grep 11434   <span class="c"># should now read 0.0.0.0:11434, no
           <td class="sym">Site loads: bare nginx <code class="inline">500 Internal Server Error</code></td>
           <td><code class="inline">~</code> (home directory) not traversable by <code class="inline">www-data</code></td>
           <td class="fix">Phase 3</td>
+        </tr>
+        <tr>
+          <td class="sym">deploy.sh: <code class="inline">SUDO_USER: unbound variable</code></td>
+          <td>Run directly as root on a version of deploy.sh from before the fix</td>
+          <td class="fix"><code class="inline">git pull</code>, or <code class="inline">SUDO_USER= bash scripts/deploy.sh</code></td>
+        </tr>
+        <tr>
+          <td class="sym"><code class="inline">curl SERVER_IP:11434</code> or <code class="inline">:8000</code> answers from outside</td>
+          <td>No Cloud Firewall in front of the server (ufw doesn't cover Docker ports)</td>
+          <td class="fix">Phase 2</td>
         </tr>
       </table>
     </section>

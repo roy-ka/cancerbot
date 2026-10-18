@@ -386,7 +386,7 @@ export VITE_BASE_URL=""
 # Run npm as the actual user (not root) to avoid permission issues
 # Pass VITE_* vars explicitly so they survive sudo's env reset
 _npm() { "$NPM_PATH" "$@"; }
-if [ "$(whoami)" = "root" ] && [ -n "$SUDO_USER" ]; then
+if [ "$(whoami)" = "root" ] && [ -n "${SUDO_USER:-}" ]; then
   _npm() { sudo -u "$SUDO_USER" env VITE_BASE_URL="$VITE_BASE_URL" "$NPM_PATH" "$@"; }
 fi
 

@@ -170,7 +170,7 @@ scripts/        Deploy, backup and one-off data-migration scripts
 
 ## Running in production
 
-Production uses `docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile prod up -d --build`: the second file turns on OpenSearch TLS (local development runs it over plain HTTP), and the `prod` profile adds the backend, worker and Redis containers. `scripts/deploy.sh` is the full deploy (image build, Trivy scan, migrations, health check, nginx reload). See [DEPLOY_EC2.md](DEPLOY_EC2.md), [DEPLOY_ORACLE_CLOUD.md](DEPLOY_ORACLE_CLOUD.md) and [BACKUP.md](BACKUP.md).
+Production uses `docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile prod up -d --build`: the second file turns on OpenSearch TLS (local development runs it over plain HTTP), and the `prod` profile adds the backend, worker and Redis containers. `scripts/deploy.sh` is the full deploy (image build, Trivy scan, migrations, health check, nginx reload). The live server runs on Hetzner Cloud; [docs/server-runbook.html](docs/server-runbook.html) walks through setting one up from scratch, including the Cloud Firewall that keeps Ollama and port 8000 off the internet. [DEPLOY_EC2.md](DEPLOY_EC2.md) and [DEPLOY_ORACLE_CLOUD.md](DEPLOY_ORACLE_CLOUD.md) cover other hosts; backups are in [BACKUP.md](BACKUP.md).
 
 Set `LLM_PROVIDER=groq` (or `gemini`), `ENV=production` (outside production, token-issuing endpoints return their tokens in the response for test automation) and `FRONTEND_URL` to your public origin; the backend refuses to start in production without it, or without an `https://` `OPENSEARCH_URL`.
 
