@@ -11,7 +11,7 @@
 
 services:
   opensearch-node1:
-    environment: &opensearch-tls-env
+    environment:
       - DISABLE_SECURITY_PLUGIN=false
       - OPENSEARCH_INITIAL_ADMIN_PASSWORD=${OPENSEARCH_INITIAL_ADMIN_PASSWORD}
       - plugins.security.ssl.http.enabled=true
@@ -30,11 +30,6 @@ services:
           'CMD-SHELL',
           'curl -sf --insecure -u admin:${OPENSEARCH_INITIAL_ADMIN_PASSWORD} "https://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s" || exit 1',
         ]
-
-  opensearch-node2:
-    environment: *opensearch-tls-env
-    volumes:
-      - ./certs/opensearch:/usr/share/opensearch/config/certs:ro
 
   dashboards:
     environment:

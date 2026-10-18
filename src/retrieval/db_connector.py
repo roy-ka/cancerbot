@@ -341,7 +341,9 @@ class dbConnector:
       'settings': {
         'index': {
           'number_of_shards': 2,
-          'number_of_replicas': 1,
+          # Single-node cluster (docker-compose.yml): a replica could never
+          # be assigned and would leave every index permanently yellow.
+          'number_of_replicas': 0,
           'knn': True
         }
       },

@@ -62,7 +62,7 @@ def main() -> None:
             "settings": {
                 "index": {
                     "number_of_shards": 2,
-                    "number_of_replicas": 1,
+                    "number_of_replicas": 0,  # single-node cluster
                     "knn": True,
                 }
             },

@@ -232,7 +232,7 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml -p cancerbot sta
 docker exec opensearch-node1 curl -u admin:PASSWORD -k https://localhost:9200/_cluster/health
 
 # Restart cluster
-docker compose -f docker-compose.yml -f docker-compose.prod.yml -p cancerbot restart opensearch-node1 opensearch-node2
+docker compose -f docker-compose.yml -f docker-compose.prod.yml -p cancerbot restart opensearch-node1
 ```
 
 ## Security Notes

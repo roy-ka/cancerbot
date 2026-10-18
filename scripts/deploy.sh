@@ -567,7 +567,7 @@ else
   fi
 fi
 
-# Wait for OpenSearch to be healthy before running seeds. A cold 2-node
+# Wait for OpenSearch to be healthy before running seeds. A cold
 # cluster on a fresh host can take minutes to form (see the healthcheck
 # start_period/retries on opensearch-node1 in docker-compose.yml) — far
 # longer than the Postgres wait above, so seeds raced ahead of it and hit

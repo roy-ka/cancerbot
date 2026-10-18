@@ -519,6 +519,7 @@ sudo ss -tlnp | grep 11434   <span class="c"># should now read 0.0.0.0:11434, no
       <div class="phase-head"><span class="phase-num">07</span><h2>Run deploy.sh</h2></div>
       <p class="phase-why">This is the only step that actually builds and starts the application. Everything before it is one-time host setup that <code class="inline">deploy.sh</code> doesn't (and shouldn't) do for you.</p>
       <pre>./scripts/deploy.sh</pre>
+      <p>OpenSearch runs as a <b>single node</b> with a 512 MB heap, sized for a 4 GB server. Its indices are created with 0 replicas, so a healthy cluster reports <code class="inline">green</code>.</p>
       <p>Running it directly as root (Hetzner's default login) is fine; npm then runs as root. When started with <code class="inline">sudo</code> from a normal user, npm runs as that user instead.</p>
       <p>In order, it:</p>
       <ol>
@@ -658,6 +659,11 @@ sudo ss -tlnp | grep 11434   <span class="c"># should now read 0.0.0.0:11434, no
           <td class="sym">Site loads: bare nginx <code class="inline">500 Internal Server Error</code></td>
           <td><code class="inline">~</code> (home directory) not traversable by <code class="inline">www-data</code></td>
           <td class="fix">Phase 3</td>
+        </tr>
+        <tr>
+          <td class="sym">OpenSearch never becomes healthy after the switch to one node; its log says <code class="inline">cluster-manager not discovered</code></td>
+          <td>The data volume still holds the old two-node cluster's state, which keeps waiting for <code class="inline">opensearch-node2</code></td>
+          <td class="fix">Stop OpenSearch and remove the <code class="inline">cancerbot_os-data1</code> and <code class="inline">cancerbot_os-data2</code> volumes (the index only caches search results and refills with use), then rerun deploy.sh</td>
         </tr>
         <tr>
           <td class="sym">Sign-in code email never arrives</td>

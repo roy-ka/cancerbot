@@ -119,7 +119,7 @@ Open http://localhost:5173, register, and ask a question. The first answer on a 
 |---|---|---|
 | API | FastAPI (REST + WebSocket streaming) | 8000 |
 | Frontend | React 19 + Vite + MUI | 5173 |
-| Search | OpenSearch 3 (2 nodes) — BM25 + k-NN | 9200 |
+| Search | OpenSearch 3 (single node) — BM25 + k-NN | 9200 |
 | Database | PostgreSQL + Alembic | 5432 |
 | NLP service | scispaCy `en_core_sci_sm` + cross-encoder reranker | 8100 |
 | Embeddings | Ollama `nomic-embed-text` (runs natively) | 11434 |
