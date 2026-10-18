@@ -114,6 +114,8 @@ The corpus builds itself: every chat message fetches fresh PubMed/CrossRef/Wikip
 ```bash
 python scripts/backup_db.py   # Dump PostgreSQL to file (optionally upload to S3)
 python scripts/restore_db.py  # Restore from a dump file
+python scripts/backup_opensearch.py                       # Export the search indices (mapping + gzipped docs)
+python scripts/restore_opensearch.py <date-dir> --replace # Recreate them from an export (0 replicas; --dry-run first). See BACKUP.md for running it in the backend container
 bash scripts/daily_backup.sh  # Cron-friendly wrapper for backup
 ```
 

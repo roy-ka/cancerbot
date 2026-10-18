@@ -111,3 +111,27 @@ python scripts/backup_db.py
 # 2. In a test environment, restore and verify
 python scripts/restore_db.py backups/cancerbot_YYYYMMDD_HHMMSS.dump
 ```
+
+## OpenSearch Backups
+
+`scripts/backup_opensearch.py` (also run by `daily_backup.sh`) exports each search index into a per-date directory: `<index>_<HHMMSS>.mapping.json` (mapping + settings) and `<index>_<HHMMSS>.jsonl.gz` (the documents, embeddings included). The index only caches search results the app fetched while answering questions and refills with use, so restoring it is optional. It saves re-fetching and re-embedding everything.
+
+`scripts/restore_opensearch.py` loads one of those directories back:
+- It recreates each index from its saved mapping, with `number_of_replicas` forced to 0 because the cluster is a single node. A replica copied from an older two-node backup would otherwise leave the index yellow forever.
+- It loads the documents under their original ids, so running it twice doesn't create duplicates.
+- It refuses to overwrite an index that already has documents unless you pass `--replace`. An empty index, like the one the backend creates on startup, is replaced without asking.
+- `--dry-run` shows what it would restore.
+
+Locally (with OpenSearch from `docker compose up -d`):
+```bash
+python scripts/restore_opensearch.py backups/opensearch/2026-10-17 --dry-run
+python scripts/restore_opensearch.py backups/opensearch/2026-10-17 --replace
+```
+
+On the production server, run it inside the backend container. That way it reaches OpenSearch over the in-network HTTPS address with the pinned CA, and the server's `.env` needs no OpenSearch settings. Mount the folder that holds the backup (here `./backups`) into the container. `backup/` and `backups/` are git- and docker-ignored, so dumps never end up in a commit or an image.
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml -p cancerbot \
+  run --rm --no-deps -v "$PWD/backups:/app/backups:ro" backend \
+  python scripts/restore_opensearch.py backups/opensearch/2026-10-17 --replace
+```
+Run it after a deploy has started OpenSearch. The backend's own index creation on startup is harmless, since that index is empty.

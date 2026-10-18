@@ -30,3 +30,7 @@ tests/
 
 *.md
 *.code-workspace
+
+# Backups hold user data — keep them out of the image.
+backup/
+backups/

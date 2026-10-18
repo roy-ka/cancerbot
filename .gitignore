@@ -61,3 +61,8 @@ TODO.md
 memory/
 CLAUDE.local.md
 *.code-workspace
+
+# Database and OpenSearch backups hold user data: never commit them or
+# bake them into an image (the Dockerfile copies the whole directory).
+backup/
+backups/
