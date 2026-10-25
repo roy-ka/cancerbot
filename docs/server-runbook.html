@@ -462,7 +462,7 @@ sudo chmod o+x ~</pre>
 
     <section class="phase" id="p4">
       <div class="phase-head"><span class="phase-num">04</span><h2>Install nginx and get the site's TLS certificate</h2></div>
-      <p class="phase-why">Order matters here: <code class="inline">scripts/setup-nginx.sh</code> writes a config that already points at cert files that must exist first, so certbot has to run before it, standalone, before nginx is even listening on port 80.</p>
+      <p class="phase-why">Order matters here: <code class="inline">scripts/setup-nginx.sh</code> installs the repo's <code class="inline">nginx.conf</code> (with this checkout's path filled in as the web root), and that config already points at cert files that must exist first, so certbot has to run before it, standalone, before nginx is even listening on port 80.</p>
 
       <h3 class="step">Install nginx and certbot</h3>
       <pre>sudo apt-get update
@@ -523,14 +523,14 @@ sudo ss -tlnp | grep 11434   <span class="c"># should now read 0.0.0.0:11434, no
       <p>Running it directly as root (Hetzner's default login) is fine; npm then runs as root. When started with <code class="inline">sudo</code> from a normal user, npm runs as that user instead.</p>
       <p>In order, it:</p>
       <ol>
-        <li>Loads <code class="inline">.env</code>, checks for 20 GB free disk (running <code class="inline">docker system prune -a</code> if short), auto-fixes <code class="inline">vm.max_map_count</code>, and records the current images for rollback.</li>
+        <li>Loads <code class="inline">.env</code>, checks for 10 GB free disk (running <code class="inline">docker system prune -a</code> if short), auto-fixes <code class="inline">vm.max_map_count</code>, and records the current images for rollback.</li>
         <li>Runs <code class="inline">git reset --hard HEAD</code> and <code class="inline">git pull</code> — if the pull changed <code class="inline">deploy.sh</code> itself, it re-executes the new version once.</li>
         <li>Builds the frontend on the host (<code class="inline">npm install</code> only when <code class="inline">package-lock.json</code> changed, then <code class="inline">npm run build</code> into <code class="inline">client/dist</code>).</li>
         <li>Builds the images with <code class="inline">--pull</code> and scans them with Trivy if it's installed.</li>
         <li>Backs up PostgreSQL (when it's already running), then starts the infrastructure with both compose files: both OpenSearch nodes, Dashboards, PostgreSQL and the NLP service.</li>
         <li>Waits for PostgreSQL, runs Alembic migrations (skipped when already at head), waits for OpenSearch, then runs the non-fatal seeds: <code class="inline">seed_wikipedia_tags.py</code>, <code class="inline">backfill_chunks.py</code>, <code class="inline">backfill_source_metadata.py</code>, <code class="inline">backfill_conversation_titles.py</code>.</li>
         <li>Starts the <code class="inline">prod</code> profile — Redis, the backend and the arq worker — and applies <code class="inline">scripts/fix-iptables.sh</code> so containers can reach Ollama on the host.</li>
-        <li>Health-checks <code class="inline">/health/</code> (rolling back to the previous images on failure), reloads nginx, and rotates old backups.</li>
+        <li>Health-checks <code class="inline">/health/</code> (rolling back to the previous images on failure), re-installs <code class="inline">nginx.conf</code> with this checkout's path as the web root and reloads nginx, and rotates old backups.</li>
       </ol>
       <div class="callout">
         <span class="label">Local edits on the server are discarded</span>
@@ -656,8 +656,8 @@ sudo ss -tlnp | grep 11434   <span class="c"># should now read 0.0.0.0:11434, no
           <td class="fix">Phase 5</td>
         </tr>
         <tr>
-          <td class="sym">Site loads: bare nginx <code class="inline">500 Internal Server Error</code></td>
-          <td><code class="inline">~</code> (home directory) not traversable by <code class="inline">www-data</code></td>
+          <td class="sym">Site loads: bare nginx <code class="inline">500 Internal Server Error</code> (while <code class="inline">/health/</code> works)</td>
+          <td><code class="inline">~</code> (home directory, or <code class="inline">/root</code>) not traversable by <code class="inline">www-data</code>; or a config installed before the web root was filled in from the checkout's path, still pointing at <code class="inline">/home/ubuntu/cancerbot</code> — rerun deploy.sh</td>
           <td class="fix">Phase 3</td>
         </tr>
         <tr>

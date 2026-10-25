@@ -18,83 +18,12 @@ if [ "$EUID" -ne 0 ]; then
   exit 1
 fi
 
-# Create nginx config
+# Install nginx.conf from the repo — the same file scripts/deploy.sh
+# refreshes on every deploy — with this checkout's path filled in.
 echo ""
-echo "Creating nginx configuration..."
+echo "Installing nginx configuration..."
 NGINX_CONFIG_PATH="/etc/nginx/sites-available/cancerbot"
-
-cat > "$NGINX_CONFIG_PATH" << 'EOF'
-server {
-    listen 80;
-    server_name cancer-bot.com www.cancer-bot.com;
-    return 301 https://$server_name$request_uri;
-}
-
-server {
-    listen 443 ssl http2;
-    server_name cancer-bot.com www.cancer-bot.com;
-
-    ssl_certificate /etc/letsencrypt/live/cancer-bot.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/cancer-bot.com/privkey.pem;
-
-    # Serve frontend from build output
-    root /home/ubuntu/cancerbot/client/dist;
-    index index.html;
-
-    # SPA routing: try file, then directory, then fall back to index.html
-    location / {
-        try_files $uri $uri/ /index.html;
-    }
-
-    # API endpoints
-    location /api/ {
-        proxy_pass http://localhost:8000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-
-    # Health check endpoint
-    location /health/ {
-        proxy_pass http://localhost:8000;
-        proxy_set_header Host $host;
-    }
-
-    # WebSocket connections
-    location /ws/ {
-        proxy_pass http://localhost:8000;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-
-    # Auth endpoints
-    location /auth/ {
-        proxy_pass http://localhost:8000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-
-    # Conversations endpoints
-    location /conversations/ {
-        proxy_pass http://localhost:8000;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-EOF
+sed "s#__PROJECT_DIR__#${PROJECT_DIR}#g" "$PROJECT_DIR/nginx.conf" > "$NGINX_CONFIG_PATH"
 
 echo "✓ Nginx configuration created at $NGINX_CONFIG_PATH"
 
@@ -156,7 +85,7 @@ echo ""
 echo "========================================="
 echo "✓ Nginx setup completed successfully!"
 echo "========================================="
-echo "Frontend will be served from: /home/ubuntu/cancerbot/client/dist"
+echo "Frontend will be served from: $PROJECT_DIR/client/dist"
 echo "API proxy configured for: http://localhost:8000"
 echo ""
 echo "Next steps:"

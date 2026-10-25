@@ -96,7 +96,7 @@ if ! command -v alembic &> /dev/null; then
 fi
 
 # Check disk space (needs >= MIN_FREE_DISK_GB free)
-MIN_FREE_DISK_GB=20
+MIN_FREE_DISK_GB=10
 DISK_AVAILABLE=$(df -BG "$PROJECT_DIR" | awk 'NR==2 {print $(NF-2)}' | sed 's/G$//')
 if [ "$DISK_AVAILABLE" -lt "$MIN_FREE_DISK_GB" ]; then
   echo "⚠ Low disk space (${DISK_AVAILABLE}GB). Running Docker cleanup..."
@@ -704,8 +704,9 @@ NGINX_CONF_SRC="$PROJECT_DIR/nginx.conf"
 NGINX_CONF_DEST="/etc/nginx/sites-available/cancerbot"
 if [ -f "$NGINX_CONF_SRC" ]; then
   echo "Updating nginx config..."
-  sudo cp "$NGINX_CONF_SRC" "$NGINX_CONF_DEST"
-  echo "✓ Nginx config updated"
+  # Fill in this checkout's path (nginx.conf can't know where the repo lives).
+  sed "s#__PROJECT_DIR__#${PROJECT_DIR}#g" "$NGINX_CONF_SRC" | sudo tee "$NGINX_CONF_DEST" > /dev/null
+  echo "✓ Nginx config updated (web root: $PROJECT_DIR/client/dist)"
 fi
 
 if sudo nginx -t &>/dev/null; then

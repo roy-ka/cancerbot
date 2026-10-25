@@ -6,7 +6,7 @@ This is the EC2-specific part of a deployment. Everything after the instance exi
 
 - **AMI:** Ubuntu 24.04 LTS
 - **Memory:** 4 GB is the minimum. More is better: two OpenSearch nodes, PostgreSQL, Redis, the NLP service (scispaCy + a cross-encoder) and Ollama all run on this one host.
-- **Disk:** at least **50 GB**. `scripts/deploy.sh` refuses to deploy with less than 20 GB free.
+- **Disk:** at least **50 GB**. `scripts/deploy.sh` refuses to deploy with less than 10 GB free.
 - **Security group, inbound:**
   - 22 (SSH) from your IP only
   - 80 and 443 from anywhere (nginx, Let's Encrypt)
