@@ -2,6 +2,12 @@ fastapi[standard]
 uvicorn
 python-dotenv
 spacy>=3.7.5,<3.8.0
+# preshed is a compiled spaCy dependency that spaCy doesn't cap. 3.0.14 is
+# binary-incompatible with spaCy 3.7: loading en_core_sci_sm crashes in the
+# tokenizer with "OverflowError: Python int too large to convert to C
+# ssize_t". Remove this pin only together with a spaCy upgrade, after
+# checking that the model still loads.
+preshed<3.0.14
 # scispacy installed with --no-deps in Dockerfile to skip nmslib-metabrainz (entity-linking only, unused)
 numpy>=1.24.0,<2.0.0
 requests
