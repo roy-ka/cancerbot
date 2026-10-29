@@ -15,6 +15,8 @@ python scripts/restore_db.py backups/cancerbot_20250524_120000.dump
 
 ## Automated Daily Backups
 
+On the production server, follow Phase 9 of `docs/server-runbook.html`: the script runs outside Docker, so it needs its own virtual environment, `pg_dump`, and host-side `POSTGRES_URL` / `OPENSEARCH_URL` settings.
+
 **Option 1: Cron job (Linux/Mac)**
 
 Make the script executable:

@@ -12,6 +12,7 @@ drive_token.json
 venv/
 .venv/
 .venv-nlp/
+.venv-backup/
 env/
 ENV/
 

@@ -359,7 +359,7 @@
     <h1>Standing up a new CancerBot server, start to finish</h1>
     <p>Every command and cloud-console step needed to take a bare Hetzner Cloud server to a working <code class="inline">https://cancer-bot.com</code> deployment — in the order that avoids the dead ends we hit the first time. Run each code block on its own; don't paste multiple commands as one block.</p>
     <div class="hero-meta">
-      <span class="pill">8 phases</span>
+      <span class="pill">9 phases</span>
       <span class="pill">3 code fixes already in the repo</span>
       <span class="pill">Hetzner Cloud · Cloudflare · Let's Encrypt</span>
     </div>
@@ -375,6 +375,7 @@
     <a href="#p6"><span class="n">06</span> OpenSearch TLS certs</a>
     <a href="#p7"><span class="n">07</span> Run deploy.sh</a>
     <a href="#p8"><span class="n">08</span> Verify</a>
+    <a href="#p9"><span class="n">09</span> Daily backups</a>
     <div class="rail-divider"></div>
     <a href="#fixes"><span class="n">→</span> Fixes already merged</a>
     <a href="#trouble"><span class="n">→</span> Troubleshooting index</a>
@@ -409,7 +410,7 @@ cp example.env .env</pre>
 <span class="v">REDIS_PASSWORD</span>=...
 <span class="v">BREVO_API_KEY</span>=...                            <span class="c"># required: every sign-in is a code sent by email</span></pre>
       <p>Optional: <code class="inline">NINJA_EMAIL</code> (admin console — it signs in with a code sent to that address, so it must be a real inbox; <code class="inline">NINJA_PASSWORD</code> is no longer used and can be removed), <code class="inline">ADMIN_DIGEST_EMAILS</code> (daily/weekly digests), <code class="inline">UNPAYWALL_EMAIL</code>, and the Axiom trio <code class="inline">AXIOM_TOKEN_WRITE</code> / <code class="inline">AXIOM_TOKEN_READ</code> / <code class="inline">AXIOM_DATASET</code>. <code class="inline">OPENSEARCH_CA_CERT</code> is set in Phase 6.</p>
-      <p><b>Don't set</b> <code class="inline">POSTGRES_URL</code>, <code class="inline">OPENSEARCH_URL</code>, <code class="inline">OLLAMA_URL</code>, <code class="inline">NLP_SERVICE_URL</code> or <code class="inline">REDIS_URL</code> — the compose files give the containers the in-network values. <b>Never set</b> <code class="inline">DEV_EMAIL_SHORTCUTS</code> here.</p>
+      <p>The containers don't need <code class="inline">POSTGRES_URL</code>, <code class="inline">OPENSEARCH_URL</code>, <code class="inline">OLLAMA_URL</code>, <code class="inline">NLP_SERVICE_URL</code> or <code class="inline">REDIS_URL</code> — the compose files give them the in-network values, and those override anything in <code class="inline">.env</code>. The only host-side values you add are the backup ones in Phase 9. <b>Never set</b> <code class="inline">DEV_EMAIL_SHORTCUTS</code> here.</p>
       <div class="callout">
         <span class="label">The backend refuses to start when</span>
         <code class="inline">ENV</code> is missing; <code class="inline">ENV=production</code> without <code class="inline">FRONTEND_URL</code>; the LLM settings are incomplete (<code class="inline">LLM_PROVIDER</code> unknown, or the chosen provider's key/model missing — with no <code class="inline">LLM_PROVIDER</code> it expects a local Ollama model); <code class="inline">CORS_ORIGINS=*</code>; <code class="inline">DEV_EMAIL_SHORTCUTS</code> set in production; <code class="inline">JWT_SECRET</code> shorter than 32 characters; or OpenSearch reached over plain <code class="inline">http://</code> in production. The container log names the exact problem.
@@ -553,6 +554,36 @@ sudo ss -tlnp | grep 11434   <span class="c"># should now read 0.0.0.0:11434, no
       <p>Then load <code class="inline">https://cancer-bot.com</code> in a browser and confirm the app itself renders, not just the health endpoint. Sign in once: the 6-digit code arriving by email proves Brevo and the worker are both working — without them nobody can log in.</p>
     </section>
 
+    <section class="phase" id="p9">
+      <div class="phase-head"><span class="phase-num">09</span><h2>Schedule the daily backup</h2></div>
+      <p class="phase-why"><code class="inline">scripts/daily_backup.sh</code> dumps PostgreSQL and exports the OpenSearch indices into <code class="inline">backups/</code> (keeping 7 days, optionally uploading to S3 or Google Drive). Unlike the app, it runs on the host, outside Docker — so it needs its own Python environment, <code class="inline">pg_dump</code>, and host-side addresses for the two databases. Nothing schedules it until you add the cron line below.</p>
+
+      <h3 class="step">Install a Python environment and pg_dump</h3>
+      <p>Ubuntu refuses a system-wide <code class="inline">pip install</code> (<code class="inline">externally-managed-environment</code>), so use a virtual environment. It needs <code class="inline">requirements.txt</code> too, because the OpenSearch export imports the app's own OpenSearch code. A newer <code class="inline">pg_dump</code> than the PostgreSQL 16 server is fine.</p>
+      <pre>apt-get install -y python3-venv python3-full postgresql-client</pre>
+      <pre>python3 -m venv /root/cancerbot/.venv-backup</pre>
+      <pre>/root/cancerbot/.venv-backup/bin/pip install -r requirements.txt -r requirements-backup.txt</pre>
+      <p><code class="inline">.venv-backup/</code> is git-ignored, and <code class="inline">deploy.sh</code>'s <code class="inline">git reset --hard</code> leaves it alone. Rerun the <code class="inline">pip install</code> after a deploy that changes either requirements file.</p>
+
+      <h3 class="step">Add the host-side addresses to .env</h3>
+      <p>The compose files override these for the containers, so they only affect scripts run on the host:</p>
+      <pre><span class="v">POSTGRES_URL</span>=postgresql://cancerbot:${POSTGRES_PASSWORD}@localhost:5432/cancerbot
+<span class="v">OPENSEARCH_URL</span>=https://localhost:9200
+<span class="v">OPENSEARCH_CA_CERT</span>=/root/cancerbot/certs/opensearch/root-ca.pem   <span class="c"># from Phase 6; its cert covers localhost</span>
+<span class="v">EMBED_MODEL_NAME</span>=nomic-embed-text</pre>
+      <p>Paste those lines exactly — <code class="inline">${POSTGRES_PASSWORD}</code> is filled in from the same <code class="inline">.env</code> when the scripts load it, so the password isn't copied a second time. The OpenSearch password is likewise read from <code class="inline">OPENSEARCH_INITIAL_ADMIN_PASSWORD</code> (Phase 1). One catch: because the password ends up inside a URL, a <code class="inline">POSTGRES_PASSWORD</code> containing <code class="inline">#</code>, <code class="inline">/</code>, <code class="inline">@</code>, <code class="inline">?</code> or <code class="inline">%</code> breaks it (<code class="inline">backup_db.py</code> then fails with "port could not be parsed"). Letters and digits are always safe.</p>
+
+      <h3 class="step">Run it once, then schedule it</h3>
+      <p>The script calls plain <code class="inline">python3</code>, so put the virtual environment first on the <code class="inline">PATH</code>:</p>
+      <pre>PATH=/root/cancerbot/.venv-backup/bin:$PATH ./scripts/daily_backup.sh</pre>
+      <p>When that ends with <code class="inline">Backup complete</code>, add it to <code class="inline">crontab -e</code> (02:00 server time, every day):</p>
+      <pre>0 2 * * * PATH=/root/cancerbot/.venv-backup/bin:/usr/bin:/bin /root/cancerbot/scripts/daily_backup.sh &gt;&gt; /root/cancerbot/backups/cron.log 2&gt;&amp;1</pre>
+      <div class="callout">
+        <span class="label">Backups on the same disk aren't off-site</span>
+        Without <code class="inline">BACKUP_S3_BUCKET</code> or the Google Drive settings (see <code class="inline">BACKUP.md</code>), every copy lives on this server, and losing the server loses them too. Restores: <code class="inline">scripts/restore_db.py</code> for PostgreSQL, <code class="inline">scripts/restore_opensearch.py</code> for the indices (both in <code class="inline">BACKUP.md</code>).
+      </div>
+    </section>
+
     <section class="phase" id="fixes">
       <div class="phase-head"><h2>Fixes already merged into the repo</h2></div>
       <p class="phase-why">Nothing to run for these — they're here so a future "why is this stuck?" moment doesn't repeat the same investigation. All three shipped as part of this same deploy.</p>
@@ -664,6 +695,11 @@ sudo ss -tlnp | grep 11434   <span class="c"># should now read 0.0.0.0:11434, no
           <td class="sym">OpenSearch never becomes healthy after the switch to one node; its log says <code class="inline">cluster-manager not discovered</code></td>
           <td>The data volume still holds the old two-node cluster's state, which keeps waiting for <code class="inline">opensearch-node2</code></td>
           <td class="fix">Stop OpenSearch and remove the <code class="inline">cancerbot_os-data1</code> and <code class="inline">cancerbot_os-data2</code> volumes (the index only caches search results and refills with use), then rerun deploy.sh</td>
+        </tr>
+        <tr>
+          <td class="sym"><code class="inline">pip install</code>: <code class="inline">externally-managed-environment</code></td>
+          <td>Ubuntu blocks system-wide pip installs</td>
+          <td class="fix">Phase 9 — use <code class="inline">.venv-backup</code></td>
         </tr>
         <tr>
           <td class="sym">Sign-in code email never arrives</td>
