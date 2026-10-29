@@ -13,6 +13,7 @@ venv/
 venv_test/
 .venv/
 .venv-nlp/
+.venv-backup/
 env/
 ENV/
 pyvenv.cfg
