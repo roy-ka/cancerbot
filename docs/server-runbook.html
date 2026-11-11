@@ -399,7 +399,7 @@ cp example.env .env</pre>
       <h3 class="step">Fill in .env</h3>
       <p><code class="inline">example.env</code> documents every variable. For production, set at least:</p>
       <pre><span class="v">ENV</span>=production
-<span class="v">FRONTEND_URL</span>=https://cancer-bot.com          <span class="c"># origin used in every emailed link</span>
+<span class="v">FRONTEND_URL</span>=https://cancer-bot.com          <span class="c"># share links + every emailed link — not example.env's localhost</span>
 <span class="v">CORS_ORIGINS</span>=https://cancer-bot.com,https://www.cancer-bot.com
 <span class="v">LLM_PROVIDER</span>=groq                            <span class="c"># default is ollama — production uses Groq</span>
 <span class="v">GROQ_API_KEY</span>=...
@@ -410,6 +410,10 @@ cp example.env .env</pre>
 <span class="v">REDIS_PASSWORD</span>=...
 <span class="v">BREVO_API_KEY</span>=...                            <span class="c"># required: every sign-in is a code sent by email</span></pre>
       <p>Optional: <code class="inline">NINJA_EMAIL</code> (admin console — it signs in with a code sent to that address, so it must be a real inbox; <code class="inline">NINJA_PASSWORD</code> is no longer used and can be removed), <code class="inline">ADMIN_DIGEST_EMAILS</code> (daily/weekly digests), <code class="inline">UNPAYWALL_EMAIL</code>, and the Axiom trio <code class="inline">AXIOM_TOKEN_WRITE</code> / <code class="inline">AXIOM_TOKEN_READ</code> / <code class="inline">AXIOM_DATASET</code>. <code class="inline">OPENSEARCH_CA_CERT</code> is set in Phase 6.</p>
+      <div class="callout danger">
+        <span class="label">Replace FRONTEND_URL's localhost value</span>
+        <code class="inline">example.env</code> ships <code class="inline">FRONTEND_URL=http://localhost:5173</code>. The backend only refuses to start when it's <i>missing</i>, so a copied <code class="inline">localhost</code> value deploys fine — and then every "Share conversation" link and every account-deletion / email-change email points at <code class="inline">http://localhost:5173</code>. Set it to the public <code class="inline">https://</code> address.
+      </div>
       <p>The containers don't need <code class="inline">POSTGRES_URL</code>, <code class="inline">OPENSEARCH_URL</code>, <code class="inline">OLLAMA_URL</code>, <code class="inline">NLP_SERVICE_URL</code> or <code class="inline">REDIS_URL</code> — the compose files give them the in-network values, and those override anything in <code class="inline">.env</code>. The only host-side values you add are the backup ones in Phase 9. <b>Never set</b> <code class="inline">DEV_EMAIL_SHORTCUTS</code> here.</p>
       <div class="callout">
         <span class="label">The backend refuses to start when</span>
@@ -700,6 +704,11 @@ sudo ss -tlnp | grep 11434   <span class="c"># should now read 0.0.0.0:11434, no
           <td class="sym"><code class="inline">pip install</code>: <code class="inline">externally-managed-environment</code></td>
           <td>Ubuntu blocks system-wide pip installs</td>
           <td class="fix">Phase 9 — use <code class="inline">.venv-backup</code></td>
+        </tr>
+        <tr>
+          <td class="sym">Share links (and links in emails) start with <code class="inline">http://localhost:5173</code></td>
+          <td><code class="inline">FRONTEND_URL</code> in <code class="inline">.env</code> still holds <code class="inline">example.env</code>'s localhost value</td>
+          <td class="fix">Set <code class="inline">FRONTEND_URL=https://cancer-bot.com</code>, then <code class="inline">docker compose -f docker-compose.yml -f docker-compose.prod.yml -p cancerbot --profile prod up -d --force-recreate backend worker</code> (a plain restart keeps the old value). Old links work with the domain swapped in.</td>
         </tr>
         <tr>
           <td class="sym">Sign-in code email never arrives</td>
