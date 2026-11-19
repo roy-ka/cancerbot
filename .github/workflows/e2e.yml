@@ -23,7 +23,9 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          # See .nvmrc — this job was pinned to Node 20, which reached EOL on
+          # 2026-04-30 and no longer receives security patches.
+          node-version-file: '.nvmrc'
           cache: 'npm'
           cache-dependency-path: e2e/package-lock.json
 

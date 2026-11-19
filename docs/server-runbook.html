@@ -393,7 +393,7 @@ cd cancerbot
 cp example.env .env</pre>
 
       <h3 class="step">Host prerequisites</h3>
-      <p>Install these once: <b>git</b>, <b>Docker</b> with the compose plugin (<code class="inline">docker compose version</code> must work), and <b>Node.js 20.19+</b> — <code class="inline">deploy.sh</code> builds the frontend on the host with npm, not in a container. <b>Trivy</b> is optional: if it's installed, <code class="inline">deploy.sh</code> scans the built images and aborts on fixable HIGH/CRITICAL findings; if not, it warns and skips the scan.</p>
+      <p>Install these once: <b>git</b>, <b>Docker</b> with the compose plugin (<code class="inline">docker compose version</code> must work), and <b>Node.js 26 LTS</b> (the version in <code class="inline">.nvmrc</code>; <code class="inline">nvm install</code> in the repo root picks it up) — <code class="inline">deploy.sh</code> builds the frontend on the host with npm, not in a container. Node 20 reached end of life on 2026-04-30 and no longer gets security patches, so don't stay on it. <b>Trivy</b> is optional: if it's installed, <code class="inline">deploy.sh</code> scans the built images and aborts on fixable HIGH/CRITICAL findings; if not, it warns and skips the scan.</p>
       <pre>sudo apt-get install -y trivy   <span class="c"># optional — after adding Aqua's apt repo</span></pre>
 
       <h3 class="step">Fill in .env</h3>

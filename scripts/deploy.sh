@@ -346,10 +346,10 @@ fi
 
 if [ -z "$NPM_PATH" ] || [ ! -f "$NPM_PATH" ]; then
   echo "✗ Error: npm not found"
-  echo "Please install Node.js 22 via nvm:"
+  echo "Please install Node.js via nvm (version from .nvmrc, currently 26 LTS):"
   echo "  curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash"
   echo "  source ~/.bashrc"
-  echo "  nvm install 22"
+  echo "  nvm install   # reads .nvmrc from the repo root"
   exit 1
 fi
 
