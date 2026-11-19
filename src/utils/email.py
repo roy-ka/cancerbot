@@ -177,10 +177,12 @@ async def send_weekly_admin_digest_email(template_data: dict) -> int:
 
 async def send_login_code_email(to: str, name: str, code: str, minutes: int) -> bool:
     """The 6-digit sign-in code (src/routers/auth.py). Unlike the link
-    emails below, the code isn't logged outside production: there's no
-    local-host test to tell a dev machine from staging, and a logged code is
-    a working login for that account. Local development gets the code from
-    the API response instead (DEV_EMAIL_SHORTCUTS)."""
+    emails below, the code is never logged: there's no local-host test to
+    tell a dev machine from staging, a logged code is a working login for
+    that account, and the root logger forwards INFO+ to Axiom. Local
+    development gets the code from the API response and a console banner
+    instead, both gated on DEV_EMAIL_SHORTCUTS (see
+    `_print_dev_login_code` in src/routers/auth.py)."""
     return await _deliver(to, "login_code", {"name": name, "code": code, "minutes": minutes})
 
 

@@ -118,7 +118,35 @@ async def _send_login_code(db: Session, email: str, name: str, user_id=None) -> 
     resp: dict = {"ok": True, "email": email}
     if dev_email_shortcuts():
         resp["dev_code"] = code
+        _print_dev_login_code(email, code)
     return resp
+
+
+def _print_dev_login_code(email: str, code: str) -> None:
+    """Show the sign-in code on the dev console, under the same
+    DEV_EMAIL_SHORTCUTS gate that already returns it as `dev_code` — so this
+    adds no exposure the flag doesn't already grant, and is never active in
+    production (`dev_email_shortcuts()` returns False there, and `main.py`
+    refuses to start with the flag set).
+
+    Logged here rather than in `send_login_code_email`, because that sender
+    runs in the arq worker and local dev usually runs the backend alone — the
+    code would never be shown.
+
+    Deliberately `print`, not `logger`: `_init_axiom_logging` attaches a
+    handler to the *root* logger that forwards INFO+ to Axiom, so a logged
+    code would be shipped to a third-party store by anyone who has both this
+    flag and the Axiom vars set — the same leak the link-token logs needed
+    `_redact_token()` to close. `print` reaches the console only.
+    """
+    banner = "=" * 60
+    print(
+        f"\n{banner}\n"
+        f"  DEV SIGN-IN CODE for {email}: {code}\n"
+        f"  valid {LOGIN_CODE_TTL_MINUTES} minutes\n"
+        f"{banner}\n",
+        flush=True,
+    )
 
 
 def _check_code_send_limit(db: Session, email: str) -> None:

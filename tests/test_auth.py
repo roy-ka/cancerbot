@@ -1,3 +1,5 @@
+import logging
+
 import pytest
 from datetime import datetime, timedelta, timezone
 
@@ -295,6 +297,65 @@ class TestDevEmailShortcuts:
         monkeypatch.setenv("DEV_EMAIL_SHORTCUTS", "false")
         response = anon_client.post("/auth/request-code/", json={"email": test_user.email})
         assert "dev_code" not in response.json()
+
+
+class TestDevLoginCodeOnConsole:
+    """The code is printed to the dev console under the same
+    DEV_EMAIL_SHORTCUTS gate that returns it as `dev_code`. It must never be
+    printed without that flag — a code is a complete login for the account,
+    and on staging that would let anyone sign in as anyone.
+
+    It goes through `print`, not `logger`, on purpose: the root logger
+    forwards INFO+ to Axiom, so a logged code would reach a third-party store.
+    """
+
+    def test_code_is_printed_when_shortcuts_enabled(self, anon_client, test_user, monkeypatch, capsys):
+        monkeypatch.setenv("DEV_EMAIL_SHORTCUTS", "true")
+        response = anon_client.post("/auth/request-code/", json={"email": test_user.email})
+        code = response.json()["dev_code"]
+
+        printed = capsys.readouterr().out
+        assert "DEV SIGN-IN CODE" in printed
+        assert code in printed
+        assert test_user.email in printed
+
+    def test_code_is_not_printed_when_shortcuts_disabled(self, anon_client, test_user, monkeypatch, capsys):
+        monkeypatch.setenv("DEV_EMAIL_SHORTCUTS", "false")
+        response = anon_client.post("/auth/request-code/", json={"email": test_user.email})
+
+        # Asserted so the check below can't pass merely because the request failed.
+        assert response.status_code == 200
+        printed = capsys.readouterr().out
+        assert "DEV SIGN-IN CODE" not in printed
+
+    def test_code_is_not_printed_in_production(self, anon_client, test_user, monkeypatch, capsys):
+        # The flag is set, but production must still suppress it —
+        # dev_email_shortcuts() ignores the flag there.
+        monkeypatch.setenv("DEV_EMAIL_SHORTCUTS", "true")
+        monkeypatch.setattr("src.utils.utils.ENV", "production")
+        response = anon_client.post("/auth/request-code/", json={"email": test_user.email})
+
+        assert response.status_code == 200
+        printed = capsys.readouterr().out
+        assert "DEV SIGN-IN CODE" not in printed
+
+    def test_unknown_email_prints_nothing(self, anon_client, monkeypatch, capsys):
+        """No account, no code issued — so nothing to print either."""
+        monkeypatch.setenv("DEV_EMAIL_SHORTCUTS", "true")
+        anon_client.post("/auth/request-code/", json={"email": "nobody@example.com"})
+
+        printed = capsys.readouterr().out
+        assert "DEV SIGN-IN CODE" not in printed
+
+    def test_code_is_not_sent_through_the_logging_module(self, anon_client, test_user, monkeypatch, caplog):
+        """Pins the Axiom protection: the root logger forwards INFO+ to a
+        third-party store, so the code must not pass through logging."""
+        monkeypatch.setenv("DEV_EMAIL_SHORTCUTS", "true")
+        with caplog.at_level(logging.DEBUG):
+            response = anon_client.post("/auth/request-code/", json={"email": test_user.email})
+        code = response.json()["dev_code"]
+
+        assert code not in caplog.text
 
 
 class TestEmailCaseInsensitivity:
