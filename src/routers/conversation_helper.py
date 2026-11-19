@@ -508,6 +508,36 @@ async def _extract_term_groups_from_message(text: str) -> tuple[list[str], list[
         return [], []
 
 
+def _search_terms_provider() -> str:
+    """'llm' (default) uses the LLM to generate semantic medical search terms;
+    'nlp' uses the scispaCy entity extraction + MeSH synonym service. Any
+    unrecognised value falls back to 'llm'."""
+    value = os.getenv("SEARCH_TERMS_PROVIDER", "llm").strip().lower()
+    return value if value in ("llm", "nlp") else "llm"
+
+
+async def _generate_search_term_groups(text: str) -> tuple[list[str], list[dict]]:
+    """LLM-generate (terms, entity_groups) for one question, replacing the NLP
+    extraction. Returns the same shape as _extract_term_groups_from_message.
+
+    On an empty result (LLM failure or a question with no medical concepts),
+    falls back to NLP extraction so retrieval is never left blind. The LLM is
+    robust to typos, so spelling correction is skipped on this path."""
+    logger.info("[conversation_helper] _generate_search_term_groups input: %r", (text or "")[:200])
+    try:
+        result = await OllamaConnector.generate_search_terms(text or "")
+        terms = result.get("terms") or []
+        groups = result.get("entity_groups") or []
+    except Exception as e:
+        logger.error(f"[search_terms] generate_search_terms failed: {type(e).__name__}: {e}")
+        terms, groups = [], []
+    if terms:
+        logger.info("[conversation_helper] _generate_search_term_groups output: terms=%s groups=%s", terms, groups)
+        return terms, groups
+    logger.info("[conversation_helper] LLM produced no terms, falling back to NLP extraction")
+    return await _extract_term_groups_from_message(text)
+
+
 def _merge_entity_groups(groups_per_message: list[list[dict]]) -> list[dict]:
     """Merge entity groups from multiple messages, deduping by term (case-insensitive)."""
     merged: dict[str, dict] = {}
@@ -517,14 +547,25 @@ def _merge_entity_groups(groups_per_message: list[list[dict]]) -> list[dict]:
             if not term:
                 continue
             key = term.lower()
+            category = (g.get("category") or "").strip()
             if key not in merged:
-                merged[key] = {"term": term, "synonyms": list(g.get("synonyms") or [])}
+                entry = {"term": term, "synonyms": list(g.get("synonyms") or []), "category": category}
+                # Only the LLM path sets `kind`; omitting it for NLP groups
+                # keeps _build_boolean_term_query's "condition" default.
+                if g.get("kind"):
+                    entry["kind"] = g["kind"]
+                merged[key] = entry
             else:
                 existing_syn = {s.lower() for s in merged[key]["synonyms"]}
                 for s in g.get("synonyms") or []:
                     if s.lower() not in existing_syn:
                         merged[key]["synonyms"].append(s)
                         existing_syn.add(s.lower())
+                # Keep category through the merge (it drives disease_areas and
+                # the boolean query's category OR term); fill an empty one if a
+                # later group for the same term supplies it.
+                if category and not merged[key].get("category"):
+                    merged[key]["category"] = category
     return list(merged.values())
 
 
@@ -564,6 +605,16 @@ def _build_boolean_term_query(
         for g in entity_groups[:max_groups]:
             group_terms = [g["term"], *g.get("synonyms", [])]
             category = g.get("category")
+            # The category widens a *disease* group (GBM also matching "brain
+            # cancer"). It must not widen a drug/biomarker/procedure group: its
+            # category is the cancer area the concept is being asked about, so
+            # folding it in as an alternative would let a paper satisfy that
+            # clause without mentioning the drug at all — which collapses the
+            # AND-of-OR-groups query back into the behaviour it exists to fix.
+            # NLP groups carry no `kind` and have always been treated as
+            # diseases here, so that stays the default.
+            if g.get("kind", "condition") != "condition":
+                category = None
             if category and category.lower() not in {t.lower() for t in group_terms}:
                 group_terms.append(category)
             clause = " OR ".join(f"({t})" for t in group_terms)
@@ -1223,9 +1274,15 @@ async def search_and_embed(
 
     entity_groups: list[dict] = []
     if search_text:
-        await emit("extracting_search_terms", {"source": "nlp"})
-        async with timed_stage('extract_search_terms'):
-            latest_terms, latest_groups = await _extract_term_groups_from_message(search_text)
+        provider = _search_terms_provider()
+        await emit("extracting_search_terms", {"source": provider})
+        async with timed_stage('extract_search_terms', provider=provider):
+            if provider == "llm":
+                # Semantic, meaning-based medical terms from the LLM, with NLP
+                # extraction as the on-failure fallback (inside the helper).
+                latest_terms, latest_groups = await _generate_search_term_groups(search_text)
+            else:
+                latest_terms, latest_groups = await _extract_term_groups_from_message(search_text)
         entity_groups = _merge_entity_groups([latest_groups])
     else:
         latest_terms = []

@@ -247,9 +247,12 @@ class TestSearchAndEmbedUsesFreshGroupsForCurrentMessage:
             await search_and_embed(conversation)
 
         _, pubmed_kwargs = mock_pubmed.call_args
+        # _merge_entity_groups normalises a missing category to "" — it carries
+        # category through so disease_areas and the boolean query's category OR
+        # term still see it.
         assert pubmed_kwargs["entity_groups"] == [
-            {"term": "Mebendazole", "synonyms": []},
-            {"term": "GBM", "synonyms": ["glioblastoma"]},
+            {"term": "Mebendazole", "synonyms": [], "category": ""},
+            {"term": "GBM", "synonyms": ["glioblastoma"], "category": ""},
         ]
 
 

@@ -552,10 +552,16 @@ SUMMARY:
     yield {"_model": model}
 
   @classmethod
-  async def complete(cls, prompt: str, *, label: str) -> str | None:
+  async def complete(cls, prompt: str, *, label: str, temperature: float | None = None) -> str | None:
     """Non-streaming completion for short utility calls (query rewrite,
     personal-question classification, titles, URL classification), on the
     one provider LLM_PROVIDER selects.
+
+    `temperature` is optional and left unset (provider default) unless a
+    caller asks for one — generate_search_terms pins it to 0, since at the
+    default temperature the model sampled unrelated drugs into a concept's
+    synonym list, and a wrong synonym inside an OR group makes a paper about
+    the wrong drug satisfy that clause.
 
     Returns the reply text, or None if the provider failed or returned
     nothing — callers apply their own fail-safe default. Never raises."""
@@ -566,19 +572,31 @@ SUMMARY:
         model = cls._ollama_gen_model()
         if not model:
           raise LLMUnavailableError("OLLAMA_GEN_MODEL is not set")
-        response = await cls._get_async_ollama().chat(model=model, messages=messages)
+        kwargs: dict[str, Any] = {}
+        if temperature is not None:
+          kwargs["options"] = {"temperature": temperature}
+        response = await cls._get_async_ollama().chat(model=model, messages=messages, **kwargs)
         text = (response.message.content if response.message else "") or ""
       elif provider == "groq":
+        kwargs = {}
+        if temperature is not None:
+          kwargs["temperature"] = temperature
         completion = await cls._get_async_groq().chat.completions.create(
           model=cls.groq_model,
           messages=messages,
           # gpt-oss-120b is a reasoning model; these are quick classify/rewrite
           # calls, so keep its hidden reasoning short.
           reasoning_effort="low",
+          **kwargs,
         )
         text = (completion.choices[0].message.content if completion.choices else "") or ""
       elif provider == "gemini":
-        response = await cls.gemini.aio.models.generate_content(model=cls._gemini_model(), contents=prompt)
+        kwargs = {}
+        if temperature is not None:
+          kwargs["config"] = {"temperature": temperature}
+        response = await cls.gemini.aio.models.generate_content(
+          model=cls._gemini_model(), contents=prompt, **kwargs
+        )
         text = response.text or ""
       else:
         raise LLMUnavailableError(f"LLM_PROVIDER={provider!r} is not one of {', '.join(LLM_PROVIDERS)}")
@@ -707,6 +725,160 @@ SUMMARY:
     except Exception as exc:
       logger.warning("[personal_question] unparseable reply (%s: %s), assuming general question", type(exc).__name__, exc)
       return fallback
+
+  # Coarse cancer categories the term generator is steered toward, so the
+  # `category` it emits stays a small, stable vocabulary that the retrieval
+  # `disease_areas` boost can actually match on (the NLP service derived this
+  # from nlp_service/synonyms.py:get_category; here the LLM picks the closest
+  # one). An unlisted site is allowed as a free-text fallback — it just won't
+  # line up with previously-indexed sources as reliably.
+  _SEARCH_TERM_CATEGORIES = (
+    "brain cancer", "lung cancer", "breast cancer", "prostate cancer",
+    "colorectal cancer", "pancreatic cancer", "ovarian cancer", "liver cancer",
+    "kidney cancer", "bladder cancer", "skin cancer", "melanoma",
+    "leukemia", "lymphoma", "myeloma", "sarcoma", "thyroid cancer",
+    "head and neck cancer", "esophageal cancer", "stomach cancer",
+    "cervical cancer", "endometrial cancer", "bone cancer",
+  )
+
+  # The model's output becomes external-API query text and indexed tags, so
+  # it's bounded here rather than trusted: a crafted question can otherwise
+  # coax back dozens of groups or a single enormous "term" and blow up the
+  # PubMed/ClinicalTrials boolean query.
+  _MAX_TERM_GROUPS = 8
+  _MAX_TERM_SYNONYMS = 8
+  _MAX_TERM_CHARS = 100
+  # `kind` exists so _build_boolean_term_query can tell a disease group (whose
+  # category legitimately widens its OR clause: GBM also matching "brain
+  # cancer") from a drug/biomarker group (where folding the cancer area in as
+  # an alternative would let a paper match the clause without mentioning the
+  # drug at all, collapsing the AND-of-OR-groups query).
+  _TERM_KINDS = ("condition", "drug", "biomarker", "procedure", "other")
+
+  # Characters that carry meaning in the PubMed / ClinicalTrials.gov query
+  # syntax _build_boolean_term_query emits: terms are interpolated into it
+  # raw as `(term)`, so a model-supplied "Mebendazole (benzo[d]imidazole
+  # derivative)" would both unbalance the parentheses and have PubMed read
+  # `[d]` as a field tag. MeSH synonyms never contained these; LLM output
+  # does, so they're stripped here at the boundary.
+  _TERM_PUNCT_RE = re.compile(r'[()\[\]"]+')
+
+  @staticmethod
+  def _clean_term(value: Any) -> str:
+    """Query-safe, whitespace-collapsed, length-capped term; "" for anything
+    non-string or empty once cleaned."""
+    if not isinstance(value, str):
+      return ""
+    cleaned = OllamaConnector._TERM_PUNCT_RE.sub(" ", value)
+    return " ".join(cleaned.split())[:OllamaConnector._MAX_TERM_CHARS].strip()
+
+  @classmethod
+  async def generate_search_terms(cls, question: str) -> dict:
+    """LLM-generate medical search terms for one (already history-resolved)
+    question, replacing the scispaCy entity extraction + MeSH synonym lookup
+    with a semantic, meaning-based expansion: canonical medical terminology
+    for the conditions/drugs/biomarkers the question is really about, each
+    with its own concept synonyms and a coarse cancer category.
+
+    Returns {"entity_groups": [{"term","synonyms","category"}], "terms": [...]}
+    in the exact shape the NLP path produced, so everything downstream
+    (_build_boolean_term_query, _representative_terms, disease_areas) is
+    unchanged. `terms` is the flat union of every group's term + synonyms.
+
+    Fails safe to {"entity_groups": [], "terms": []} on any error or
+    unparseable output — the caller then falls back to NLP extraction, so a
+    failure here never leaves retrieval blind. Never raises.
+    """
+    empty: dict = {"entity_groups": [], "terms": []}
+    question = (question or "").strip()
+    if not question:
+      return empty
+
+    categories = ", ".join(cls._SEARCH_TERM_CATEGORIES)
+    prompt = (
+      "You turn a cancer-information question into medical search terms for a "
+      "literature search (PubMed, ClinicalTrials.gov, etc.).\n\n"
+      "For each distinct medical concept the question is really about (a cancer "
+      "type, a drug or therapy, a biomarker/mutation, a procedure), output a "
+      "group with:\n"
+      "- \"term\": the single best canonical medical name for that concept "
+      "(prefer the formal term, e.g. \"glioblastoma\" over \"brain tumor\", "
+      "\"pembrolizumab\" over \"Keytruda\").\n"
+      "- \"synonyms\": other names and closely equivalent medical phrasings for "
+      "the SAME concept (abbreviations, brand/generic, MeSH-style variants). "
+      "Do not put different concepts in one group. Include a synonym ONLY if "
+      "you are certain it names that same concept — these become OR "
+      "alternatives in a literature query, so one wrong name silently matches "
+      "the wrong papers. Prefer two or three certain synonyms over a longer, "
+      "shakier list, and use [] if none is certain.\n"
+      "- \"kind\": what the concept is — one of \"condition\", \"drug\", "
+      "\"biomarker\", \"procedure\", \"other\".\n"
+      "- \"category\": the single closest coarse cancer area, chosen from this "
+      f"list when one fits: {categories}. Use \"\" if none fits. For a drug, "
+      "biomarker or procedure, give the cancer area it is being asked about "
+      "here (or \"\" if none) — it is recorded for that purpose, not treated as "
+      "another name for the concept.\n\n"
+      "Every term and synonym must be a plain search phrase on its own — no "
+      "parenthetical qualifiers, brackets, quotes or explanations "
+      "(write \"mebendazole\", not \"mebendazole (anthelmintic)\").\n"
+      "Capture the meaning, not just the literal words: infer the specific "
+      "condition a lay description implies, but never invent a drug or biomarker "
+      "the question does not point to. Omit generic non-medical words. If the "
+      "question is not about a medical topic, return an empty groups list.\n\n"
+      f'Question: "{question[:600]}"\n\n'
+      "Respond with ONLY a JSON object, no other text, in exactly this shape:\n"
+      '{"groups": [{"term": "...", "synonyms": ["..."], "kind": "...", "category": "..."}]}'
+    )
+    raw = await cls.complete(prompt, label="search_terms", temperature=0)
+    if not raw:
+      return empty
+    try:
+      raw = raw.strip().strip('`')
+      if raw.lower().startswith('json'):
+        raw = raw[4:].strip()
+      parsed = json.loads(raw)
+      groups_in = parsed.get("groups") if isinstance(parsed, dict) else None
+      if not isinstance(groups_in, list):
+        return empty
+      entity_groups: list[dict] = []
+      seen_terms: set[str] = set()
+      flat: list[str] = []
+      flat_seen: set[str] = set()
+      for g in groups_in:
+        if len(entity_groups) >= cls._MAX_TERM_GROUPS:
+          break
+        if not isinstance(g, dict):
+          continue
+        term = cls._clean_term(g.get("term"))
+        if not term or term.lower() in seen_terms:
+          continue
+        seen_terms.add(term.lower())
+        syn_raw = g.get("synonyms")
+        synonyms: list[str] = []
+        syn_seen: set[str] = {term.lower()}
+        if isinstance(syn_raw, list):
+          for s in syn_raw:
+            s = cls._clean_term(s)
+            if s and s.lower() not in syn_seen:
+              syn_seen.add(s.lower())
+              synonyms.append(s)
+            if len(synonyms) >= cls._MAX_TERM_SYNONYMS:
+              break
+        category = cls._clean_term(g.get("category"))
+        kind = cls._clean_term(g.get("kind")).lower()
+        if kind not in cls._TERM_KINDS:
+          # Unknown/absent kind defaults to "condition", which is how the NLP
+          # path's category-less groups have always been treated.
+          kind = "condition"
+        entity_groups.append({"term": term, "synonyms": synonyms, "kind": kind, "category": category})
+        for t in (term, *synonyms):
+          if t.lower() not in flat_seen:
+            flat_seen.add(t.lower())
+            flat.append(t)
+      return {"entity_groups": entity_groups, "terms": flat}
+    except Exception as exc:
+      logger.warning("[search_terms] unparseable reply (%s: %s), falling back to NLP extraction", type(exc).__name__, exc)
+      return empty
 
   @staticmethod
   def _heuristic_title(text: str) -> str:

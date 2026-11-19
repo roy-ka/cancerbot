@@ -31,6 +31,11 @@ os.environ["OLLAMA_GEN_MODEL"] = ""
 # HTTP call to a nlp-service that isn't running in unit tests; reranking
 # tests opt in per-test via monkeypatch and mock src.nlp.rerank directly.
 os.environ.setdefault("RERANK_ENABLED", "false")
+# Forced to the NLP path so existing search_and_embed tests (which mock the
+# NLP extraction) keep exercising the same branch regardless of the live
+# default. Tests for the LLM term generator set SEARCH_TERMS_PROVIDER=llm
+# themselves.
+os.environ["SEARCH_TERMS_PROVIDER"] = "nlp"
 
 from datetime import datetime, timedelta, timezone
 

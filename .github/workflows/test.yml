@@ -58,6 +58,7 @@ jobs:
       AXIOM_TOKEN_READ: ""
       AXIOM_DATASET: ""
       RERANK_ENABLED: "false"
+      SEARCH_TERMS_PROVIDER: nlp
       OPENSEARCH_CA_CERT: ""
       NINJA_EMAIL: ninja-test@example.com
       REDIS_PASSWORD: test-redis-password
